@@ -17,6 +17,7 @@ const ConditionSchema = z.object({
 
 const ActionSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('move_to'), folderId: zId }),
+  z.object({ type: z.literal('apply_label'), labelId: zId }),
   z.object({ type: z.literal('mark_read') }),
   z.object({ type: z.literal('star') }),
   z.object({ type: z.literal('delete') }),
@@ -53,6 +54,10 @@ async function validate(db: D1Database, mb: string, f: z.infer<typeof FilterSche
     if (a.type === 'move_to') {
       const ok = await db.prepare("SELECT 1 FROM folders WHERE id = ? AND mailbox_id = ? AND (role IS NULL OR role NOT IN ('drafts','scheduled','sent'))").bind(a.folderId, mb).first();
       if (!ok) throw new HttpError(400, 'INVALID_FOLDER', 'Unknown target folder');
+    }
+    if (a.type === 'apply_label') {
+      const ok = await db.prepare('SELECT 1 FROM labels WHERE id = ? AND mailbox_id = ?').bind(a.labelId, mb).first();
+      if (!ok) throw new HttpError(400, 'INVALID_LABEL', 'Unknown label');
     }
   }
 }

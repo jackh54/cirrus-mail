@@ -180,6 +180,7 @@ export async function processInbound(message: ForwardableEmailMessage, env: Env,
   let isRead = 0;
   let isStarred = 0;
   let forwards: string[] = [];
+  let labelIds: string[] = [];
   if (!spam.isSpam && filterRows.results.length) {
     const rules = filterRows.results.map((r) => {
       const f = rowToFilter(r);
@@ -197,6 +198,7 @@ export async function processInbound(message: ForwardableEmailMessage, env: Env,
     if (outcome.markRead) isRead = 1;
     if (outcome.star) isStarred = 1;
     forwards = outcome.forwards;
+    labelIds = outcome.labelIds.slice(0, 10);
   }
 
   // 4. Store raw, body and attachments in R2.
@@ -239,6 +241,10 @@ export async function processInbound(message: ForwardableEmailMessage, env: Env,
   for (const a of atts) {
     stmts.push(db.prepare('INSERT INTO attachments (id, message_id, mailbox_id, filename, mime_type, size, content_id, inline, r2_key, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
       .bind(a.id, id, mailboxId, a.filename, a.mime, a.bytes.byteLength, a.contentId, a.inline, a.key, now));
+  }
+  // A label that was deleted since the filter was saved matches no row, so the insert is skipped.
+  for (const labelId of labelIds) {
+    stmts.push(db.prepare('INSERT OR IGNORE INTO message_labels (message_id, label_id) SELECT ?, id FROM labels WHERE id = ? AND mailbox_id = ?').bind(id, labelId, mailboxId));
   }
   stmts.push(...ftsInsertStmts(db, { id, mailboxId, subject, addresses: addressesForFts(from, to, cc), body: text }));
   stmts.push(...recomputeThreadStmts(db, threadId));

@@ -2,6 +2,7 @@ export const qk = {
   me: ['me'] as const,
   setup: ['setup'] as const,
   folders: (mb: string) => ['folders', mb] as const,
+  labels: (mb: string) => ['labels', mb] as const,
   threadsAll: (mb: string) => ['threads', mb] as const,
   threads: (mb: string, folder: string, q: string) => ['threads', mb, folder, q] as const,
   thread: (mb: string, tid: string) => ['thread', mb, tid] as const,

@@ -51,6 +51,7 @@ export const SHORTCUTS: { keys: string[]; label: string }[] = [
   { keys: ['e'], label: 'Archive' },
   { keys: ['#'], label: 'Move to Trash' },
   { keys: ['s'], label: 'Star / unstar' },
+  { keys: ['l'], label: 'Label as…' },
   { keys: ['r'], label: 'Reply' },
   { keys: ['a'], label: 'Reply all' },
   { keys: ['f'], label: 'Forward' },
