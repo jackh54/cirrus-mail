@@ -10,6 +10,7 @@ export const qk = {
   filters: (mb: string) => ['filters', mb] as const,
   blocked: (mb: string) => ['blocked', mb] as const,
   sessions: ['sessions'] as const,
+  passkeys: ['passkeys'] as const,
   sending: ['sending'] as const,
   admin: (what: 'users' | 'domains' | 'mailboxes' | 'aliases' | 'stats' | 'settings') => ['admin', what] as const,
   domainCheck: (id: string) => ['admin', 'domain-check', id] as const,

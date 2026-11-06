@@ -13,6 +13,8 @@ import { mail, mailReads } from './routes/mail';
 import { mailboxSettings } from './routes/mailbox-settings';
 import { invites } from './routes/invites';
 import { me } from './routes/me';
+import { passkeyAuth } from './routes/passkey-auth';
+import { passkeys } from './routes/passkeys';
 import { proxy } from './routes/proxy';
 import { push } from './routes/push';
 import { sending } from './routes/sending';
@@ -46,7 +48,9 @@ app.use('*', csrf);
 
 app.route('/setup', setup);
 app.route('/auth', auth);
+app.route('/auth/passkey', passkeyAuth);
 app.route('/invites', invites);
+app.route('/me/passkeys', passkeys);
 app.route('/me', me);
 app.route('/contacts', contacts);
 app.route('/files', files);
