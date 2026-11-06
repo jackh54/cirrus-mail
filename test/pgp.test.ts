@@ -5,8 +5,9 @@ import { ulid } from '../src/shared/ulid';
 import { processInbound } from '../src/worker/inbound/handler';
 import { hashPassword, toBase64 } from '../src/worker/lib/crypto';
 import {
-  autocryptTrusted, dearmorPublicKey, lookupWkd, parseAutocrypt, parsePublicKey, parseWkdAddress, wkdHash, wkdUrls, zbase32,
+  armoredToBase64, autocryptTrusted, dearmorPublicKey, lookupWkd, parseAutocrypt, parsePublicKey, parseWkdAddress, wkdHash, wkdUrls, zbase32,
 } from '../src/worker/lib/pgp';
+import { sendDueScheduled } from '../src/worker/cron';
 import { buildPgpMime } from '../src/worker/outbound/pgpmime';
 import { buildEml, call, createMailbox, fakeEmail, randomLocal, sessionCookie, withEnv } from './helpers';
 import { KEY_A, KEY_B } from './pgp-fixtures';
@@ -223,6 +224,21 @@ describe('key storage endpoints', () => {
     expect((await (await call('/api/pgp/key', { cookie: state.a })).json<PgpKeyResponse>()).key).toBeNull();
   });
 
+  it('keeps only addresses the user can send from', async () => {
+    const mine = (await createMailbox('addr-box@pgptest.test', [{ userId: state.aId }])).id;
+    await env.DB.prepare("INSERT INTO aliases (id, mailbox_id, address, can_send, created_at) VALUES (?, ?, 'addr-alias@pgptest.test', 1, ?)").bind(ulid(), mine, Date.now()).run();
+    await env.DB.prepare("INSERT INTO aliases (id, mailbox_id, address, can_send, created_at) VALUES (?, ?, 'addr-recv@pgptest.test', 0, ?)").bind(ulid(), mine, Date.now()).run();
+    const addresses = ['Addr-Box@pgptest.test', 'addr-alias@pgptest.test', 'addr-recv@pgptest.test', 'alice-box@pgptest.test', 'victim@example.org', 'bob@pgptest.test'];
+    const put = await call('/api/pgp/key', { method: 'PUT', body: { ...keyBody, addresses }, cookie: state.a });
+    expect(put.status).toBe(200);
+    expect((await put.json<PgpKeyResponse>()).key!.addresses.sort()).toEqual(['addr-alias@pgptest.test', 'addr-box@pgptest.test', 'alice-box@pgptest.test']);
+    // Bob is in none of those mailboxes
+    const bob = await call('/api/pgp/key', { method: 'PUT', body: { ...keyBody, publicKey: KEY_B.armored, addresses }, cookie: state.b });
+    expect((await bob.json<PgpKeyResponse>()).key!.addresses).toEqual([]);
+    await call('/api/pgp/key', { method: 'DELETE', cookie: state.a });
+    await call('/api/pgp/key', { method: 'DELETE', cookie: state.b });
+  });
+
   it('rejects a private key that is not armored, and a "public key" that holds secret material', async () => {
     expect((await call('/api/pgp/key', { method: 'PUT', body: { ...keyBody, privateKey: 'x'.repeat(200) }, cookie: state.a })).status).toBe(400);
     expect((await call('/api/pgp/key', { method: 'PUT', body: { ...keyBody, publicKey: PRIVATE }, cookie: state.a })).status).toBe(400);
@@ -340,6 +356,50 @@ describe('sending OpenPGP bodies', () => {
     expect(raw).toContain('Content-Type: application/pgp-encrypted\r\nContent-Description: PGP/MIME version identification\r\n\r\nVersion: 1\r\n');
     expect(raw).toContain(`filename="encrypted.asc"\r\n\r\n${CIPHERTEXT.trim().replace(/\n/g, '\r\n')}\r\n--BOUND--`);
     expect(/[^\r]\n/.test(raw)).toBe(false); // CRLF only
+  });
+
+  it('folds References and In-Reply-To at spaces so no line is too long', () => {
+    const ids = Array.from({ length: 120 }, (_, i) => `<${String(i).padStart(3, '0')}.${'x'.repeat(30)}@long.test>`);
+    const raw = buildPgpMime({
+      from: addr('a@x.test'), to: [addr('b@y.test')], cc: [], subject: 'Re: long', messageId: '<id@x.test>', date: new Date(0),
+      inReplyTo: ids[ids.length - 1], references: ids.join(' '), armored: CIPHERTEXT, boundary: 'BOUND',
+    });
+    const head = raw.slice(0, raw.indexOf('\r\n\r\n'));
+    const idLines = head.split('\r\n').filter((l) => /^(References:|In-Reply-To:| <)/.test(l));
+    expect(idLines.length).toBeGreaterThan(40);
+    expect(Math.max(...idLines.map((l) => l.length))).toBeLessThanOrEqual(78);
+    const refs = /\r\nReferences: ((?:.|\r\n )*)/.exec(head)![1];
+    expect(refs).toContain('\r\n <');
+    expect(refs.replace(/\r\n /g, ' ')).toBe(ids.join(' '));
+    expect(head).toContain(`\r\nIn-Reply-To: ${ids[ids.length - 1]}\r\n`);
+  });
+
+  it('a scheduled send attaches only the scheduling member\'s key as Autocrypt, not another member\'s', async () => {
+    const addrBox = 'shared-box@pgptest.test';
+    const mb = await createMailbox(addrBox, [{ userId: state.aId }, { userId: state.bId, role: 'member' }]);
+    // Bob holds a key that claims the shared address; Alice schedules the send.
+    await env.DB.prepare('INSERT INTO pgp_keys (user_id, fingerprint, public_key, private_key_enc, addresses, revoked, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 0, ?, ?)')
+      .bind(state.bId, KEY_B.fingerprint, KEY_B.armored, PRIVATE, JSON.stringify([addrBox]), 1, 1).run();
+    const base = { from: addrBox, to: [addr('carol@example.org')], cc: [], bcc: [], subject: 'Sched', html: '<p>draft</p>' };
+    const schedule = async () => {
+      const d = (await (await call(`/api/mailboxes/${mb.id}/drafts`, { body: base, cookie: state.a })).json<MessageFull>());
+      expect((await call(`/api/mailboxes/${mb.id}/drafts/${d.id}`, { method: 'PUT', body: { ...base, html: '', text: CIPHERTEXT, pgp: 'mime' }, cookie: state.a })).status).toBe(200);
+      const sendAt = Date.now() + 3600_000;
+      expect((await call(`/api/mailboxes/${mb.id}/drafts/${d.id}/send`, { body: { sendAt }, cookie: state.a })).status).toBe(200);
+      const sent: string[] = [];
+      const e = withEnv({ EMAIL: { send: async (m: Record<string, unknown>) => { sent.push(await new Response(m['EmailMessage::raw'] as BodyInit).text()); return { messageId: 'cf-2@pgptest.test' }; } } as unknown as SendEmail });
+      expect(await sendDueScheduled(e, sendAt + 1)).toBe(1);
+      expect(sent).toHaveLength(1);
+      return sent[0];
+    };
+    expect(await schedule()).not.toContain('Autocrypt:');
+    // With Alice's own key, hers is the one attached.
+    await env.DB.prepare('INSERT INTO pgp_keys (user_id, fingerprint, public_key, private_key_enc, addresses, revoked, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 0, ?, ?)')
+      .bind(state.aId, KEY_A.fingerprint, KEY_A.armored, PRIVATE, JSON.stringify([addrBox]), 2, 2).run();
+    const withKey = (await schedule()).replace(/\r\n /g, '');
+    expect(withKey).toContain(`keydata=${armoredToBase64(KEY_A.armored)}`);
+    expect(withKey).not.toContain(armoredToBase64(KEY_B.armored));
+    await env.DB.prepare('DELETE FROM pgp_keys WHERE user_id IN (?, ?)').bind(state.aId, state.bId).run();
   });
 
   it('refuses HTML or non-armored bodies in PGP mode, and attachments at send time', async () => {

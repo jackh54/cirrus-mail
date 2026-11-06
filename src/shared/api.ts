@@ -70,7 +70,7 @@ export interface Identity {
 
 export interface MeResponse { user: User; mailboxes: MailboxSummary[] }
 export interface UpdateMeInput { name?: string; theme?: Theme; density?: Density; pushPreview?: boolean; categoryTabs?: boolean }
-export interface ChangePasswordInput { current: string; next: string }
+export interface ChangePasswordInput { current: string; next: string; revokeCredentials?: boolean }
 export interface TotpBeginResponse { secret: string; otpauthUrl: string }
 export interface TotpEnableResponse { recoveryCodes: string[] }
 

@@ -166,7 +166,7 @@ mbox.get('/export', async (c) => {
   if (q.scope !== 'mailbox') {
     if (!q.id) throw badRequest('id is required', 'BAD_REQUEST');
     const row = q.scope === 'folder'
-      ? await db.prepare("SELECT name FROM folders WHERE id = ? AND mailbox_id = ? AND role NOT IN ('drafts','scheduled')").bind(q.id, mb.id).first<{ name: string }>()
+      ? await db.prepare("SELECT name FROM folders WHERE id = ? AND mailbox_id = ? AND (role IS NULL OR role NOT IN ('drafts','scheduled'))").bind(q.id, mb.id).first<{ name: string }>()
       : await db.prepare('SELECT name FROM labels WHERE id = ? AND mailbox_id = ?').bind(q.id, mb.id).first<{ name: string }>();
     if (!row) throw notFound(q.scope === 'folder' ? 'Folder not found' : 'Label not found');
     scope = { kind: q.scope, id: q.id };

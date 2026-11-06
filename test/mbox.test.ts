@@ -7,7 +7,7 @@ import { hashPassword } from '../src/worker/lib/crypto';
 import { asctime, escapeMboxrd, mapGmailLabels, parseGmailLabels, scanMbox, unescapeMboxrd } from '../src/worker/mbox/format';
 import { processMboxImports, type ProcessOpts } from '../src/worker/mbox/import';
 import { processInbound } from '../src/worker/inbound/handler';
-import { BASE, buildEml, call, createMailbox, ctx, fakeEmail, randomLocal, sessionCookie } from './helpers';
+import { BASE, buildEml, call, createMailbox, ctx, fakeEmail, randomLocal, sessionCookie, withEnv } from './helpers';
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
@@ -390,10 +390,122 @@ describe('mbox export', () => {
     expect((await call(`/api/mailboxes/${mb.id}/export?scope=folder&id=${foreign.folders.inbox}`, { cookie: user.cookie })).status).toBe(404);
   });
 
+  it('exports a custom folder', async () => {
+    const addr = `${randomLocal('cf')}@mbox.test`;
+    const mb = await createMailbox(addr, [{ userId: user.id }]);
+    await deliver(addr, 'Filed away');
+    const folderId = ulid();
+    await env.DB.prepare('INSERT INTO folders (id, mailbox_id, name, role, sort, created_at) VALUES (?, ?, ?, NULL, 99, ?)').bind(folderId, mb.id, 'Receipts', Date.now()).run();
+    await env.DB.prepare("UPDATE messages SET folder_id = ? WHERE mailbox_id = ? AND subject = 'Filed away'").bind(folderId, mb.id).run();
+    const res = await call(`/api/mailboxes/${mb.id}/export?scope=folder&id=${folderId}`, { cookie: user.cookie });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-disposition')).toContain('Receipts');
+    expect(dec.decode(await res.arrayBuffer()).match(/^Subject: .*$/gm)).toEqual(['Subject: Filed away']);
+    // Drafts and Scheduled stay refused
+    expect((await call(`/api/mailboxes/${mb.id}/export?scope=folder&id=${mb.folders.drafts}`, { cookie: user.cookie })).status).toBe(404);
+  });
+
   it('rate-limits exports per user', async () => {
     const u = await mkUser('rl');
     const mb = await createMailbox(`${randomLocal('rl')}@mbox.test`, [{ userId: u.id }]);
     for (let i = 0; i < 5; i++) expect((await call(`/api/mailboxes/${mb.id}/export`, { cookie: u.cookie })).status).toBe(200);
     expect((await call(`/api/mailboxes/${mb.id}/export`, { cookie: u.cookie })).status).toBe(429);
+  });
+});
+
+/** The test bucket with hooks: `get` can fail, and `put` runs `onPut` with the key before storing. */
+function hookedEnv(hooks: { failGet?: boolean; onPut?: (key: string) => Promise<void> }): Env {
+  const bucket = new Proxy(env.BUCKET, {
+    get(t, k) {
+      const v = Reflect.get(t, k) as unknown;
+      if (k === 'get' && hooks.failGet) return async () => { throw new Error('transient'); };
+      if (k === 'put' && hooks.onPut) return async (key: string, ...rest: unknown[]) => { await hooks.onPut!(key); return (t.put as (...a: unknown[]) => Promise<unknown>)(key, ...rest); };
+      return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(t) : v;
+    },
+  });
+  return withEnv({ BUCKET: bucket });
+}
+
+describe('mbox import resilience', () => {
+  let user: { id: string; cookie: string };
+  beforeAll(async () => {
+    user = await mkUser('res');
+  });
+  const freshMailbox = () => createMailbox(`${randomLocal('r')}@mbox.test`, [{ userId: user.id }]);
+  const row = (mb: string) => env.DB.prepare('SELECT status, consecutive_failures AS fails, lease_until AS lease, imported, error_count AS errors FROM mbox_imports WHERE mailbox_id = ?')
+    .bind(mb).first<{ status: string; fails: number; lease: number; imported: number; errors: number }>();
+
+  it('an unexpected error only costs a tick: the lease is released, the source kept, and it fails after 10 in a row', async () => {
+    const mb = await freshMailbox();
+    const imp = await upload(user.cookie, mb.id, mboxOf([msg({ subject: 'Flaky' })]));
+    const key = `import/${mb.id}/${imp.id}.mbox`;
+    const flaky = hookedEnv({ failGet: true });
+    for (let i = 1; i < 10; i++) {
+      await processMboxImports(flaky);
+      expect(await row(mb.id)).toMatchObject({ status: 'processing', fails: i, lease: 0 });
+      expect(await env.BUCKET.head(key)).not.toBeNull();
+    }
+    await processMboxImports(flaky);
+    expect((await row(mb.id))!.status).toBe('failed');
+    expect(await env.BUCKET.head(key)).toBeNull();
+  });
+
+  it('a good tick resets the failure count and the import carries on to the end', async () => {
+    const mb = await freshMailbox();
+    await upload(user.cookie, mb.id, mboxOf([1, 2, 3].map((i) => msg({ subject: `F${i}`, id: `<f${i}@t.test>` }))));
+    const flaky = hookedEnv({ failGet: true });
+    for (let i = 0; i < 5; i++) await processMboxImports(flaky);
+    expect(await row(mb.id)).toMatchObject({ status: 'processing', fails: 5 });
+    await processMboxImports(env, { maxMessages: 1 });
+    expect(await row(mb.id)).toMatchObject({ status: 'processing', fails: 0, imported: 1 });
+    for (let i = 0; i < 9; i++) await processMboxImports(flaky);
+    expect((await row(mb.id))!.status).toBe('processing');
+    expect((await drain(user.cookie, mb.id)).status).toBe('done');
+    expect(await count(mb.id)).toBe(3);
+  });
+
+  it('a label deleted mid-import does not fail the messages after it', async () => {
+    const mb = await freshMailbox();
+    await upload(user.cookie, mb.id, mboxOf([1, 2, 3].map((i) => msg({ subject: `L${i}`, id: `<l${i}@t.test>`, labels: 'Inbox,Doomed' }))));
+    let raws = 0;
+    const e = hookedEnv({
+      onPut: async (key) => {
+        if (key.startsWith('raw/') && ++raws === 2) await env.DB.prepare("DELETE FROM labels WHERE mailbox_id = ? AND name = 'Doomed'").bind(mb.id).run();
+      },
+    });
+    for (let i = 0; i < 5 && (await row(mb.id))!.status === 'processing'; i++) await processMboxImports(e);
+    expect(await row(mb.id)).toMatchObject({ status: 'done', imported: 3, errors: 0 });
+    expect(await count(mb.id)).toBe(3);
+    // Message 3 recreated the label through ensureLabel (the stale cache entry was dropped), message 2 went without.
+    const linked = await env.DB.prepare('SELECT m.subject FROM message_labels ml JOIN messages m ON m.id = ml.message_id WHERE m.mailbox_id = ? ORDER BY m.subject').bind(mb.id).all<{ subject: string }>();
+    expect(linked.results.map((r) => r.subject)).toEqual(['L3']);
+  });
+
+  it('falls back to Archive when the target folder was deleted mid-import', async () => {
+    const mb = await freshMailbox();
+    const folderId = ulid();
+    await env.DB.prepare('INSERT INTO folders (id, mailbox_id, name, role, sort, created_at) VALUES (?, ?, ?, NULL, 99, ?)').bind(folderId, mb.id, 'Vanishing', Date.now()).run();
+    await upload(user.cookie, mb.id, mboxOf([1, 2].map((i) => msg({ subject: `V${i}`, id: `<v${i}@t.test>` }))), { folderId });
+    let raws = 0;
+    const e = hookedEnv({
+      onPut: async (key) => {
+        if (key.startsWith('raw/') && ++raws === 1) await env.DB.prepare('DELETE FROM folders WHERE id = ?').bind(folderId).run();
+      },
+    });
+    for (let i = 0; i < 5 && (await row(mb.id))!.status === 'processing'; i++) await processMboxImports(e);
+    expect(await row(mb.id)).toMatchObject({ status: 'done', imported: 2, errors: 0 });
+    expect((await stored(mb.id)).map((r) => r.role)).toEqual(['archive', 'archive']);
+  });
+
+  it('imported mail with a future Date never gets a created_at in the future', async () => {
+    const mb = await freshMailbox();
+    const future = new Date(Date.now() + 4 * 60 * 1000).toUTCString();
+    await upload(user.cookie, mb.id, mboxOf([msg({ subject: 'Ahead', date: future })]));
+    await drain(user.cookie, mb.id);
+    const r = (await env.DB.prepare("SELECT created_at, updated_at, date FROM messages WHERE mailbox_id = ? AND subject = 'Ahead'").bind(mb.id).first<{ created_at: number; updated_at: number; date: number }>())!;
+    expect(r.created_at).toBeLessThan(Date.now());
+    expect(r.updated_at).toBeLessThan(Date.now());
+    // The message keeps the date it carries; only the poll cursor column is held back.
+    expect(r.date).toBeGreaterThan(Date.now());
   });
 });

@@ -103,7 +103,7 @@ export function useChangePassword() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: ChangePasswordInput) => api.post<{ ok: boolean }>('/api/me/password', input),
-    onSuccess: () => qc.invalidateQueries({ queryKey: qk.me }),
+    onSuccess: () => Promise.all([qc.invalidateQueries({ queryKey: qk.me }), qc.invalidateQueries({ queryKey: qk.passkeys }), qc.invalidateQueries({ queryKey: qk.appPasswords })]),
   });
 }
 

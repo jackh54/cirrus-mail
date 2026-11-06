@@ -20,11 +20,12 @@ const LEASE_MS = 90_000;
 const STALE_UPLOAD_MS = 3 * 24 * 3600 * 1000;
 const MIN_DATE = Date.UTC(1990, 0, 1);
 const MAX_ERROR_SAMPLES = 20;
+const MAX_FAILED_TICKS = 10;
 
 export interface ImportRow {
   id: string; mailbox_id: string; user_id: string; status: string; filename: string; r2_key: string; upload_id: string | null;
   size: number; folder_id: string | null; mark_read: number; parts_json: string; cursor: number; skipping: number;
-  imported: number; duplicates: number; skipped: number; error_count: number; errors_json: string; lease_until: number;
+  imported: number; duplicates: number; skipped: number; error_count: number; errors_json: string; lease_until: number; consecutive_failures: number;
   created_at: number; updated_at: number; finished_at: number | null;
 }
 
@@ -85,10 +86,21 @@ export async function processMboxImports(env: Env, opts: ProcessOpts = {}): Prom
   if (!claim.meta.changes) return;
   try {
     await runImport(env, row, opts);
+    if (row.consecutive_failures) {
+      await env.DB.prepare("UPDATE mbox_imports SET consecutive_failures = 0 WHERE id = ? AND status = 'processing'").bind(row.id).run();
+    }
   } catch (e) {
     console.error('mbox import error', (e as Error).name);
-    await finish(env, row, 'failed', 'internal_error').catch(() => undefined);
+    await failTick(env, row).catch(() => undefined);
   }
+}
+
+/** An unexpected error ends only this tick: the lease is released and the next tick retries, until too many fail in a row. */
+async function failTick(env: Env, row: ImportRow): Promise<void> {
+  const failures = await env.DB.prepare(
+    "UPDATE mbox_imports SET consecutive_failures = consecutive_failures + 1, lease_until = 0, updated_at = ? WHERE id = ? AND status = 'processing'",
+  ).bind(Date.now(), row.id).run().then(() => env.DB.prepare('SELECT consecutive_failures FROM mbox_imports WHERE id = ?').bind(row.id).first<number>('consecutive_failures'));
+  if ((failures ?? 0) >= MAX_FAILED_TICKS) await finish(env, row, 'failed', 'internal_error');
 }
 
 async function loadCtx(env: Env, row: ImportRow): Promise<Ctx> {
@@ -154,6 +166,7 @@ async function importOne(env: Env, c: Ctx, raw: Uint8Array, sepLine: string): Pr
   const cc = dedupeAddresses(fromParsed(email.cc));
   const subject = (email.subject ?? '').slice(0, LIMITS.maxSubject);
   const date = importDate(email.date, sepLine, now);
+  const createdAt = Math.min(date, now - 1);
   const hash = await contentHash(raw, [msgId, from.email, to.map((a) => a.email), cc.map((a) => a.email), subject, email.date ?? '']);
 
   const dup = msgId
@@ -214,12 +227,20 @@ async function importOne(env: Env, c: Ctx, raw: Uint8Array, sepLine: string): Pr
     ...atts.map((a) => env.BUCKET.put(a.key, a.bytes, { httpMetadata: { contentType: a.mime } })),
   ]);
 
+  // A custom target folder may have been deleted while the import ran: fall back to Archive for this and later messages.
+  if (!gm && role === null && !(await db.prepare('SELECT 1 FROM folders WHERE id = ? AND mailbox_id = ?').bind(folderId, c.mailboxId).first())) {
+    c.target = { id: c.roles.archive, role: 'archive' };
+    folderId = c.target.id;
+    role = 'archive';
+  }
+
   const stmts: D1PreparedStatement[] = [];
   if (!existing) {
     stmts.push(db.prepare('INSERT INTO threads (id, mailbox_id, subject, subject_norm, last_message_at, created_at) VALUES (?, ?, ?, ?, ?, ?)')
       .bind(threadId, c.mailboxId, subject, subjectNorm, date, now));
   }
-  // created_at is the message date, so the new-mail poll (created_at > since) does not announce an import.
+  // created_at is the message date, but never later than a millisecond ago (the date may be up to 5 minutes ahead),
+  // so the new-mail poll (created_at > since) neither announces an import nor moves its cursor into the future.
   // folder_changed_at is now, so imported Trash and Spam get their full 30 days.
   stmts.push(db.prepare(
     `INSERT INTO messages (id, mailbox_id, thread_id, folder_id, direction, status, message_id_hdr, in_reply_to, references_hdr,
@@ -230,16 +251,25 @@ async function importOne(env: Env, c: Ctx, raw: Uint8Array, sepLine: string): Pr
     references.length ? references.join(' ').slice(0, 8000) : null, from.email, from.name ?? '', JSON.stringify(to), JSON.stringify(cc),
     email.replyTo?.length ? fromParsed(email.replyTo).map((a) => a.email).join(', ') : null, subject, makeSnippet(text), bodyKey,
     inlineBodyJson(html, text), rawKey, raw.byteLength, hasAttachments ? 1 : 0, isRead, starred, spamScore, outgoing ? date : null,
-    date, date, hash, date, date, now));
+    date, date, hash, createdAt, createdAt, now));
   for (const a of atts) {
     stmts.push(db.prepare('INSERT INTO attachments (id, message_id, mailbox_id, filename, mime_type, size, content_id, inline, r2_key, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
       .bind(a.id, id, c.mailboxId, a.filename, a.mime, a.bytes.byteLength, a.contentId, a.inline, a.key, date));
   }
-  for (const labelId of labelIds) stmts.push(db.prepare('INSERT OR IGNORE INTO message_labels (message_id, label_id) VALUES (?, ?)').bind(id, labelId));
+  // Selected from labels so a label deleted since it was cached is skipped rather than failing the whole message.
+  const labelAt = stmts.length;
+  for (const labelId of labelIds) {
+    stmts.push(db.prepare('INSERT OR IGNORE INTO message_labels (message_id, label_id) SELECT ?, id FROM labels WHERE id = ? AND mailbox_id = ?').bind(id, labelId, c.mailboxId));
+  }
   stmts.push(...ftsInsertStmts(db, { id, mailboxId: c.mailboxId, subject, addresses: addressesForFts(from, to, cc), body: text }));
   stmts.push(...recomputeThreadStmts(db, threadId));
   try {
-    await db.batch(stmts);
+    const res = await db.batch(stmts);
+    // A label link that matched nothing means the label is gone: forget it, so ensureLabel looks it up again.
+    labelIds.forEach((labelId, i) => {
+      if (res[labelAt + i].meta.changes) return;
+      for (const [name, cached] of c.labels) if (cached === labelId) c.labels.delete(name);
+    });
   } catch (e) {
     await env.BUCKET.delete(r2Keys).catch(() => undefined);
     throw e;

@@ -86,7 +86,7 @@ function toBuilderAddr(a: Address): string | EmailAddress {
  * Sends a message row that has already been claimed (status 'sending'). Updates the row to
  * 'sent' (moved to Sent) or 'failed' (moved back to Drafts), writes send_log and contacts.
  */
-export async function performSend(env: Env, row: MessageRow, contactUserIds: string[]): Promise<SendResult> {
+export async function performSend(env: Env, row: MessageRow, contactUserIds: string[], keyUserIds: string[] = contactUserIds): Promise<SendResult> {
   const db = env.DB;
   const to = parseJsonAddresses(row.to_json);
   const cc = parseJsonAddresses(row.cc_json);
@@ -119,7 +119,7 @@ export async function performSend(env: Env, row: MessageRow, contactUserIds: str
     } as EmailMessageBuilder;
     // OpenPGP: the body is already encrypted in the browser. 'mime' wraps it as PGP/MIME; 'inline' goes out as
     // the plain text above (the draft has no HTML part).
-    const res = row.pgp_mode === 'mime' ? await sendPgpMime(env, row, body.text ?? '', { to, cc, bcc }, contactUserIds) : await env.EMAIL.send(builder);
+    const res = row.pgp_mode === 'mime' ? await sendPgpMime(env, row, body.text ?? '', { to, cc, bcc }, keyUserIds) : await env.EMAIL.send(builder);
     result = { ok: true, messageId: bracketId(res.messageId) };
     // Once per claimed send (claimForSend lets only one attempt through), one per recipient.
     await recordSendsSafe(db, to.length + cc.length + bcc.length);

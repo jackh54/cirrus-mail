@@ -8,7 +8,9 @@ import { Skeleton } from '../../components/Skeleton';
 import { useToast } from '../../components/Toast';
 import { errorMessage } from '../../lib/api';
 import { relativeAgo } from '../../lib/format';
+import { useAppPasswords } from '../../lib/queries/appPasswords';
 import { useChangePassword, useRevokeSession, useSessions } from '../../lib/queries/me';
+import { usePasskeys } from '../../lib/queries/passkeys';
 import { AppPasswordsSection, SyncHelpSection } from './AppPasswordsSection';
 import { PasskeySection } from './PasskeySection';
 import { TotpSection } from './TotpSection';
@@ -36,6 +38,10 @@ function PasswordSection() {
   const { toast } = useToast();
   const [f, setF] = useState({ current: '', next: '', confirm: '' });
   const [error, setError] = useState<string | null>(null);
+  const passkeys = usePasskeys();
+  const appPasswords = useAppPasswords();
+  const [revoke, setRevoke] = useState(true);
+  const hasCredentials = (passkeys.data?.length ?? 0) + (appPasswords.data?.length ?? 0) > 0;
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
@@ -43,7 +49,7 @@ function PasswordSection() {
     if (f.next.length < 10) return setError('Use at least 10 characters.');
     if (f.next !== f.confirm) return setError('The new passwords do not match.');
     change.mutate(
-      { current: f.current, next: f.next },
+      { current: f.current, next: f.next, revokeCredentials: revoke },
       {
         onSuccess: () => {
           setF({ current: '', next: '', confirm: '' });
@@ -72,6 +78,12 @@ function PasswordSection() {
             {(id) => <Input id={id} type="password" autoComplete="new-password" value={f.confirm} onChange={(e) => setF({ ...f, confirm: e.target.value })} />}
           </Field>
         </div>
+        {hasCredentials && (
+          <label className="mt-4 flex items-center gap-2 text-[13px]">
+            <input type="checkbox" checked={revoke} onChange={(e) => setRevoke(e.target.checked)} className="size-4 accent-[var(--color-primary)]" />
+            Also remove my passkeys and app passwords (devices will need to sign in again)
+          </label>
+        )}
       </Section>
     </form>
   );

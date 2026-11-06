@@ -95,7 +95,7 @@ me.patch('/', async (c) => {
 });
 
 me.post('/password', async (c) => {
-  const body = await jsonBody(c, z.object({ current: z.string().min(1).max(256), next: zPassword }));
+  const body = await jsonBody(c, z.object({ current: z.string().min(1).max(256), next: zPassword, revokeCredentials: z.boolean().default(true) }));
   const u = c.get('user');
   await requireCurrentPassword(c.env.DB, u, body.current, 'Current password is incorrect');
   await c.env.DB.batch([
@@ -103,6 +103,10 @@ me.post('/password', async (c) => {
       .bind(await hashPassword(body.next), Date.now(), u.id),
     // Changing the password signs out every other session.
     c.env.DB.prepare('DELETE FROM sessions WHERE user_id = ? AND id != ?').bind(u.id, c.get('sessionId')),
+    // Passkeys and app passwords are credentials too: unless the caller opts out, they go with the old password.
+    ...(body.revokeCredentials
+      ? [c.env.DB.prepare('DELETE FROM app_passwords WHERE user_id = ?').bind(u.id), c.env.DB.prepare('DELETE FROM passkeys WHERE user_id = ?').bind(u.id)]
+      : []),
   ]);
   return c.json({ ok: true });
 });

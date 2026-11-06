@@ -6,7 +6,6 @@ import { hit } from '../lib/ratelimit';
 
 export const FAIL_WINDOW_MS = 15 * 60 * 1000;
 export const MAX_FAILS_PER_IP = 30;
-export const MAX_FAILS_PER_USER = 10;
 const LAST_USED_EVERY_MS = 60 * 60 * 1000;
 
 /** App passwords are shown in groups; accept any case and ignore separators. */
@@ -50,7 +49,9 @@ export async function authenticate(request: Request, env: Env): Promise<UserRow 
   const username = cred.user.trim().toLowerCase().slice(0, 254);
   const ipKey = `davfail:ip:${ip}`;
   const userKey = `davfail:user:${username}`;
-  if (await overLimit(db, [[ipKey, MAX_FAILS_PER_IP], [userKey, MAX_FAILS_PER_USER]], now)) return challenge(429);
+  // Only the per-IP limit blocks. Failures per username are counted but never checked here: a limit on the
+  // username would let anyone lock a user's sync out by guessing wrong passwords for their address.
+  if (await overLimit(db, [[ipKey, MAX_FAILS_PER_IP]], now)) return challenge(429);
 
   const hash = await sha256Hex(normalizeAppPassword(cred.pass));
   const row = await db.prepare(

@@ -7,7 +7,7 @@ import { normalizeAppPassword } from '../src/worker/dav/auth';
 import { handleDav } from '../src/worker/dav/handler';
 import { hashPassword, sha256Hex } from '../src/worker/lib/crypto';
 import worker from '../src/worker/index';
-import { BASE, call, ctx, sessionCookie } from './helpers';
+import { BASE, call, createMailbox, ctx, sessionCookie } from './helpers';
 
 const PASSWORD = 'admin-password-123';
 const A = { id: '', email: 'dav-a@davtest.test', secret: '', auth: '' };
@@ -102,17 +102,19 @@ describe('DAV Basic auth', () => {
     expect((await dav('PROPFIND', '/dav/', { auth: B.auth, headers: { depth: '0' } })).status).toBe(207);
   });
 
-  it('rate-limits failed attempts per username and per IP', async () => {
+  it('rate-limits failed attempts per IP, but never locks a username out', async () => {
     const u = await mkUser('dav-rl@davtest.test');
     const good = basic('dav-rl@davtest.test', (await mkAppPassword(u)).secret);
     for (let i = 0; i < 10; i++) expect((await dav('PROPFIND', '/dav/', { auth: basic('dav-rl@davtest.test', `wrong${i}`), ip: '10.1.1.1' })).status).toBe(401);
-    // The username is now locked, even from another address and with the right password.
-    const locked = await dav('PROPFIND', '/dav/', { auth: good, ip: '10.1.1.2' });
-    expect(locked.status).toBe(429);
-    expect(locked.headers.get('retry-after')).toBeTruthy();
+    // Failures are counted for the username, but they never block the right app password, from any address.
+    expect((await dav('PROPFIND', '/dav/', { auth: good, ip: '10.1.1.2', headers: { depth: '0' } })).status).toBe(207);
+    expect((await dav('PROPFIND', '/dav/', { auth: good, ip: '10.1.1.1', headers: { depth: '0' } })).status).toBe(207);
+    expect((await dav('PROPFIND', '/dav/', { auth: basic('dav-rl@davtest.test', 'still-wrong'), ip: '10.1.1.3' })).status).toBe(401);
 
     for (let i = 0; i < 30; i++) await dav('PROPFIND', '/dav/', { auth: basic(`nobody${i}@davtest.test`, 'x'), ip: '10.2.2.2' });
-    expect((await dav('PROPFIND', '/dav/', { auth: A.auth, ip: '10.2.2.2' })).status).toBe(429);
+    const blocked = await dav('PROPFIND', '/dav/', { auth: A.auth, ip: '10.2.2.2' });
+    expect(blocked.status).toBe(429);
+    expect(blocked.headers.get('retry-after')).toBeTruthy();
   });
 
   it('ignores the session cookie', async () => {
@@ -170,6 +172,20 @@ describe('discovery', () => {
     expect(abHome).toContain('<CR:addressbook/>');
   });
 
+  it('answers the principal properties Apple clients ask for', async () => {
+    const mbox = `${ulid().toLowerCase()}@principal.test`;
+    await createMailbox(mbox, [{ userId: A.id }]);
+    const xml = await (await dav('PROPFIND', `/dav/principals/${A.id}/`, {
+      headers: { depth: '0' }, body: propfind('<C:calendar-user-address-set/><D:principal-URL/><D:supported-report-set/>'),
+    })).text();
+    expect(xml).toContain(`<D:href>mailto:${A.email}</D:href>`);
+    expect(xml).toContain(`<D:href>mailto:${mbox}</D:href>`);
+    expect(xml).toContain(`<D:principal-URL><D:href>/dav/principals/${A.id}/</D:href>`);
+    expect(xml).toContain('<D:expand-property/>');
+    expect(xml).toContain('<D:principal-property-search/>');
+    expect(xml).not.toContain('404 Not Found');
+  });
+
   it('rejects Depth: infinity', async () => {
     const res = await dav('PROPFIND', '/dav/', { headers: { depth: 'infinity' } });
     expect(res.status).toBe(403);
@@ -207,6 +223,36 @@ describe('objects', () => {
     expect((await dav('DELETE', path, { headers: { 'if-match': e2 } })).status).toBe(204);
     expect((await dav('GET', path)).status).toBe(404);
     expect((await dav('DELETE', path)).status).toBe(404);
+  });
+
+  it('conditional writes are atomic: concurrent writers with the same precondition cannot both win', async () => {
+    const rev = async () => (await env.DB.prepare("SELECT rev FROM dav_collections WHERE user_id = ? AND kind = 'calendar' AND slug = 'calendar'").bind(A.id).first<number>('rev'))!;
+    const changes = async (uri: string) => (await env.DB.prepare('SELECT COUNT(*) AS n FROM dav_changes c JOIN dav_collections k ON k.id = c.collection_id WHERE k.user_id = ? AND c.uri = ?').bind(A.id, uri).first<number>('n'))!;
+    const status = (rs: Response[]) => rs.map((r) => r.status).sort();
+
+    // Two creates with If-None-Match: *
+    const path = `${calPath}race1.ics`;
+    const creates = await Promise.all(['One', 'Two'].map((n) => dav('PUT', path, { body: cal('race1', [`SUMMARY:${n}`]), headers: { 'if-none-match': '*' } })));
+    expect(status(creates)).toEqual([201, 412]);
+    expect(await changes('race1.ics')).toBe(1);
+
+    // Two updates carrying the same If-Match
+    const e1 = etagOf(await dav('GET', path));
+    const rev0 = await rev();
+    const updates = await Promise.all(['Three', 'Four'].map((n) => dav('PUT', path, { body: cal('race1', [`SUMMARY:${n}`]), headers: { 'if-match': e1 } })));
+    expect(status(updates)).toEqual([204, 412]);
+    expect(await rev()).toBe(rev0 + 1);
+    expect(await changes('race1.ics')).toBe(2);
+
+    // Two deletes carrying the same If-Match
+    const e2 = etagOf(await dav('GET', path));
+    const dels = await Promise.all([1, 2].map(() => dav('DELETE', path, { headers: { 'if-match': e2 } })));
+    expect(status(dels)).toEqual([204, 404]);
+    expect(await changes('race1.ics')).toBe(3);
+
+    // If-Match on a missing resource still never creates it
+    expect((await dav('PUT', path, { body: cal('race1'), headers: { 'if-match': '*' } })).status).toBe(412);
+    expect((await dav('GET', path)).status).toBe(404);
   });
 
   it('rejects invalid data, uid clashes and oversized bodies', async () => {
@@ -363,6 +409,54 @@ describe('REPORT', () => {
     expect(await (await dav('PROPFIND', path, { headers: { depth: '0' }, body: propfind('<D:displayname/>') })).text()).toContain('Work');
     expect((await dav('MKCOL', `/dav/addressbooks/${A.id}/plain/`)).status).toBe(403);
     expect((await dav('DELETE', path)).status).toBe(204);
+  });
+});
+
+describe('principal REPORTs', () => {
+  const pr = () => `/dav/principals/${A.id}/`;
+  const davHrefs = (xml: string) => hrefs(xml).filter((h) => h.startsWith('/dav/'));
+  const expand = (props: string) => `<?xml version="1.0"?><D:expand-property ${NS}>${props}</D:expand-property>`;
+  const search = (term: string, attrs = '', props = '<D:displayname/><C:calendar-user-address-set/>') =>
+    `<?xml version="1.0"?><D:principal-property-search ${NS}${attrs}><D:property-search><D:prop><D:displayname/></D:prop><D:match>${term}</D:match></D:property-search><D:prop>${props}</D:prop></D:principal-property-search>`;
+
+  it('expand-property returns the home sets, principal URL and name, and empty proxy lists', async () => {
+    const res = await dav('REPORT', pr(), {
+      headers: { depth: '0' },
+      body: expand(
+        '<D:property name="calendar-home-set" namespace="urn:ietf:params:xml:ns:caldav"/><D:property name="addressbook-home-set" namespace="urn:ietf:params:xml:ns:carddav"/>'
+        + '<D:property name="principal-URL"/><D:property name="displayname"/>'
+        + '<D:property name="calendar-proxy-read-for" namespace="http://calendarserver.org/ns/"><D:property name="displayname"/></D:property>'
+        + '<D:property name="calendar-proxy-write-for" namespace="http://calendarserver.org/ns/"/>',
+      ),
+    });
+    expect(res.status).toBe(207);
+    const xml = await res.text();
+    expect(hrefs(xml)[0]).toBe(pr());
+    expect(xml).toContain(`<C:calendar-home-set><D:href>/dav/calendars/${A.id}/</D:href>`);
+    expect(xml).toContain(`<CR:addressbook-home-set><D:href>/dav/addressbooks/${A.id}/</D:href>`);
+    expect(xml).toContain(`<D:principal-URL><D:href>${pr()}</D:href>`);
+    expect(xml).toContain('<D:displayname>dav-a</D:displayname>');
+    expect(xml).toContain('<CS:calendar-proxy-read-for/>');
+    expect(xml).toContain('<CS:calendar-proxy-write-for/>');
+    expect(xml).not.toContain('404 Not Found');
+    // Also accepted on the calendar home
+    expect((await dav('REPORT', `/dav/calendars/${A.id}/`, { headers: { depth: '0' }, body: expand('<D:property name="displayname"/>') })).status).toBe(207);
+  });
+
+  it('principal-property-search returns the signed-in user only, when the term matches their email or name', async () => {
+    for (const term of ['dav-a', 'DAV-A@davtest', 'davtest.test']) {
+      const xml = await (await dav('REPORT', '/dav/principals/', { body: search(term) })).text();
+      expect(davHrefs(xml)).toEqual([pr()]);
+      expect(xml).toContain(`<D:href>mailto:${A.email}</D:href>`);
+    }
+    // B's address matches nothing of A's, and a search never reveals another user
+    for (const term of ['dav-b', 'nobody-at-all']) {
+      const res = await dav('REPORT', '/dav/principals/', { body: search(term) });
+      expect(res.status).toBe(207);
+      expect(davHrefs(await res.text())).toEqual([]);
+    }
+    expect(davHrefs(await (await dav('REPORT', pr(), { body: search('dav-a', ' test="anyof"') })).text())).toEqual([pr()]);
+    expect(davHrefs(await (await dav('REPORT', pr(), { body: search('zzz', ' test="anyof"') })).text())).toEqual([]);
   });
 });
 

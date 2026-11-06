@@ -155,12 +155,40 @@ function analyze(coll: CollectionRow, text: string, uri: string): Meta {
   }
 }
 
-/** Statements that bump the collection's revision and record `uri` in its change log. Must run after the write, in the same batch. */
+/**
+ * Statements that bump the collection's revision and record `uri` in its change log. Must run directly after the
+ * write, in the same batch: changes() is the write's row count, so a write that matched nothing leaves both alone.
+ */
 function bump(db: D1Database, collId: string, uri: string, now: number): D1PreparedStatement[] {
   return [
-    db.prepare('UPDATE dav_collections SET rev = rev + 1, updated_at = ? WHERE id = ?').bind(now, collId),
-    db.prepare('INSERT INTO dav_changes (collection_id, rev, uri, created_at) SELECT id, rev, ?, ? FROM dav_collections WHERE id = ?').bind(uri, now, collId),
+    db.prepare('UPDATE dav_collections SET rev = rev + 1, updated_at = ? WHERE id = ? AND changes() > 0').bind(now, collId),
+    db.prepare('INSERT INTO dav_changes (collection_id, rev, uri, created_at) SELECT id, rev, ?, ? FROM dav_collections WHERE id = ? AND changes() > 0').bind(uri, now, collId),
   ];
+}
+
+const MAX_COND_ETAGS = 20;
+
+/**
+ * SQL for the precondition part of a write, so it is checked by the same statement that writes (no gap after an
+ * earlier read). `*` in If-Match needs only an existing row; `*` in If-None-Match needs none.
+ */
+function etagCondition(cond: Cond, col = 'etag'): { sql: string; params: string[] } {
+  const parts: string[] = [];
+  const params: string[] = [];
+  const im = etagList(cond.ifMatch);
+  if (im && !im.includes('*')) {
+    const tags = im.slice(0, MAX_COND_ETAGS);
+    parts.push(tags.length ? `${col} IN (${tags.map(() => '?').join(',')})` : '0');
+    params.push(...tags);
+  }
+  const inm = etagList(cond.ifNoneMatch);
+  if (inm?.includes('*')) parts.push('0');
+  else if (inm?.length) {
+    const tags = inm.slice(0, MAX_COND_ETAGS);
+    parts.push(`${col} NOT IN (${tags.map(() => '?').join(',')})`);
+    params.push(...tags);
+  }
+  return { sql: parts.length ? parts.join(' AND ') : '1', params };
 }
 
 function checkConditions(existing: { etag: string } | null, cond: Cond): void {
@@ -186,16 +214,29 @@ export async function putObject(db: D1Database, coll: CollectionRow, uri: string
   const etag = await sha256Hex(text);
   const now = Date.now();
   const id = existing?.id ?? ulid(now);
-  await db.batch([
-    db.prepare(
+  const meta = [m.uid, etag, bytes, text, m.component, m.dtstart, m.dtend, m.recurring ? 1 : 0, m.recUntil, m.approx ? 1 : 0, m.fn, m.emails];
+  // The write carries the precondition: an If-Match write only updates a row whose etag still matches, and
+  // a create over an existing row only goes through when If-None-Match allows it. No change means 412.
+  let write: D1PreparedStatement;
+  if (etagList(cond.ifMatch)) {
+    const c = etagCondition(cond);
+    write = db.prepare(
+      `UPDATE dav_objects SET uid = ?, etag = ?, size = ?, data = ?, component = ?, dtstart = ?, dtend = ?, recurring = ?, rec_until = ?, approx = ?,
+         fn = ?, emails = ?, updated_at = ? WHERE collection_id = ? AND uri = ? AND ${c.sql}`,
+    ).bind(...meta, now, coll.id, uri, ...c.params);
+  } else {
+    const c = etagCondition(cond, 'dav_objects.etag');
+    write = db.prepare(
       `INSERT INTO dav_objects (id, collection_id, uri, uid, etag, size, data, component, dtstart, dtend, recurring, rec_until, approx, fn, emails, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (collection_id, uri) DO UPDATE SET uid = excluded.uid, etag = excluded.etag, size = excluded.size, data = excluded.data,
          component = excluded.component, dtstart = excluded.dtstart, dtend = excluded.dtend, recurring = excluded.recurring,
-         rec_until = excluded.rec_until, approx = excluded.approx, fn = excluded.fn, emails = excluded.emails, updated_at = excluded.updated_at`,
-    ).bind(id, coll.id, uri, m.uid, etag, bytes, text, m.component, m.dtstart, m.dtend, m.recurring ? 1 : 0, m.recUntil, m.approx ? 1 : 0, m.fn, m.emails, now, now),
-    ...bump(db, coll.id, uri, now),
-  ]);
+         rec_until = excluded.rec_until, approx = excluded.approx, fn = excluded.fn, emails = excluded.emails, updated_at = excluded.updated_at
+         WHERE ${c.sql}`,
+    ).bind(id, coll.id, uri, ...meta, now, now, ...c.params);
+  }
+  const res = await db.batch([write, ...bump(db, coll.id, uri, now)]);
+  if (!res[0].meta.changes) throw new DavError(412);
   return { created: !existing, etag, id };
 }
 
@@ -204,5 +245,10 @@ export async function deleteObject(db: D1Database, coll: CollectionRow, uri: str
   if (!existing) throw new DavError(404);
   checkConditions(existing, { ifMatch: cond.ifMatch });
   const now = Date.now();
-  await db.batch([db.prepare('DELETE FROM dav_objects WHERE collection_id = ? AND uri = ?').bind(coll.id, uri), ...bump(db, coll.id, uri, now)]);
+  const c = etagCondition({ ifMatch: cond.ifMatch });
+  const res = await db.batch([
+    db.prepare(`DELETE FROM dav_objects WHERE collection_id = ? AND uri = ? AND ${c.sql}`).bind(coll.id, uri, ...c.params),
+    ...bump(db, coll.id, uri, now),
+  ]);
+  if (!res[0].meta.changes) throw new DavError(await getObject(db, coll.id, uri, false) ? 412 : 404);
 }

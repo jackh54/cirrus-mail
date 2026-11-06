@@ -32,7 +32,8 @@ export async function sendDueScheduled(env: Env, now = Date.now()): Promise<numb
       await recordOutcome(env, row, { ok: false, ...problem }, []);
       continue;
     }
-    const res = await performSend(env, row, await mailboxMemberIds(env.DB, row.mailbox_id));
+    // Only the member who scheduled it may have their key attached as Autocrypt, not every member of the mailbox.
+    const res = await performSend(env, row, await mailboxMemberIds(env.DB, row.mailbox_id), row.scheduled_by ? [row.scheduled_by] : []);
     if (res.ok) sent++;
   }
   return sent;

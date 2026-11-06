@@ -45,6 +45,22 @@ function formatAddress(a: Address): string {
 
 const addressList = (list: Address[]) => list.map(formatAddress).join(`,${CRLF} `);
 
+/** A space-separated list of Message-IDs as one header, folded at spaces (CRLF + space) so no line passes 78 characters. */
+function foldIds(name: string, value: string): string {
+  let out = `${name}:`;
+  let line = out.length;
+  for (const id of cleanHeaderText(value).split(/\s+/).filter(Boolean)) {
+    if (line + 1 + id.length > 78 && line > name.length + 1) {
+      out += CRLF + ' ' + id;
+      line = 1 + id.length;
+    } else {
+      out += ' ' + id;
+      line += 1 + id.length;
+    }
+  }
+  return out;
+}
+
 export interface PgpMimeInput {
   from: Address;
   to: Address[];
@@ -68,8 +84,8 @@ export function buildPgpMime(i: PgpMimeInput): string {
     `Subject: ${encodeText(i.subject)}`,
     `Date: ${i.date.toUTCString()}`,
     `Message-ID: ${cleanHeaderText(i.messageId)}`,
-    ...(i.inReplyTo ? [`In-Reply-To: ${cleanHeaderText(i.inReplyTo)}`] : []),
-    ...(i.references ? [`References: ${cleanHeaderText(i.references)}`] : []),
+    ...(i.inReplyTo ? [foldIds('In-Reply-To', i.inReplyTo)] : []),
+    ...(i.references ? [foldIds('References', i.references)] : []),
     'MIME-Version: 1.0',
     ...(i.autocryptKeydata ? [`Autocrypt: addr=${i.from.email}; keydata=${i.autocryptKeydata.replace(/.{1,72}/g, `${CRLF} $&`)}`] : []),
     `Content-Type: multipart/encrypted; protocol="application/pgp-encrypted"; boundary="${i.boundary}"`,

@@ -82,6 +82,10 @@ const reportSet = (kind: Kind | null) => {
     .concat(kind ? [r(D, 'sync-collection')] : []).join('');
 };
 
+/** Reports the principal accepts: the two Apple clients send besides the collection reports. */
+const principalReportSet = () =>
+  ['expand-property', 'principal-property-search'].map((n) => `<D:supported-report><D:report>${render(k(D, n), '')}</D:report></D:supported-report>`).join('');
+
 interface Cx { env: Env; db: D1Database; user: UserRow; request: Request }
 
 // ---------- hrefs ----------
@@ -111,13 +115,22 @@ function principalsProps(u: UserRow): Props {
   ]);
 }
 
-function principalProps(u: UserRow): Props {
+/** The login email plus the addresses of the user's mailboxes, lowercase and without duplicates. */
+async function userAddresses(db: D1Database, u: UserRow): Promise<string[]> {
+  const { results } = await db.prepare(
+    'SELECT m.address FROM mailboxes m JOIN mailbox_members mm ON mm.mailbox_id = m.id WHERE mm.user_id = ? ORDER BY m.address',
+  ).bind(u.id).all<{ address: string }>();
+  return [...new Set([u.email, ...results.map((r) => r.address)].map((a) => a.toLowerCase()))];
+}
+
+function principalProps(u: UserRow, addrs: string[]): Props {
   return new Map([
     [k(D, 'resourcetype'), `${COLLECTION}<D:principal/>`], [k(D, 'displayname'), esc(u.name)],
     [k(D, 'current-user-principal'), href(principalHref(u))], [k(D, 'principal-URL'), href(principalHref(u))],
     [k(D, 'owner'), href(principalHref(u))],
     [k(C, 'calendar-home-set'), href(homeHref(u, 'calendar'))], [k(CR, 'addressbook-home-set'), href(homeHref(u, 'addressbook'))],
-    [k(C, 'calendar-user-address-set'), href(`mailto:${u.email}`)],
+    [k(C, 'calendar-user-address-set'), addrs.map((a) => href(`mailto:${a}`)).join('')],
+    [k(D, 'supported-report-set'), principalReportSet()],
     [k(D, 'current-user-privilege-set'), privilegeSet()],
   ]);
 }
@@ -240,15 +253,15 @@ async function propfind(cx: Cx, target: Target): Promise<Response> {
     case 'root':
       await ensureDefaults(cx.db, u.id);
       add('/dav/', rootProps(u));
-      if (deep) add(principalHref(u), principalProps(u));
+      if (deep) add(principalHref(u), principalProps(u, await userAddresses(cx.db, u)));
       break;
     case 'principals':
       add('/dav/principals/', principalsProps(u));
-      if (deep) add(principalHref(u), principalProps(u));
+      if (deep) add(principalHref(u), principalProps(u, await userAddresses(cx.db, u)));
       break;
     case 'principal':
       await ensureDefaults(cx.db, u.id);
-      add(principalHref(u), principalProps(u));
+      add(principalHref(u), principalProps(u, await userAddresses(cx.db, u)));
       break;
     case 'home': {
       await ensureDefaults(cx.db, u.id);
@@ -305,10 +318,45 @@ function hrefToUri(h: string, prefix: string): string | null {
   }
 }
 
+/** Properties that expand-property answers with an empty value: Cirrus has no delegation, so no proxies or groups. */
+const isEmptyExpansion = (key: string) => key === k(D, 'group-membership') || (key.startsWith(`${CS} calendar-proxy-`));
+
+/** expand-property on the principal (or home): the requested properties, without nested expansion; proxy lists are empty. */
+async function expandProperty(cx: Cx, target: Target, root: XNode): Promise<Response> {
+  const u = cx.user;
+  const keys = root.children.filter((n) => n.ns === D && n.name === 'property' && n.attrs.name).map((n) => k(n.attrs.namespace || D, n.attrs.name));
+  let h: string, props: Props;
+  if (target.t === 'principal') [h, props] = [principalHref(u), principalProps(u, await userAddresses(cx.db, u))];
+  else if (target.t === 'principals') [h, props] = ['/dav/principals/', principalsProps(u)];
+  else if (target.t === 'home') [h, props] = [homeHref(u, target.kind), homeProps(u, target.kind)];
+  else [h, props] = ['/dav/', rootProps(u)];
+  for (const key of keys) if (isEmptyExpansion(key)) props.set(key, '');
+  return xmlResponse(multistatus([propResponse(h, props, { mode: 'prop', keys })]));
+}
+
+/** principal-property-search: the signed-in user is the only principal, found when the search matches their email or name. */
+async function principalPropertySearch(cx: Cx, root: XNode): Promise<Response> {
+  const u = cx.user;
+  const haystack = [u.email, u.name].map((x) => x.toLowerCase());
+  const searches = root.children.filter((n) => n.ns === D && n.name === 'property-search');
+  const matches = (s: XNode) => {
+    const m = childOf(s, D, 'match');
+    const term = textOf(m).toLowerCase();
+    if (!term) return false;
+    const type = m?.attrs['match-type'];
+    return haystack.some((h) => (type === 'equals' ? h === term : type === 'starts-with' ? h.startsWith(term) : h.includes(term)));
+  };
+  const found = searches.length > 0 && (root.attrs.test === 'anyof' ? searches.some(matches) : searches.every(matches));
+  if (!found) return xmlResponse(multistatus([]));
+  return xmlResponse(multistatus([propResponse(principalHref(u), principalProps(u, await userAddresses(cx.db, u)), parseReportProps(root))]));
+}
+
 async function report(cx: Cx, target: Target): Promise<Response> {
   const root = parseXml(await readText(cx.request, MAX_XML_BYTES));
   if (target.t !== 'coll') {
     if (target.t === 'none' || target.t === 'newcoll') throw new DavError(404);
+    if (root.ns === D && root.name === 'expand-property') return expandProperty(cx, target, root);
+    if (root.ns === D && root.name === 'principal-property-search') return principalPropertySearch(cx, root);
     throw new DavError(403, ['D', 'supported-report']);
   }
   const { coll } = target;

@@ -29,7 +29,7 @@ Signed-in (`/api/me/passkeys`):
 - Sign count: if either the stored or new count is non-zero, the new one must be strictly greater. The update is conditional, so concurrent replays cannot both pass. Authenticators that always report 0 are fine.
 - Attestation is `none`; `attStmt` is ignored (it is never used for trust).
 - Every sign-in failure is the same `401 INVALID_CREDENTIALS`. A disabled user gets `403 ACCOUNT_DISABLED` only after the signature verified, like the password path.
-- Admin password reset leaves passkeys alone; disabling a user blocks them; deleting a user cascades.
+- Changing your own password (`POST /api/me/password`) takes `revokeCredentials` (default true): when set, all the user's passkeys and app passwords are deleted in the same batch as the new hash and the other sessions. The settings form shows a checked box for it when the user has any. Admin password reset leaves passkeys alone; disabling a user blocks them; deleting a user cascades.
 
 ## Decisions and limits
 - Libraries not used: installing `@simplewebauthn/*` would have written into the node_modules shared with other worktrees, so this was built directly on WebCrypto. The test suite exercises it with a software authenticator.

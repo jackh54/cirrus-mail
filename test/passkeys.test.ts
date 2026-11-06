@@ -504,3 +504,35 @@ describe('second factor', () => {
     expect(res.headers.get('set-cookie')).toBeNull();
   });
 });
+
+describe('password change', () => {
+  const addAppPassword = (userId: string) =>
+    env.DB.prepare('INSERT INTO app_passwords (id, user_id, name, token_hash, created_at) VALUES (?, ?, ?, ?, ?)').bind(ulid(), userId, 'dav', ulid(), Date.now()).run();
+  const appPasswordCount = async (userId: string) => (await env.DB.prepare('SELECT COUNT(*) AS n FROM app_passwords WHERE user_id = ?').bind(userId).first<number>('n'))!;
+
+  it('removes passkeys and app passwords by default, and when asked to', async () => {
+    for (const body of [{}, { revokeCredentials: true }]) {
+      const u = await mkUser('pwdrevoke');
+      await addPasskey(u);
+      await addAppPassword(u.id);
+      const res = await call('/api/me/password', { body: { current: PASSWORD, next: 'brand-new-password-1', ...body }, cookie: u.cookie });
+      expect(res.status).toBe(200);
+      expect(await passkeyCount(u.id)).toBe(0);
+      expect(await appPasswordCount(u.id)).toBe(0);
+    }
+  });
+
+  it('keeps them with revokeCredentials: false, and never touches another user', async () => {
+    const u = await mkUser('pwdkeep');
+    const v = await mkUser('pwdother');
+    await addPasskey(u);
+    await addAppPassword(u.id);
+    await addPasskey(v);
+    const res = await call('/api/me/password', { body: { current: PASSWORD, next: 'brand-new-password-1', revokeCredentials: false }, cookie: u.cookie });
+    expect(res.status).toBe(200);
+    expect(await passkeyCount(u.id)).toBe(1);
+    expect(await appPasswordCount(u.id)).toBe(1);
+    expect((await call('/api/me/password', { body: { current: 'brand-new-password-1', next: 'brand-new-password-2' }, cookie: u.cookie })).status).toBe(200);
+    expect(await passkeyCount(v.id)).toBe(1);
+  });
+});

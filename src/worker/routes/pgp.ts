@@ -8,6 +8,7 @@ import { lookupWkd, normalizeArmoredPublicKey, armorPublicKey, parseWkdAddress }
 import { rowToEntry, upsertKeyring, type KeyringRow } from '../lib/pgp-keyring';
 import { hit } from '../lib/ratelimit';
 import { jsonBody, zEmail, zId } from '../lib/validate';
+import { sendableAddresses } from '../outbound/send';
 import { requireAuth } from '../middleware/session';
 import type { AppEnv } from '../types';
 
@@ -48,18 +49,28 @@ pgp.get('/key', async (c) => {
   return c.json(body);
 });
 
+/** Addresses the user may send from, by the same rule the send path applies: their mailboxes' addresses and sendable aliases. */
+async function userSendableAddresses(db: D1Database, userId: string): Promise<Set<string>> {
+  const { results } = await db.prepare('SELECT mailbox_id FROM mailbox_members WHERE user_id = ?').bind(userId).all<{ mailbox_id: string }>();
+  const sets = await Promise.all(results.map((r) => sendableAddresses(db, r.mailbox_id)));
+  return new Set(sets.flatMap((s) => [...s]));
+}
+
 pgp.put('/key', async (c) => {
   const b = await jsonBody(c, z.object({
     publicKey: zPublicKey, privateKey: zPrivateKey, addresses: z.array(zEmail).max(50), revoked: z.boolean().optional(),
   }));
   const pub = await normalizeArmoredPublicKey(b.publicKey);
+  // Addresses are what the Autocrypt header is chosen by, so only ones the user can really send from are kept.
+  const mine = await userSendableAddresses(c.env.DB, c.get('user').id);
+  const addresses = [...new Set(b.addresses)].filter((a) => mine.has(a));
   const now = Date.now();
   await c.env.DB.prepare(
     `INSERT INTO pgp_keys (user_id, fingerprint, public_key, private_key_enc, addresses, revoked, created_at, updated_at)
      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)
      ON CONFLICT(user_id) DO UPDATE SET fingerprint = ?2, public_key = ?3, private_key_enc = ?4, addresses = ?5, revoked = ?6,
        created_at = CASE WHEN pgp_keys.fingerprint = ?2 THEN pgp_keys.created_at ELSE ?7 END, updated_at = ?7`,
-  ).bind(c.get('user').id, pub.fingerprint, pub.armored, b.privateKey, JSON.stringify([...new Set(b.addresses)]), b.revoked ? 1 : 0, now).run();
+  ).bind(c.get('user').id, pub.fingerprint, pub.armored, b.privateKey, JSON.stringify(addresses), b.revoked ? 1 : 0, now).run();
   const row = await c.env.DB.prepare('SELECT * FROM pgp_keys WHERE user_id = ?').bind(c.get('user').id).first<KeyRow>();
   const body: PgpKeyResponse = { key: rowToKey(row!) };
   return c.json(body);
