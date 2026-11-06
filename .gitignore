@@ -7,3 +7,7 @@ dist/
 *.log
 .DS_Store
 coverage/
+
+# Local production secrets (never commit)
+*.secrets.env
+.claude/

@@ -15,7 +15,7 @@
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
     "db:migrate:remote": "wrangler d1 migrations apply DB --remote",
     "cf-typegen": "wrangler types",
-    "deploy": "npm run check && npm run build && npm run db:migrate:remote && wrangler deploy",
+    "deploy": "npm run check && npm run build && wrangler deploy && npm run db:migrate:remote",
     "brand": "node scripts/build-brand.mjs"
   },
   "cloudflare": {
