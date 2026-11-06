@@ -5,10 +5,11 @@ import { ulid } from '../../shared/ulid';
 import { base32Encode, hashPassword, randomBytes, sha256Hex, verifyPassword, verifyTotpStep } from '../lib/crypto';
 import { rowToUser, type UserRow } from '../lib/db';
 import { HttpError } from '../lib/errors';
+import { clear, hit } from '../lib/ratelimit';
 import { jsonBody, zName, zPassword } from '../lib/validate';
 import { authorizeSession, requireAuth } from '../middleware/session';
 import type { AppEnv } from '../types';
-import { normalizeRecoveryCode } from './auth';
+import { LOGIN_WINDOW_MS, normalizeRecoveryCode } from './auth';
 
 export const me = new Hono<AppEnv>();
 
@@ -59,6 +60,21 @@ me.get('/', async (c) => {
 
 me.use('*', requireAuth);
 
+export const REAUTH_MAX_FAILURES = 5;
+
+/**
+ * Checks the current password for a sensitive change. Like login, the attempt is counted atomically before
+ * any hashing, per user, so a stolen session cannot brute-force the password (15-minute window).
+ */
+async function requireCurrentPassword(db: D1Database, user: UserRow, password: string, message: string): Promise<void> {
+  const key = `reauth:${user.id}`;
+  if ((await hit(db, key, LOGIN_WINDOW_MS)) > REAUTH_MAX_FAILURES) {
+    throw new HttpError(429, 'RATE_LIMITED', 'Too many password attempts. Try again in 15 minutes.');
+  }
+  if (!(await verifyPassword(password, user.password_hash))) throw new HttpError(400, 'INVALID_PASSWORD', message);
+  await clear(db, key);
+}
+
 const UpdateMeSchema = z.object({
   name: zName.optional(),
   theme: z.enum(['system', 'light', 'dark']).optional(),
@@ -77,7 +93,7 @@ me.patch('/', async (c) => {
 me.post('/password', async (c) => {
   const body = await jsonBody(c, z.object({ current: z.string().min(1).max(256), next: zPassword }));
   const u = c.get('user');
-  if (!(await verifyPassword(body.current, u.password_hash))) throw new HttpError(400, 'INVALID_PASSWORD', 'Current password is incorrect');
+  await requireCurrentPassword(c.env.DB, u, body.current, 'Current password is incorrect');
   await c.env.DB.batch([
     c.env.DB.prepare('UPDATE users SET password_hash = ?, must_change_password = 0, updated_at = ? WHERE id = ?')
       .bind(await hashPassword(body.next), Date.now(), u.id),
@@ -126,7 +142,7 @@ me.post('/totp/enable', async (c) => {
 me.post('/totp/disable', async (c) => {
   const body = await jsonBody(c, z.object({ password: z.string().min(1).max(256) }));
   const u = c.get('user');
-  if (!(await verifyPassword(body.password, u.password_hash))) throw new HttpError(400, 'INVALID_PASSWORD', 'Password is incorrect');
+  await requireCurrentPassword(c.env.DB, u, body.password, 'Password is incorrect');
   await c.env.DB.batch([
     c.env.DB.prepare('UPDATE users SET totp_secret = NULL, totp_pending = NULL, totp_last_step = 0, updated_at = ? WHERE id = ?').bind(Date.now(), u.id),
     c.env.DB.prepare('DELETE FROM recovery_codes WHERE user_id = ?').bind(u.id),

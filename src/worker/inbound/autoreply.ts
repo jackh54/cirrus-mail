@@ -1,7 +1,8 @@
 // Vacation auto-reply (RFC 3834 style): at most one reply per sender per 4 days, at most
-// AUTOREPLY_DAILY_CAP per mailbox per day, and only to senders that passed SPF or DMARC (no backscatter).
+// AUTOREPLY_DAILY_CAP per mailbox per day, and only to authenticated envelope senders (no backscatter).
 import type { AuthResults } from '../../shared/api';
 import { ulid } from '../../shared/ulid';
+import { domainOf } from '../lib/addresses';
 import { cleanHeaderText } from '../lib/validate';
 
 const DAY = 24 * 3600 * 1000;
@@ -15,6 +16,8 @@ export interface AutoreplyMailbox {
 
 export interface AutoreplyInput {
   sender: string;                       // envelope sender, lowercase
+  fromDomain: string;                   // domain of the header From
+  envelopeSpfPass: boolean;             // SPF passed for the envelope sender's domain (smtp.mailfrom)
   subject: string;
   messageId: string | null;
   headers: (name: string) => string | null;
@@ -27,8 +30,11 @@ export function autoreplyEligible(mb: AutoreplyMailbox, i: AutoreplyInput): bool
   if (!mb.autoreply_enabled) return false;
   if (mb.autoreply_start && i.now < mb.autoreply_start) return false;
   if (mb.autoreply_end && i.now > mb.autoreply_end) return false;
-  // A forged envelope sender would turn us into a backscatter source: require an authenticated sender.
-  if (i.auth?.spf !== 'pass' && i.auth?.dmarc !== 'pass') return false;
+  // A forged envelope sender would turn us into a backscatter source. The reply goes to the envelope sender,
+  // so the header From must be authenticated (aligned pass) and the envelope must belong to it: the same
+  // domain exactly (no suffix matching without a public-suffix list), or SPF passed for the envelope itself.
+  if (i.auth?.aligned !== true) return false;
+  if (domainOf(i.sender) !== i.fromDomain && !i.envelopeSpfPass) return false;
   if (!i.sender || i.ownAddresses.has(i.sender)) return false;
   if (/^(mailer-daemon|postmaster|no-?reply|do-?not-?reply|bounces?)[@+]/i.test(i.sender)) return false;
   const auto = i.headers('auto-submitted');

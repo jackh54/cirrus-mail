@@ -1,11 +1,13 @@
 import createDOMPurify from 'dompurify';
+import { isRemoteImageUrl, remoteImageKey } from './image-url';
 
 /**
  * Email HTML pipeline (design §3.4):
  * 1. DOMPurify (no scripts, forms, embeds, frames, handlers, javascript: URLs).
  * 2. Our own DOM pass: links open in a new tab with noopener/noreferrer, remote images and CSS
  *    url()s are swapped for a blank placeholder unless a signed proxy URL was supplied, and
- *    relative same-origin URLs (signed cid: attachment links) are made absolute.
+ *    signed cid: attachment links (/api/files/) are made absolute. Every other URL on our own
+ *    origin counts as remote (see isRemoteImageUrl).
  * 3. The result is wrapped in a srcdoc document with a strict CSP meta. It is rendered in a
  *    sandbox without allow-scripts/allow-same-origin, so even a sanitizer bypass cannot run code.
  * 4. We classify the mail as "designed" (its own backgrounds, colours or fixed-width layout) or
@@ -27,25 +29,10 @@ const PLACEHOLDER =
 
 const CSS_URL = /url\(\s*(['"]?)(.*?)\1\s*\)/gi;
 
-function isRemote(url: string): boolean {
-  const u = url.trim();
-  if (!/^(https?:)?\/\//i.test(u)) return false;
-  try {
-    return new URL(u, location.href).origin !== location.origin;
-  } catch {
-    return true;
-  }
-}
-
 function absolutize(url: string): string {
   const u = url.trim();
   if (u.startsWith('/') && !u.startsWith('//')) return location.origin + u;
   return u;
-}
-
-function normalizeRemote(url: string): string {
-  const u = url.trim();
-  return u.startsWith('//') ? `https:${u}` : u;
 }
 
 function isDangerousUrl(v: string): boolean {
@@ -68,10 +55,12 @@ export interface PreparedEmail {
   emailCss: string;
   /** True when the email brings its own backgrounds, colours or fixed-width layout. */
   designed: boolean;
-  /** Remote image URLs found (normalised to https: for protocol-relative ones). */
+  /** Remote image URLs found (absolute; https: for protocol-relative ones). */
   remoteUrls: string[];
   /** True when some remote content was blocked in this rendering. */
   blocked: boolean;
+  /** True once "Load images" supplied signed proxy URLs; until then the iframe CSP refuses the proxy path. */
+  proxied: boolean;
 }
 
 /** `signed` maps original remote URL → signed proxy URL. Pass null to block remote images. */
@@ -80,8 +69,8 @@ export function prepareEmail(rawHtml: string, signed: Record<string, string> | n
   let blocked = false;
 
   const rewriteUrl = (url: string): string | null => {
-    if (!isRemote(url)) return absolutize(url);
-    const n = normalizeRemote(url);
+    if (!isRemoteImageUrl(url, location.href)) return absolutize(url);
+    const n = remoteImageKey(url, location.href);
     remote.add(n);
     const s = signed?.[n] ?? signed?.[url.trim()];
     if (s) return absolutize(s);
@@ -129,6 +118,16 @@ export function prepareEmail(rawHtml: string, signed: Record<string, string> | n
         if (!r) el.setAttribute('data-cirrus-blocked', '');
       }
     }
+    // SVG <image>/<feImage> load their href like an <img> src.
+    if (tag === 'image' || tag === 'feimage') {
+      for (const name of ['href', 'xlink:href']) {
+        const v = el.getAttribute(name);
+        if (!v) continue;
+        const r = rewriteUrl(v);
+        if (r) el.setAttribute(name, r);
+        else el.removeAttribute(name);
+      }
+    }
     const bg = el.getAttribute('background');
     if (bg) {
       const r = rewriteUrl(bg);
@@ -155,7 +154,7 @@ export function prepareEmail(rawHtml: string, signed: Record<string, string> | n
     while (body.firstChild) wrapper.appendChild(body.firstChild);
   }
 
-  return { bodyHtml: wrapper.outerHTML, emailCss: headStyles.join('\n'), designed, remoteUrls: [...remote], blocked };
+  return { bodyHtml: wrapper.outerHTML, emailCss: headStyles.join('\n'), designed, remoteUrls: [...remote], blocked, proxied: signed !== null };
 }
 
 /** Near-black greys count as "default" text colour; anything else is a deliberate colour. */
@@ -250,7 +249,11 @@ img:not(picture img):not([data-cirrus-blocked]),picture,video,svg,[background],[
 
 /** Build the iframe document for a rendering mode. Layout is identical across modes, so heights match. */
 export function emailSrcdoc(p: PreparedEmail, mode: RenderMode): string {
-  const csp = `default-src 'none'; img-src data: ${location.origin}; style-src 'unsafe-inline'; font-src data:`;
+  // Images may come only from our signed attachment path, plus the image proxy once the user chose
+  // "Load images". So a sender-supplied proxy URL that slips past the DOM pass (image-set(), CSS escapes)
+  // still cannot load before that click.
+  const img = `${location.origin}/api/files/${p.proxied ? ` ${location.origin}/api/proxy/image` : ''}`;
+  const csp = `default-src 'none'; img-src data: ${img}; style-src 'unsafe-inline'; font-src data:`;
   const modeCss = mode === 'dark' ? DARK_CSS : mode === 'invert' ? INVERT_CSS : '';
   return (
     '<!doctype html><html><head><meta charset="utf-8">' +

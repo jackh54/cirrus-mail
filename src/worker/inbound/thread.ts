@@ -33,19 +33,28 @@ export interface ThreadLookup {
 }
 
 export async function findThread(db: D1Database, q: ThreadLookup): Promise<string | null> {
-  // 1. Header references, In-Reply-To first, then References newest → oldest.
+  const others = new Set(q.participants.filter((p) => !q.ownAddresses.has(p)));
+  // 1. Header references, In-Reply-To first, then References newest → oldest. A Message-ID can be reused by
+  //    a sender, so our own sent message wins, then the oldest copy, and a referenced message only counts when
+  //    its participants overlap this message's. A reference that only matched strangers starts a new thread.
   const ids = [...new Set([...q.inReplyTo, ...[...q.references].reverse()])].slice(0, 50);
   if (ids.length) {
     const { results } = await db.prepare(
-      `SELECT message_id_hdr, thread_id FROM messages WHERE mailbox_id = ? AND message_id_hdr IN (${ids.map(() => '?').join(',')})`,
-    ).bind(q.mailboxId, ...ids).all<{ message_id_hdr: string; thread_id: string }>();
-    const map = new Map(results.map((r) => [r.message_id_hdr, r.thread_id]));
-    for (const id of ids) if (map.has(id)) return map.get(id)!;
+      `SELECT message_id_hdr, thread_id, from_email, to_json, cc_json, bcc_json FROM messages
+        WHERE mailbox_id = ? AND message_id_hdr IN (${ids.map(() => '?').join(',')})
+        ORDER BY direction = 'out' DESC, created_at ASC, id ASC LIMIT 200`,
+    ).bind(q.mailboxId, ...ids).all<{ message_id_hdr: string; thread_id: string; from_email: string; to_json: string; cc_json: string; bcc_json: string }>();
+    for (const id of ids) {
+      for (const r of results) {
+        if (r.message_id_hdr !== id) continue;
+        const addrs = [r.from_email, ...[r.to_json, r.cc_json, r.bcc_json].flatMap((j) => parseJsonAddresses(j).map((a) => a.email))];
+        if (addrs.some((a) => others.has(a.toLowerCase()))) return r.thread_id;
+      }
+    }
+    if (results.length) return null;
   }
   // 2. Subject fallback: same normalized subject and a shared (non-own) participant within 30 days.
-  if (!q.subjectNorm) return null;
-  const others = new Set(q.participants.filter((p) => !q.ownAddresses.has(p)));
-  if (!others.size) return null;
+  if (!q.subjectNorm || !others.size) return null;
   const { results: candidates } = await db.prepare(
     'SELECT id FROM threads WHERE mailbox_id = ? AND subject_norm = ? AND last_message_at > ? ORDER BY last_message_at DESC LIMIT 5',
   ).bind(q.mailboxId, q.subjectNorm, q.now - THIRTY_DAYS).all<{ id: string }>();

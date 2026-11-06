@@ -160,11 +160,17 @@ export async function recordOutcome(env: Env, row: MessageRow, result: SendResul
   await db.batch(stmts);
 }
 
-/** Atomically claims a draft/failed/scheduled row for sending. */
-export async function claimForSend(db: D1Database, id: string, from: ('draft' | 'failed' | 'scheduled')[]): Promise<boolean> {
+/**
+ * Atomically claims a draft/failed/scheduled row for sending and returns the row as it is at that moment
+ * (null when it was not claimable). Send only from this returned row: recipients, subject and body key then
+ * come from one snapshot, and a 'sending' row can no longer be edited, cancelled or rescheduled.
+ * With `dueBy`, the row's send_at must also still be at or before it (scheduled sends).
+ */
+export async function claimForSend(db: D1Database, id: string, from: ('draft' | 'failed' | 'scheduled')[], dueBy?: number): Promise<MessageRow | null> {
   const ph = from.map(() => '?').join(',');
-  const res = await db.prepare(`UPDATE messages SET status = 'sending', updated_at = ? WHERE id = ? AND status IN (${ph})`).bind(Date.now(), id, ...from).run();
-  return res.meta.changes === 1;
+  const due = dueBy === undefined ? '' : ' AND send_at <= ?';
+  return db.prepare(`UPDATE messages SET status = 'sending', updated_at = ? WHERE id = ? AND status IN (${ph})${due} RETURNING *`)
+    .bind(Date.now(), id, ...from, ...(dueBy === undefined ? [] : [dueBy])).first<MessageRow>();
 }
 
 /** Contacts are collected for the sending user, or for every member when the cron sends. */
@@ -175,15 +181,15 @@ export async function mailboxMemberIds(db: D1Database, mailboxId: string): Promi
 
 /**
  * Re-checks a claimed scheduled message right before the cron sends it: the From identity must still
- * belong to the mailbox, and whoever scheduled it must still be an active member.
+ * belong to the mailbox, and whoever scheduled it must still be an active member (a NULL scheduled_by fails).
  * Returns null when it may be sent, otherwise the failure to record.
  */
 export async function checkScheduled(db: D1Database, row: MessageRow): Promise<{ code: string; message: string } | null> {
+  // Rows scheduled before scheduled_by existed have no one to vouch for them: fail closed.
   const member = row.scheduled_by
     ? await db.prepare('SELECT 1 FROM mailbox_members mm JOIN users u ON u.id = mm.user_id WHERE mm.mailbox_id = ? AND mm.user_id = ? AND u.disabled = 0')
         .bind(row.mailbox_id, row.scheduled_by).first()
-    : await db.prepare('SELECT 1 FROM mailbox_members mm JOIN users u ON u.id = mm.user_id WHERE mm.mailbox_id = ? AND u.disabled = 0 LIMIT 1')
-        .bind(row.mailbox_id).first();
+    : null;
   if (!member) return { code: 'IDENTITY_NOT_ALLOWED', message: sendErrorMessage('IDENTITY_NOT_ALLOWED') };
   try {
     await validateDraft(db, row);

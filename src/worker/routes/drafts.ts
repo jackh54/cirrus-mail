@@ -5,7 +5,7 @@ import { ulid } from '../../shared/ulid';
 import { dedupeAddresses } from '../lib/addresses';
 import {
   addressesForFts, attachmentToApi, deleteMessagesForever, ftsDeleteStmts, ftsInsertStmts, loadMessageFull, messageRowToFull,
-  recomputeThreadStmts, recomputeThreads, type AttachmentRow, type MessageRow,
+  recomputeThreadStmts, recomputeThreads, type AttachmentRow, type MessageRow, type SqlGuard,
 } from '../lib/db';
 import { HttpError, notFound } from '../lib/errors';
 import { htmlToText, makeSnippet } from '../lib/html';
@@ -170,25 +170,33 @@ drafts.put('/drafts/:id', async (c) => {
   // If this batch fails the new object is left behind rather than risk deleting one the row may point at.
   // One batch: the body key being replaced (read inside the transaction, so concurrent saves each delete the
   // right one), the update, FTS, aggregates, then the saved row and its attachments for the response.
+  // The update only applies while the row is still editable: a send may have claimed it since loadDraft, and
+  // that send reads this row's recipients and body key. Everything after it runs only if it applied.
+  const applied: SqlGuard = { sql: 'EXISTS (SELECT 1 FROM messages WHERE id = ? AND body_key = ?)', params: [row.id, key] };
   const results = await db.batch([
     db.prepare('SELECT body_key FROM messages WHERE id = ?').bind(row.id),
     db.prepare(
       `UPDATE messages SET status = 'draft', error_code = NULL, error_message = NULL, from_email = ?, from_name = ?, to_json = ?, cc_json = ?,
          bcc_json = ?, subject = ?, snippet = ?, body_key = ?, size = ? + (SELECT COALESCE(SUM(size), 0) FROM attachments WHERE message_id = ?),
-         date = ?, updated_at = ? WHERE id = ?`,
+         date = ?, updated_at = ? WHERE id = ? AND status IN ('draft','failed')`,
     ).bind(b.from, fromName, JSON.stringify(to), JSON.stringify(cc), JSON.stringify(bcc), b.subject, makeSnippet(text), key,
       bytes(b.html) + bytes(text), row.id, now, now, row.id),
-    ...ftsDeleteStmts(db, [row.id]),
-    ...ftsInsertStmts(db, { id: row.id, mailboxId: mb, subject: b.subject, addresses: addressesForFts({ email: b.from, name: fromName }, to, cc, bcc), body: text }),
-    db.prepare("UPDATE threads SET subject_norm = ? WHERE id = ? AND NOT EXISTS (SELECT 1 FROM messages WHERE thread_id = ? AND status IN ('received','sent'))")
-      .bind(normalizeSubject(b.subject), row.thread_id, row.thread_id),
+    ...ftsDeleteStmts(db, [row.id], applied),
+    ...ftsInsertStmts(db, { id: row.id, mailboxId: mb, subject: b.subject, addresses: addressesForFts({ email: b.from, name: fromName }, to, cc, bcc), body: text }, applied),
+    db.prepare(`UPDATE threads SET subject_norm = ? WHERE id = ? AND NOT EXISTS (SELECT 1 FROM messages WHERE thread_id = ? AND status IN ('received','sent')) AND ${applied.sql}`)
+      .bind(normalizeSubject(b.subject), row.thread_id, row.thread_id, ...applied.params),
     ...recomputeThreadStmts(db, row.thread_id),
     db.prepare('SELECT * FROM messages WHERE id = ?').bind(row.id),
     db.prepare('SELECT * FROM attachments WHERE message_id = ? ORDER BY created_at, id').bind(row.id),
   ]);
+  const updated = results[results.length - 2].results[0] as unknown as MessageRow | undefined;
+  if (updated?.body_key !== key) {
+    // Not applied: the row still points at its old body, which must stay; the new upload is unreferenced.
+    c.executionCtx.waitUntil(c.env.BUCKET.delete(key));
+    throw new HttpError(409, 'NOT_A_DRAFT', 'This message is no longer a draft');
+  }
   const replaced = (results[0].results[0] as { body_key: string | null } | undefined)?.body_key;
   if (replaced && replaced !== key) c.executionCtx.waitUntil(c.env.BUCKET.delete(replaced));
-  const updated = results[results.length - 2].results[0] as unknown as MessageRow;
   const o = origin(c.req.url);
   const atts = await Promise.all((results[results.length - 1].results as unknown as AttachmentRow[]).map((a) => attachmentToApi(c.env, o, a)));
   return c.json(messageRowToFull(updated, { html: b.html, text }, atts));
@@ -271,8 +279,10 @@ drafts.post('/drafts/:id/send', async (c) => {
     const updated = await db.prepare('SELECT * FROM messages WHERE id = ?').bind(row.id).first<MessageRow>();
     return c.json({ message: await loadMessageFull(c.env, o, updated!), status: 'scheduled' as const });
   }
-  if (!(await claimForSend(db, row.id, ['draft', 'failed']))) throw new HttpError(409, 'NOT_A_DRAFT', 'This message is already being sent');
-  const result = await performSend(c.env, row, [c.get('user').id]);
+  // Send from the row the claim returned, so a save that landed after loadDraft is sent consistently.
+  const claimed = await claimForSend(db, row.id, ['draft', 'failed']);
+  if (!claimed) throw new HttpError(409, 'NOT_A_DRAFT', 'This message is already being sent');
+  const result = await performSend(c.env, claimed, [c.get('user').id]);
   if (!result.ok) throw new HttpError(sendErrorStatus(result.code), result.code, result.message);
   const updated = await db.prepare('SELECT * FROM messages WHERE id = ?').bind(row.id).first<MessageRow>();
   return c.json({ message: await loadMessageFull(c.env, o, updated!), status: 'sent' as const });

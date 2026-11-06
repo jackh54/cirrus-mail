@@ -6,7 +6,10 @@ function row(label: string, v?: string) {
   return `${label} ${v ?? 'none'}`;
 }
 
-/** Shield showing SPF/DKIM/DMARC; warns when DMARC fails. */
+/**
+ * Shield showing SPF/DKIM/DMARC; warns when DMARC fails. "Verified" needs `aligned`: a DMARC or DKIM pass
+ * for the From domain shown. SPF and DKIM passes for some other domain prove nothing about that From.
+ */
 export function AuthBadge({ auth }: { auth: AuthResults | null }) {
   if (!auth) return null;
   const summary = [row('SPF', auth.spf), row('DKIM', auth.dkim), row('DMARC', auth.dmarc)].join(', ');
@@ -17,7 +20,7 @@ export function AuthBadge({ auth }: { auth: AuthResults | null }) {
       </Tooltip>
     );
   }
-  if (auth.dmarc === 'pass' || (auth.spf === 'pass' && auth.dkim === 'pass')) {
+  if (auth.aligned === true) {
     return (
       <Tooltip label="Sender verified" content={<>Verified sender<br /><span className="opacity-70">{summary}</span></>}>
         <ShieldCheck size={14} strokeWidth={1.75} className="text-success" />

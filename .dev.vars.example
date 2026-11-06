@@ -1,3 +1,6 @@
 # Copy to .dev.vars for local development. In production set these with `wrangler secret put`.
-SETUP_TOKEN=change-me-to-a-long-random-string
-APP_SECRET=change-me-to-32-plus-random-characters
+# Both must be long random values: generate each with `openssl rand -hex 32`.
+# Values shorter than 24 characters or starting with "change-me" are refused: setup answers
+# 503 SETUP_NOT_CONFIGURED and signed attachment/image URLs answer 503 until they are replaced.
+SETUP_TOKEN=change-me-run-openssl-rand-hex-32
+APP_SECRET=change-me-run-openssl-rand-hex-32

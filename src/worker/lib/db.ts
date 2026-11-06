@@ -18,6 +18,7 @@ export interface MessageRow {
   is_starred: number; spam_score: number; auth_json: string | null; list_id: string | null; send_at: number | null;
   sent_at: number | null; error_code: string | null; error_message: string | null; date: number; scheduled_by: string | null;
   created_at: number; updated_at: number; folder_changed_at: number; fts_rowid: number | null;
+  display_date: number | null; content_hash: string | null;
 }
 
 export interface AttachmentRow {
@@ -154,18 +155,37 @@ export function rewriteCids(html: string, atts: Attachment[]): string {
   });
 }
 
-export function messageRowToFull(r: MessageRow, body: StoredBody, attachments: Attachment[]): MessageFull {
+/**
+ * Sender HTML may not point at our own API: a pre-signed /api/proxy/image URL would otherwise load without
+ * "Load images". Relative, protocol-relative and absolute same-origin /api/ references (backslashes too) are
+ * made inert. Entity-encoded forms survive this string pass; the client re-checks every URL after parsing.
+ */
+export function neutralizeOwnApiUrls(html: string, origin: string): string {
+  let host: string;
+  try {
+    host = new URL(origin).host.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  } catch {
+    return html;
+  }
+  const re = new RegExp(`(?<![\\w.~%@:/\\\\-])(?:(?:https?:)?[\\\\/]{2}${host}(?::\\d+)?)?[\\\\/]+api[\\\\/]`, 'gi');
+  return html.replace(re, 'about:invalid#api/');
+}
+
+/** `origin` (the request's) enables neutralizeOwnApiUrls for received mail. */
+export function messageRowToFull(r: MessageRow, body: StoredBody, attachments: Attachment[], origin?: string): MessageFull {
   let auth: AuthResults | null = null;
   if (r.auth_json) try { auth = JSON.parse(r.auth_json); } catch { /* ignore */ }
+  let html = body.html;
+  if (html && origin && r.direction === 'in') html = neutralizeOwnApiUrls(html, origin);
   return {
     id: r.id, threadId: r.thread_id, folderId: r.folder_id, direction: r.direction, status: r.status,
     messageIdHeader: r.message_id_hdr, parentId: r.parent_id, composeMode: r.compose_mode,
     from: r.from_name ? { email: r.from_email, name: r.from_name } : { email: r.from_email },
     to: parseJsonAddresses(r.to_json), cc: parseJsonAddresses(r.cc_json), bcc: parseJsonAddresses(r.bcc_json),
     replyTo: r.reply_to, subject: r.subject, snippet: r.snippet,
-    html: body.html ? rewriteCids(body.html, attachments) : body.html, text: body.text, attachments,
+    html: html ? rewriteCids(html, attachments) : html, text: body.text, attachments,
     isRead: !!r.is_read, isStarred: !!r.is_starred, spamScore: r.spam_score, auth, listId: r.list_id,
-    sendAt: r.send_at, sentAt: r.sent_at, errorCode: r.error_code, errorMessage: r.error_message, date: r.date,
+    sendAt: r.send_at, sentAt: r.sent_at, errorCode: r.error_code, errorMessage: r.error_message, date: r.display_date ?? r.date,
   };
 }
 
@@ -176,22 +196,27 @@ export async function loadMessageFull(env: Env, origin: string, r: MessageRow): 
     loadBody(env, r.body_key),
   ]);
   const atts = await Promise.all(results.map((a) => attachmentToApi(env, origin, a)));
-  return messageRowToFull(r, body, atts);
+  return messageRowToFull(r, body, atts, origin);
 }
 
 // messages_fts.message_id is UNINDEXED, so finding a row by it scans the whole index. Each message records its
 // FTS rowid instead (messages.fts_rowid, migration 0004), and rows are found by rowid.
 const LAST_FTS_ROWID = '(SELECT rowid FROM messages_fts ORDER BY rowid DESC LIMIT 1)';
 
+/** An extra SQL condition (with its params) that FTS statements in a batch only run under. */
+export interface SqlGuard { sql: string; params: unknown[] }
+
 /**
  * Inserts a message's FTS row with an explicit rowid (one past the highest) and records that rowid on the
  * message. Run in a batch after the message row exists; the batch's transaction keeps "highest" ours.
  */
-export function ftsInsertStmts(db: D1Database, m: { id: string; mailboxId: string; subject: string; addresses: string; body: string }): D1PreparedStatement[] {
+export function ftsInsertStmts(db: D1Database, m: { id: string; mailboxId: string; subject: string; addresses: string; body: string }, guard?: SqlGuard): D1PreparedStatement[] {
+  const g = guard ? ` AND ${guard.sql}` : '';
+  const gp = guard?.params ?? [];
   return [
-    db.prepare(`INSERT INTO messages_fts (rowid, message_id, mailbox_id, subject, addresses, body) VALUES (COALESCE(${LAST_FTS_ROWID}, 0) + 1, ?, ?, ?, ?, ?)`)
-      .bind(m.id, m.mailboxId, m.subject, m.addresses, m.body.slice(0, 200_000)),
-    db.prepare(`UPDATE messages SET fts_rowid = ${LAST_FTS_ROWID} WHERE id = ?`).bind(m.id),
+    db.prepare(`INSERT INTO messages_fts (rowid, message_id, mailbox_id, subject, addresses, body) SELECT COALESCE(${LAST_FTS_ROWID}, 0) + 1, ?, ?, ?, ?, ? WHERE 1${g}`)
+      .bind(m.id, m.mailboxId, m.subject, m.addresses, m.body.slice(0, 200_000), ...gp),
+    db.prepare(`UPDATE messages SET fts_rowid = ${LAST_FTS_ROWID} WHERE id = ?${g}`).bind(m.id, ...gp),
   ];
 }
 
@@ -200,13 +225,15 @@ export function ftsInsertStmts(db: D1Database, m: { id: string; mailboxId: strin
  * them, or by an older deploy) fall back to the message_id scan; the gate keeps that scan from running otherwise.
  * Run before the message rows are deleted.
  */
-export function ftsDeleteStmts(db: D1Database, messageIds: string[]): D1PreparedStatement[] {
+export function ftsDeleteStmts(db: D1Database, messageIds: string[], guard?: SqlGuard): D1PreparedStatement[] {
   const ph = messageIds.map(() => '?').join(',');
+  const g = guard ? ` AND ${guard.sql}` : '';
+  const gp = guard?.params ?? [];
   return [
-    db.prepare(`DELETE FROM messages_fts WHERE rowid IN (SELECT fts_rowid FROM messages WHERE id IN (${ph}) AND fts_rowid IS NOT NULL)`).bind(...messageIds),
+    db.prepare(`DELETE FROM messages_fts WHERE rowid IN (SELECT fts_rowid FROM messages WHERE id IN (${ph}) AND fts_rowid IS NOT NULL)${g}`).bind(...messageIds, ...gp),
     db.prepare(`DELETE FROM messages_fts WHERE rowid IN (
                   SELECT f.rowid FROM (SELECT 1 FROM messages WHERE id IN (${ph}) AND fts_rowid IS NULL LIMIT 1) gate
-                  CROSS JOIN messages_fts f WHERE f.message_id IN (${ph}))`).bind(...messageIds, ...messageIds),
+                  CROSS JOIN messages_fts f WHERE f.message_id IN (${ph}))${g}`).bind(...messageIds, ...messageIds, ...gp),
   ];
 }
 

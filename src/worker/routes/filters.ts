@@ -1,4 +1,4 @@
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { z } from 'zod';
 import type { Filter } from '../../shared/api';
 import { ulid } from '../../shared/ulid';
@@ -32,6 +32,15 @@ const FilterSchema = z.object({
   sort: z.number().int().min(0).max(100_000),
 });
 
+const forwards = (f: z.infer<typeof FilterSchema>) => f.actions.some((a) => a.type === 'forward_to');
+
+/** forward_to sends mail out of the mailbox, so only its owners (or an admin) may set one up. */
+function checkForwardAllowed(c: Context<AppEnv>, f: z.infer<typeof FilterSchema>) {
+  if (forwards(f) && c.get('mailbox').role !== 'owner' && c.get('user').role !== 'admin') {
+    throw new HttpError(403, 'FORBIDDEN', 'Only mailbox owners or admins can create forwarding filters');
+  }
+}
+
 async function validate(db: D1Database, mb: string, f: z.infer<typeof FilterSchema>) {
   for (const c of f.conditions) {
     if (c.op === 'regex') {
@@ -56,10 +65,11 @@ filters.get('/filters', async (c) => {
 filters.post('/filters', async (c) => {
   const b = await jsonBody(c, FilterSchema);
   const mb = c.get('mailbox').id;
+  checkForwardAllowed(c, b);
   await validate(c.env.DB, mb, b);
   const id = ulid();
-  await c.env.DB.prepare('INSERT INTO filters (id, mailbox_id, name, match, conditions, actions, enabled, sort, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
-    .bind(id, mb, b.name, b.match, JSON.stringify(b.conditions), JSON.stringify(b.actions), b.enabled ? 1 : 0, b.sort, Date.now()).run();
+  await c.env.DB.prepare('INSERT INTO filters (id, mailbox_id, name, match, conditions, actions, enabled, sort, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .bind(id, mb, b.name, b.match, JSON.stringify(b.conditions), JSON.stringify(b.actions), b.enabled ? 1 : 0, b.sort, Date.now(), c.get('user').id).run();
   const f: Filter = { id, ...b };
   return c.json(f, 201);
 });
@@ -67,10 +77,13 @@ filters.post('/filters', async (c) => {
 filters.put('/filters/:id', async (c) => {
   const b = await jsonBody(c, FilterSchema);
   const mb = c.get('mailbox').id;
+  checkForwardAllowed(c, b);
   await validate(c.env.DB, mb, b);
   const id = c.req.param('id');
-  const res = await c.env.DB.prepare('UPDATE filters SET name = ?, match = ?, conditions = ?, actions = ?, enabled = ?, sort = ? WHERE id = ? AND mailbox_id = ?')
-    .bind(b.name, b.match, JSON.stringify(b.conditions), JSON.stringify(b.actions), b.enabled ? 1 : 0, b.sort, id, mb).run();
+  // Saving a forward_to makes the saver the one it runs on behalf of (see the inbound handler).
+  const res = await c.env.DB.prepare(
+    'UPDATE filters SET name = ?, match = ?, conditions = ?, actions = ?, enabled = ?, sort = ?, created_by = CASE WHEN ? THEN ? ELSE created_by END WHERE id = ? AND mailbox_id = ?',
+  ).bind(b.name, b.match, JSON.stringify(b.conditions), JSON.stringify(b.actions), b.enabled ? 1 : 0, b.sort, forwards(b) ? 1 : 0, c.get('user').id, id, mb).run();
   if (!res.meta.changes) throw notFound('Filter not found');
   const f: Filter = { id, ...b };
   return c.json(f);

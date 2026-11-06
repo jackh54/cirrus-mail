@@ -191,7 +191,7 @@ mailReads.get('/threads/:tid', async (c) => {
   // All R2 bodies in parallel.
   const messages = await Promise.all(rows.map(async (m) => {
     const [body, list] = await Promise.all([loadBody(c.env, m.body_key), Promise.all((attByMsg.get(m.id) ?? []).map((a) => attachmentToApi(c.env, o, a)))]);
-    return messageRowToFull(m, body, list);
+    return messageRowToFull(m, body, list, o);
   }));
   const summary = threadRowToSummary(t, [...new Set(rows.map((m) => m.folder_id))]);
   return c.json({ thread: summary, messages });

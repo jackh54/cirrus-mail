@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { Filter } from '../src/shared/api';
-import { compileRegex, evaluateFilters, MAX_FIELD_LENGTH, regexSafetyIssue, type FilterSubject } from '../src/worker/inbound/filters';
-import { isBlocked, parseAuthResults, scoreSpam } from '../src/worker/inbound/spam';
+import { compileRegex, evaluateFilters, MAX_FIELD_LENGTH, MAX_REGEX_INPUT, regexSafetyIssue, type FilterSubject } from '../src/worker/inbound/filters';
+import { isAligned, isBlocked, parseAuthResults, scoreSpam, spfPassesFor, toAuthResults, trustedAuthResults } from '../src/worker/inbound/spam';
 
 describe('spam scoring', () => {
   it('parses Authentication-Results', () => {
     expect(parseAuthResults('mx.cloudflare.net; dkim=pass header.d=x.test; spf=softfail smtp.mailfrom=x.test; dmarc=fail header.from=x.test'))
-      .toEqual({ dkim: 'pass', spf: 'softfail', dmarc: 'fail' });
+      .toEqual({ authservId: 'mx.cloudflare.net', dkim: 'pass', dkimPassDomains: ['x.test'], spf: 'softfail', spfMailFrom: 'x.test', dmarc: 'fail', dmarcHeaderFrom: 'x.test' });
     expect(parseAuthResults(null)).toBeNull();
   });
   it('scores dmarc/spf/dkim failures', () => {
@@ -16,14 +16,57 @@ describe('spam scoring', () => {
     expect(scoreSpam({ auth: { dmarc: 'pass' }, blocked: false, inContacts: false })).toEqual({ score: 0, isSpam: false });
   });
   it('contacts get a bonus and are never spam, unless DMARC failed; blocked always is', () => {
-    expect(scoreSpam({ auth: { spf: 'fail', dkim: 'fail' }, blocked: false, inContacts: true })).toEqual({ score: 1, isSpam: false });
-    expect(scoreSpam({ auth: { dmarc: 'pass', spf: 'fail' }, blocked: false, inContacts: true })).toEqual({ score: 0, isSpam: false });
+    expect(scoreSpam({ auth: { spf: 'fail', dkim: 'fail', aligned: true }, blocked: false, inContacts: true })).toEqual({ score: 1, isSpam: false });
+    expect(scoreSpam({ auth: { dmarc: 'pass', spf: 'fail', aligned: true }, blocked: false, inContacts: true })).toEqual({ score: 0, isSpam: false });
     expect(scoreSpam({ auth: null, blocked: true, inContacts: true }).isSpam).toBe(true);
   });
   it('a spoofed contact (dmarc=fail) gets no bonus and stays spam', () => {
     expect(scoreSpam({ auth: { dmarc: 'fail' }, blocked: false, inContacts: true })).toEqual({ score: 5, isSpam: true });
     expect(scoreSpam({ auth: { dmarc: 'fail', spf: 'fail', dkim: 'fail' }, blocked: false, inContacts: true })).toEqual({ score: 9, isSpam: true });
   });
+  it('#1 verified needs a pass aligned with the From domain, not just spf=pass dkim=pass', () => {
+    const spoof = parseAuthResults('mx.cloudflare.net; dkim=pass header.d=attacker.test header.s=s1; spf=pass smtp.mailfrom=bounce@attacker.test; dmarc=none');
+    expect(toAuthResults(spoof, 'bank.test')).toEqual({ spf: 'pass', dkim: 'pass', dmarc: 'none', aligned: false });
+    const dmarc = parseAuthResults('mx.cloudflare.net; dkim=pass header.d=gmail.com header.s=x; dmarc=pass header.from=gmail.com policy.dmarc=none; spf=none (no record) smtp.helo=mail.gmail.com');
+    expect(isAligned(dmarc, 'gmail.com')).toBe(true);
+    expect(isAligned(dmarc, 'bank.test')).toBe(false);                     // dmarc passed for another header.from
+    const parent = parseAuthResults('mx.cloudflare.net; dkim=pass header.d=bank.test; dmarc=none');
+    expect(isAligned(parent, 'alerts.bank.test')).toBe(true);              // d= is the From domain's org parent
+    expect(isAligned(parent, 'evilbank.test')).toBe(false);
+    expect(isAligned(parseAuthResults('mx.cloudflare.net; dkim=pass header.d=mail.bank.test; dmarc=none'), 'bank.test')).toBe(false);
+    expect(isAligned(parseAuthResults('mx.cloudflare.net; dkim=fail header.d=bank.test; dmarc=fail header.from=bank.test'), 'bank.test')).toBe(false);
+  });
+
+  it('#1 an unaligned pass earns a known contact no bonus', () => {
+    expect(scoreSpam({ auth: { spf: 'fail', dkim: 'fail', dmarc: 'none', aligned: false }, blocked: false, inContacts: true })).toEqual({ score: 4, isSpam: false });
+    expect(scoreSpam({ auth: { spf: 'fail', dkim: 'fail' }, blocked: false, inContacts: true })).toEqual({ score: 4, isSpam: false }); // old rows: no aligned
+  });
+
+  it('#4 SPF must pass for the envelope domain (smtp.mailfrom), not the HELO name', () => {
+    expect(spfPassesFor(parseAuthResults('mx.cloudflare.net; spf=pass smtp.mailfrom=bounce@esp.test'), 'esp.test')).toBe(true);
+    expect(spfPassesFor(parseAuthResults('mx.cloudflare.net; spf=pass smtp.mailfrom=bounce@esp.test'), 'victim.test')).toBe(false);
+    expect(spfPassesFor(parseAuthResults('mx.cloudflare.net; spf=pass smtp.helo=victim.test'), 'victim.test')).toBe(false);
+    expect(spfPassesFor(parseAuthResults('mx.cloudflare.net; spf=softfail smtp.mailfrom=victim.test'), 'victim.test')).toBe(false);
+  });
+
+  it('Authentication-Results: only the topmost mx.cloudflare.net header, tokenized per resinfo', () => {
+    // A verdict-looking property value or comment is not a verdict.
+    const smuggled = parseAuthResults('mx.cloudflare.net; spf=softfail smtp.mailfrom=dmarc=pass@evil.test; dkim=none (dmarc=pass header.from=bank.test); dmarc=fail header.from=bank.test');
+    expect(smuggled).toMatchObject({ spf: 'softfail', dkim: 'none', dmarc: 'fail', dmarcHeaderFrom: 'bank.test' });
+    expect(parseAuthResults('mx.cloudflare.net; spf=pass smtp.mailfrom="dmarc=pass; dkim=pass"@evil.test')).toMatchObject({ spf: 'pass' });
+    expect(parseAuthResults('mx.cloudflare.net; spf=pass smtp.mailfrom="dmarc=pass; dkim=pass"@evil.test')?.dmarc).toBeUndefined();
+    expect(parseAuthResults('mx.cloudflare.net (comment; dmarc=pass); dmarc=fail header.from=a.test')?.dmarc).toBe('fail');
+    // First verdict per method wins (dkim: any pass); a result must be a plain keyword.
+    expect(parseAuthResults('mx.cloudflare.net; dmarc=fail header.from=a.test; dmarc=pass header.from=a.test')?.dmarc).toBe('fail');
+    expect(parseAuthResults('mx.cloudflare.net; dmarc=pass@evil header.from=a.test')?.dmarc).toBeUndefined();
+    // Sender-supplied headers with another authserv-id (or a look-alike) are ignored; the topmost trusted one wins.
+    const fake = 'mx.cloudflare.net.evil.test; dmarc=pass header.from=bank.test';
+    const real = 'mx.cloudflare.net; dkim=none; spf=none smtp.helo=x; dmarc=fail header.from=bank.test';
+    expect(trustedAuthResults([fake, real])?.dmarc).toBe('fail');
+    expect(trustedAuthResults(['evil.test; dmarc=pass header.from=bank.test'])).toBeNull();
+    expect(trustedAuthResults([real, 'mx.cloudflare.net; dmarc=pass header.from=bank.test'])?.dmarc).toBe('fail');
+  });
+
   it('matches blocklist patterns', () => {
     expect(isBlocked('a@spam.test', ['@spam.test'])).toBe(true);
     expect(isBlocked('a@notspam.test', ['@spam.test'])).toBe(false);
@@ -69,14 +112,46 @@ describe('filter evaluation', () => {
   });
 
   it('rejects ReDoS-prone patterns and backreferences, keeps ordinary ones', () => {
-    for (const p of ['(a+)+', '(a|b)*', '(?:\\w+\\s?)+$', '((ab)*)+', '(a|aa){2,}', '((a|b))+', '(x)\\1', '(?<n>a)\\k<n>', '([a-z]+)*@']) {
+    for (const p of ['(a+)+', '(a|b)*', '(?:\\w+\\s?)+$', '((ab)*)+', '(a|aa){2,}', '((a|b))+', '(x)\\1', '(?<n>a)\\k<n>', '([a-z]+)*@',
+      '(ab)+', '\\(a+\\)+', '\\d+-\\d+', '[(]a+[)]+']) {
       expect(regexSafetyIssue(p), p).not.toBeNull();
       expect(compileRegex(p), p).toBeNull();
     }
-    for (const p of ['^your\\s+weekly', '(ab)+', '[a+|]+', '\\(a+\\)+', 'invoice-\\d{4}', '(foo|bar)', '(?:re|fwd):', '\\d+-\\d+', '[(]a+[)]+']) {
+    for (const p of ['^your\\s+weekly', '[a+|]+', 'invoice-\\d{4}', '(foo|bar)', '(?:re|fwd):', '\\d+-\\d{2}', '[(]a+[)]']) {
       expect(regexSafetyIssue(p), p).toBeNull();
       expect(compileRegex(p), p).not.toBeNull();
     }
+  });
+
+  it('lead: one unbounded quantifier at most, no quantified groups, lookarounds or long alternative chains', () => {
+    for (const p of ['.*.*.*x', 'a+b+', '\\s*\\w+', 'a{2,}b*', '(foo)?', '(ab){2}', '(?=a)b', '(?!a)b', '(?<=a)b', '(?<!a)b',
+      '(?:a|b)(?:a|b)(?:a|b)(?:a|b)(?:a|b)(?:a|b)', 'a?a?a?a?a?a?', '.{0,100}x', 'a{0,40}']) {
+      expect(regexSafetyIssue(p), p).not.toBeNull();
+      expect(compileRegex(p), p).toBeNull();
+    }
+    for (const p of ['.*x', 'a+?b', '\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}', 'colou?r', '(foo|bar|baz)@.*', 'https?://[^/]+']) {
+      expect(regexSafetyIssue(p), p).toBeNull();
+    }
+  });
+
+  it('lead: the worst allowed patterns run in under 20 ms on a capped (256-char) field', () => {
+    const worst = ['.*(?:aa|a)(?:aa|a)(?:aa|a)(?:aa|a)(?:aa|a)!', '.*a{0,31}!', '[\\s\\S]*a?a?a?a?a?!', '.{0,31}.*!', 'a{0,31}.*!'];
+    const inputs = ['a'.repeat(MAX_FIELD_LENGTH), `${'a'.repeat(MAX_FIELD_LENGTH - 1)}?`, 'ab'.repeat(MAX_FIELD_LENGTH / 2)];
+    for (const p of worst) {
+      expect(regexSafetyIssue(p), p).toBeNull();
+      for (const input of inputs) {
+        const t = performance.now();
+        evaluateFilters([f({ conditions: [{ field: 'subject', op: 'regex', value: p }], actions: [{ type: 'star' }] })], { ...subject, subject: input });
+        expect(performance.now() - t, p).toBeLessThan(20);
+      }
+    }
+    // Regexes see only the first 256 characters; other ops keep 1 KB.
+    const pad = 'x'.repeat(MAX_REGEX_INPUT);
+    const out = evaluateFilters([
+      f({ id: 're', conditions: [{ field: 'subject', op: 'regex', value: 'urgent' }], actions: [{ type: 'star' }] }),
+      f({ id: 'has', conditions: [{ field: 'subject', op: 'contains', value: 'urgent' }], actions: [{ type: 'mark_read' }] }),
+    ], { ...subject, subject: `${pad}urgent` });
+    expect(out.matched).toEqual(['has']);
   });
 
   it('caps every matched field at 1 KB, display names included', () => {

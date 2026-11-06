@@ -5,6 +5,7 @@ import { sendDueScheduled } from '../src/worker/cron';
 import { processInbound } from '../src/worker/inbound/handler';
 import { isSafeRemoteUrl, signFileUrl, signProxyUrl, verifyFileSig, verifyProxySig } from '../src/worker/lib/sign';
 import { base32Decode, totp } from '../src/worker/lib/crypto';
+import { ulid } from '../src/shared/ulid';
 import { buildEml, call, fakeEmail, sessionCookie, withEnv } from './helpers';
 
 const PNG = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82]);
@@ -25,22 +26,38 @@ beforeAll(async () => {
   await env.DB.batch([env.DB.prepare('DELETE FROM sessions'), env.DB.prepare('DELETE FROM users')]);
 });
 
+// The pool's SETUP_TOKEN binding is deliberately weak (16 chars); setup needs a strong one.
+const SETUP = withEnv({ SETUP_TOKEN: 'test-setup-token-0123456789abcdef' });
+
 describe('setup and auth', () => {
+  it('refuses setup with a short or placeholder SETUP_TOKEN, even when it matches', async () => {
+    const body = { token: env.SETUP_TOKEN, name: 'Mallory', email: 'mallory@apitest.test', password: 'demo-password-123' };
+    const short = await call('/api/setup', { body });
+    expect(short.status).toBe(503);
+    expect((await short.json<{ error: { code: string } }>()).error.code).toBe('SETUP_NOT_CONFIGURED');
+    const placeholder = 'change-me-to-a-long-random-string';
+    const res = await call('/api/setup', { body: { ...body, token: placeholder }, env: withEnv({ SETUP_TOKEN: placeholder }) });
+    expect(res.status).toBe(503);
+    expect((await res.json<{ error: { code: string } }>()).error.code).toBe('SETUP_NOT_CONFIGURED');
+    expect((await call('/api/setup', { body: { ...body, token: 'x' }, env: withEnv({ SETUP_TOKEN: '' }) })).status).toBe(503);
+    expect(await (await call('/api/setup/status')).json()).toEqual({ needsSetup: true });
+  });
+
   it('reports needsSetup and enforces the token and CSRF header', async () => {
     expect(await (await call('/api/setup/status')).json()).toEqual({ needsSetup: true });
-    const body = { token: env.SETUP_TOKEN, name: 'Alex Rivera', email: 'alex@apitest.test', password: 'demo-password-123' };
-    const noCsrf = await call('/api/setup', { body, csrf: false });
+    const body = { token: SETUP.SETUP_TOKEN, name: 'Alex Rivera', email: 'alex@apitest.test', password: 'demo-password-123' };
+    const noCsrf = await call('/api/setup', { body, csrf: false, env: SETUP });
     expect(noCsrf.status).toBe(403);
     expect(await noCsrf.json()).toEqual({ error: { code: 'CSRF', message: 'Missing X-Cirrus header' } });
-    const badToken = await call('/api/setup', { body: { ...body, token: 'wrong' } });
+    const badToken = await call('/api/setup', { body: { ...body, token: 'wrong' }, env: SETUP });
     expect(badToken.status).toBe(403);
-    const ok = await call('/api/setup', { body });
+    const ok = await call('/api/setup', { body, env: SETUP });
     expect(ok.status).toBe(200);
     const json = await ok.json<{ user: { id: string; role: string } }>();
     expect(json.user.role).toBe('admin');
     state.adminId = json.user.id;
     expect(ok.headers.get('set-cookie')).toMatch(/HttpOnly/i);
-    expect((await call('/api/setup', { body })).status).toBe(409);
+    expect((await call('/api/setup', { body, env: SETUP })).status).toBe(409);
   });
 
   it('logs in, rejects bad passwords, and requires X-Cirrus on writes', async () => {
@@ -243,7 +260,8 @@ describe('mail', () => {
 describe('pagination and poll', () => {
   it('pages threads with an opaque cursor and reports new mail', async () => {
     const since = Date.now() - 1;
-    for (let i = 0; i < 3; i++) {
+    // Threads are ordered by received time, so Paging 0 arrives last.
+    for (let i = 2; i >= 0; i--) {
       const raw = buildEml({ from: `p${i}@vendor.test`, to: 'alex@apitest.test', subject: `Paging ${i}`, body: 'x', date: new Date(Date.now() - i * 60_000) });
       await processInbound(fakeEmail(`p${i}@vendor.test`, 'alex@apitest.test', raw), env);
     }
@@ -427,5 +445,183 @@ describe('security hardening', () => {
     const out = await processInbound(fakeEmail('attacker@elsewhere.test', 'alex@apitest.test', raw), env);
     const folders = await (await call(`/api/mailboxes/${state.mbA}/folders`, { cookie: state.admin })).json<{ id: string; role: string }[]>();
     expect(out.accepted && out.folderId).toBe(folders.find((f) => f.role === 'spam')!.id);
+  });
+});
+
+describe('audit fixes', () => {
+  const folder = (mb: string, role: string) => env.DB.prepare('SELECT id FROM folders WHERE mailbox_id = ? AND role = ?').bind(mb, role).first<string>('id');
+
+  it('#2 current-password checks on /api/me are throttled per user, before hashing', async () => {
+    await call('/api/admin/users', { body: { name: 'Re Auth', email: 'reauth@apitest.test', role: 'member', tempPassword: 'reauth-password-1' }, cookie: state.admin });
+    const cookie = sessionCookie(await call('/api/auth/login', { body: { email: 'reauth@apitest.test', password: 'reauth-password-1' } }));
+    for (let i = 0; i < 5; i++) {
+      const path = i % 2 ? '/api/me/password' : '/api/me/totp/disable';
+      const body = i % 2 ? { current: 'wrong-guess', next: 'new-password-123' } : { password: 'wrong-guess' };
+      expect((await call(path, { body, cookie })).status).toBe(400);
+    }
+    expect((await call('/api/me/totp/disable', { body: { password: 'wrong-guess' }, cookie })).status).toBe(429);
+    // Even the right password is refused once the budget is spent (the cap is per user, across both endpoints).
+    const right = await call('/api/me/password', { body: { current: 'reauth-password-1', next: 'new-password-123' }, cookie });
+    expect(right.status).toBe(429);
+    expect((await right.json<{ error: { code: string } }>()).error.code).toBe('RATE_LIMITED');
+  });
+
+  /** env whose DB runs `hook` once, right after the cron has read the due rows (before it claims any). */
+  function afterCronSelect(hook: () => Promise<void>): D1Database {
+    let fired = false;
+    const wrap = <T extends object>(o: T, get: (t: T, k: string | symbol) => unknown): T =>
+      new Proxy(o, { get: (t, k) => { const v = get(t, k); return v !== undefined ? v : typeof Reflect.get(t, k) === 'function' ? (Reflect.get(t, k) as (...a: unknown[]) => unknown).bind(t) : Reflect.get(t, k); } });
+    return wrap(env.DB, (db, k) => k !== 'prepare' ? undefined : (sql: string) => {
+      const stmt = db.prepare(sql);
+      if (!/status = 'scheduled' AND send_at <= \?/.test(sql)) return stmt;
+      return wrap(stmt, (st, k2) => k2 !== 'bind' ? undefined : (...args: unknown[]) => wrap(st.bind(...args), (b, k3) => k3 !== 'all' ? undefined : async () => {
+        const r = await b.all();
+        if (!fired) { fired = true; await hook(); }
+        return r;
+      }));
+    });
+  }
+
+  it('#3 a scheduled send uses the row as claimed: no stale recipients with a new body, no early send', async () => {
+    const draft = async (to: string) => (await (await call(`/api/mailboxes/${state.mbA}/drafts`, { body: { from: 'alex@apitest.test', to: [{ email: to }], cc: [], bcc: [], subject: 'Plan', html: '<p>v1</p>' }, cookie: state.admin })).json<MessageFull>()).id;
+    const schedule = (id: string, sendAt: number) => call(`/api/mailboxes/${state.mbA}/drafts/${id}/send`, { body: { sendAt }, cookie: state.admin });
+    const edit = async (id: string, sendAt: number) => {
+      expect((await call(`/api/mailboxes/${state.mbA}/messages/${id}/cancel-schedule`, { body: {}, cookie: state.admin })).status).toBe(200);
+      expect((await call(`/api/mailboxes/${state.mbA}/drafts/${id}`, { method: 'PUT', body: { from: 'alex@apitest.test', to: [{ email: 'new-recipient@vendor.test' }], cc: [], bcc: [], subject: 'Plan v2', html: '<p>v2</p>' }, cookie: state.admin })).status).toBe(200);
+      expect((await schedule(id, sendAt)).status).toBe(200);
+    };
+    const T = Date.now();
+    // Cancel, edit and reschedule (still due) while the cron is mid-tick: it sends the new version, to the new recipient.
+    const a = await draft('old-recipient@vendor.test');
+    await schedule(a, T + 3600_000);
+    const one = stubEmail(async () => ({ messageId: '<a@cf>' }));
+    expect(await sendDueScheduled(withEnv({ EMAIL: one.e.EMAIL, DB: afterCronSelect(() => edit(a, T + 5400_000)) }), T + 7200_000)).toBe(1);
+    expect(one.calls).toHaveLength(1);
+    expect(one.calls[0]).toMatchObject({ to: ['new-recipient@vendor.test'], subject: 'Plan v2', text: 'v2' });
+    // Rescheduled a week out mid-tick: not sent now.
+    const b = await draft('old-recipient@vendor.test');
+    await schedule(b, T + 3600_000);
+    const two = stubEmail(async () => ({ messageId: '<b@cf>' }));
+    expect(await sendDueScheduled(withEnv({ EMAIL: two.e.EMAIL, DB: afterCronSelect(() => edit(b, T + 7 * 86_400_000)) }), T + 7200_000)).toBe(0);
+    expect(two.calls).toHaveLength(0);
+    expect(await env.DB.prepare('SELECT status, send_at, to_json FROM messages WHERE id = ?').bind(b).first())
+      .toEqual({ status: 'scheduled', send_at: T + 7 * 86_400_000, to_json: JSON.stringify([{ email: 'new-recipient@vendor.test' }]) });
+    await env.DB.prepare("UPDATE messages SET status = 'draft', send_at = NULL WHERE id = ?").bind(b).run();
+  });
+
+  it('#3 a save racing a claimed send cannot change or delete what is being sent', async () => {
+    const d = await (await call(`/api/mailboxes/${state.mbA}/drafts`, { body: { from: 'alex@apitest.test', to: [{ email: 'x@vendor.test' }], cc: [], bcc: [], subject: 'Race', html: '<p>v1</p>' }, cookie: state.admin })).json<MessageFull>();
+    const before = await env.DB.prepare('SELECT body_key FROM messages WHERE id = ?').bind(d.id).first<string>('body_key');
+    await env.DB.prepare("UPDATE messages SET status = 'sending' WHERE id = ?").bind(d.id).run(); // claimed by a send
+    // The save read the row before the claim (loadDraft) and only writes after it.
+    const db = new Proxy(env.DB, { get: (t, k) => k === 'batch' ? async (stmts: D1PreparedStatement[]) => {
+      const first = stmts.length === 2; // the save's read batch: pretend it saw the row as a draft
+      const res = await t.batch(stmts);
+      if (first) (res[0].results[0] as { status: string }).status = 'draft';
+      return res;
+    } : typeof Reflect.get(t, k) === 'function' ? (Reflect.get(t, k) as (...a: unknown[]) => unknown).bind(t) : Reflect.get(t, k) });
+    const res = await call(`/api/mailboxes/${state.mbA}/drafts/${d.id}`, { method: 'PUT', env: withEnv({ DB: db as D1Database }), body: { from: 'alex@apitest.test', to: [{ email: 'evil@x.test' }], cc: [], bcc: [], subject: 'Changed', html: '<p>v2</p>' }, cookie: state.admin });
+    expect(res.status).toBe(409);
+    expect(await env.DB.prepare('SELECT status, subject, body_key, to_json FROM messages WHERE id = ?').bind(d.id).first())
+      .toEqual({ status: 'sending', subject: 'Race', body_key: before, to_json: JSON.stringify([{ email: 'x@vendor.test' }]) });
+    expect(await env.BUCKET.head(before!)).not.toBeNull();
+    await env.DB.prepare("UPDATE messages SET status = 'draft' WHERE id = ?").bind(d.id).run();
+  });
+
+  it('#5 sender-supplied same-origin /api/ URLs in received HTML are neutralised; cid images still work', async () => {
+    const proxied = '/api/proxy/image?u=https%3A%2F%2Ftracker.example%2Fp.gif&e=9999999999&s=abc';
+    const raw = buildEml({
+      from: 'mallory@apitest.test', to: 'alex@apitest.test', subject: 'Lunch?',
+      html: `<img src="${proxied}"><img src="http://localhost${proxied}"><img src='//localhost${proxied}'><div style="background:url(\\api\\proxy/image?u=x)"></div>` +
+        `<img src="cid:logo5"><a href="https://docs.example.com/api/v1">docs</a>`,
+      attachments: [{ filename: 'logo.png', type: 'image/png', content: PNG, cid: 'logo5' }],
+    });
+    const out = await processInbound(fakeEmail('mallory@apitest.test', 'alex@apitest.test', raw), env);
+    if (!out.accepted) throw new Error('rejected');
+    const detail = await (await call(`/api/mailboxes/${state.mbA}/threads/${out.threadId}`, { cookie: state.admin })).json<ThreadDetail>();
+    const html = detail.messages[0].html!;
+    expect(html).not.toMatch(/(^|["'(=])(https?:)?(\/\/localhost)?[\\/]api[\\/]proxy/);
+    expect(html.match(/about:invalid#api\//g)).toHaveLength(4);
+    expect(html).toMatch(/src="http:\/\/localhost\/api\/files\/[A-Z0-9]+\?e=/);
+    expect(html).toContain('https://docs.example.com/api/v1');
+  });
+
+  it('#9 the cron round-robins across mailboxes, at most 5 per mailbox per tick', async () => {
+    const now = Date.now();
+    const seed = async (mb: string, from: string, by: string | null, n: number) => {
+      const tid = ulid();
+      const sched = (await folder(mb, 'scheduled'))!;
+      const stmts = [env.DB.prepare("INSERT INTO threads (id, mailbox_id, subject, subject_norm, last_message_at, created_at) VALUES (?, ?, 'bulk', 'bulk', ?, ?)").bind(tid, mb, now, now)];
+      const ids: string[] = [];
+      for (let i = 0; i < n; i++) {
+        const id = ulid();
+        ids.push(id);
+        stmts.push(env.DB.prepare(`INSERT INTO messages (id, mailbox_id, thread_id, folder_id, direction, status, from_email, to_json, subject, send_at, scheduled_by, date, created_at, updated_at, folder_changed_at)
+                                   VALUES (?, ?, ?, ?, 'out', 'scheduled', ?, '[{"email":"r@vendor.test"}]', 'bulk', ?, ?, ?, ?, ?, ?)`)
+          .bind(id, mb, tid, sched, from, now - 3600_000 + i, by, now, now, now, now));
+      }
+      await env.DB.batch(stmts);
+      return ids;
+    };
+    const a = await seed(state.mbA, 'alex@apitest.test', state.adminId, 30);
+    const b = await seed(state.mbB, 'sam@apitest.test', state.bobId, 1);
+    // The B row is due later than all of A's, so a plain ORDER BY send_at would never reach it this tick.
+    await env.DB.prepare('UPDATE messages SET send_at = ? WHERE id = ?').bind(now - 60_000, b[0]).run();
+    const { e, calls } = stubEmail(async () => ({ messageId: `<${ulid()}@cf>` }));
+    expect(await sendDueScheduled(e, now)).toBe(6);
+    const status = async (ids: string[]) => (await env.DB.prepare(`SELECT status FROM messages WHERE id IN (${ids.map(() => '?').join(',')})`).bind(...ids).all<{ status: string }>()).results.map((r) => r.status);
+    expect(await status(b)).toEqual(['sent']);
+    expect((await status(a)).filter((x) => x === 'sent')).toHaveLength(5);
+    expect(calls.map((c) => c.from)).toContain('sam@apitest.test');
+    await env.DB.prepare(`DELETE FROM messages WHERE id IN (${a.map(() => '?').join(',')})`).bind(...a).run();
+  });
+
+  it('lead: a legacy scheduled row with no scheduled_by fails closed', async () => {
+    const now = Date.now();
+    const tid = ulid();
+    const id = ulid();
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO threads (id, mailbox_id, subject, subject_norm, last_message_at, created_at) VALUES (?, ?, 'legacy', 'legacy', ?, ?)").bind(tid, state.mbA, now, now),
+      env.DB.prepare(`INSERT INTO messages (id, mailbox_id, thread_id, folder_id, direction, status, from_email, to_json, subject, send_at, scheduled_by, date, created_at, updated_at, folder_changed_at)
+                      VALUES (?, ?, ?, ?, 'out', 'scheduled', 'alex@apitest.test', '[{"email":"r@vendor.test"}]', 'legacy', ?, NULL, ?, ?, ?, ?)`)
+        .bind(id, state.mbA, tid, (await folder(state.mbA, 'scheduled'))!, now - 1000, now, now, now, now),
+    ]);
+    const { e, calls } = stubEmail(async () => ({ messageId: '<legacy@cf>' }));
+    expect(await sendDueScheduled(e, now)).toBe(0);
+    expect(calls).toHaveLength(0);
+    expect(await env.DB.prepare('SELECT status, error_code FROM messages WHERE id = ?').bind(id).first()).toEqual({ status: 'failed', error_code: 'IDENTITY_NOT_ALLOWED' });
+  });
+
+  it('lead: only mailbox owners or admins create forward_to filters, and the creator is recorded', async () => {
+    await call('/api/admin/users', { body: { name: 'Carol', email: 'carol@apitest.test', role: 'member', tempPassword: 'carol-password-1' }, cookie: state.admin });
+    const carolId = (await env.DB.prepare("SELECT id FROM users WHERE email = 'carol@apitest.test'").first<string>('id'))!;
+    await call(`/api/admin/mailboxes/${state.mbB}`, { method: 'PATCH', body: { members: [{ userId: state.bobId, role: 'owner' }, { userId: carolId, role: 'member' }] }, cookie: state.admin });
+    const carol = sessionCookie(await call('/api/auth/login', { body: { email: 'carol@apitest.test', password: 'carol-password-1' } }));
+    const filter = (actions: unknown[]) => ({ name: 'fwd', match: 'all', conditions: [{ field: 'subject', op: 'contains', value: 'x' }], actions, enabled: true, sort: 1 });
+    const fwd = [{ type: 'forward_to', email: 'outside@elsewhere.test' }];
+    const denied = await call(`/api/mailboxes/${state.mbB}/filters`, { body: filter(fwd), cookie: carol });
+    expect(denied.status).toBe(403);
+    const star = await call(`/api/mailboxes/${state.mbB}/filters`, { body: filter([{ type: 'star' }]), cookie: carol });
+    expect(star.status).toBe(201);
+    const starId = (await star.json<{ id: string }>()).id;
+    expect((await call(`/api/mailboxes/${state.mbB}/filters/${starId}`, { method: 'PUT', body: filter(fwd), cookie: carol })).status).toBe(403);
+    const owned = await call(`/api/mailboxes/${state.mbB}/filters`, { body: filter(fwd), cookie: state.bob });
+    expect(owned.status).toBe(201);
+    const ownedId = (await owned.json<{ id: string }>()).id;
+    expect(await env.DB.prepare('SELECT created_by FROM filters WHERE id = ?').bind(ownedId).first<string>('created_by')).toBe(state.bobId);
+    await env.DB.prepare('DELETE FROM filters WHERE mailbox_id = ?').bind(state.mbB).run();
+    await call(`/api/admin/mailboxes/${state.mbB}`, { method: 'PATCH', body: { members: [{ userId: state.bobId, role: 'owner' }] }, cookie: state.admin });
+  });
+
+  it('lead: a weak APP_SECRET disables signing: signed endpoints answer 503', async () => {
+    const weak = withEnv({ APP_SECRET: 'change-me-to-32-plus-random-characters' });
+    const short = withEnv({ APP_SECRET: 'too-short-secret' });
+    for (const e of [weak, short]) {
+      const sign = await call('/api/proxy/sign', { body: { urls: ['https://images.example.com/a.png'] }, cookie: state.admin, env: e });
+      expect(sign.status).toBe(503);
+      expect((await sign.json<{ error: { code: string } }>()).error.code).toBe('NOT_CONFIGURED');
+      expect((await call(await signProxyUrl(env, 'https://images.example.com/a.png'), { env: e })).status).toBe(503);
+      expect((await call(`/api/files/${ulid()}?e=9999999999&s=x`, { env: e })).status).toBe(503);
+    }
   });
 });

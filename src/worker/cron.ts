@@ -1,19 +1,27 @@
 // scheduled(): every minute send due scheduled messages; at minute 0 purge and prune.
-import { deleteMessagesForever, type MessageRow } from './lib/db';
+import { deleteMessagesForever } from './lib/db';
 import { checkScheduled, claimForSend, mailboxMemberIds, performSend, recordOutcome } from './outbound/send';
 
 const DAY = 24 * 3600 * 1000;
 const MAX_SENDS_PER_TICK = 25;
+const MAX_SENDS_PER_MAILBOX_PER_TICK = 5;
 const STUCK_AFTER_MS = 15 * 60 * 1000;
 
 export async function sendDueScheduled(env: Env, now = Date.now()): Promise<number> {
+  // Round-robin across mailboxes: every mailbox's oldest due row first, then each one's second, and so on,
+  // at most 5 per mailbox, so one mailbox's backlog cannot hold back everyone else's scheduled mail.
   const { results } = await env.DB.prepare(
-    "SELECT * FROM messages WHERE status = 'scheduled' AND send_at <= ? ORDER BY send_at LIMIT ?",
-  ).bind(now, MAX_SENDS_PER_TICK).all<MessageRow>();
+    `SELECT id FROM (
+       SELECT id, send_at, ROW_NUMBER() OVER (PARTITION BY mailbox_id ORDER BY send_at, id) AS rn
+         FROM messages WHERE status = 'scheduled' AND send_at <= ?)
+      WHERE rn <= ? ORDER BY rn, send_at, id LIMIT ?`,
+  ).bind(now, MAX_SENDS_PER_MAILBOX_PER_TICK, MAX_SENDS_PER_TICK).all<{ id: string }>();
   let sent = 0;
-  for (const row of results) {
-    // Claim: only one tick (or the API) can move a row from scheduled to sending.
-    if (!(await claimForSend(env.DB, row.id, ['scheduled']))) continue;
+  for (const { id } of results) {
+    // Claim: only one tick (or the API) can move a row from scheduled to sending. The claim re-reads the row,
+    // so a row cancelled, edited or rescheduled since the SELECT above is skipped or sent as it is now.
+    const row = await claimForSend(env.DB, id, ['scheduled'], now);
+    if (!row) continue;
     // Membership or aliases may have changed since it was scheduled.
     const problem = await checkScheduled(env.DB, row);
     if (problem) {

@@ -8,6 +8,13 @@ import { buildEml, createMailbox, ensureDomain, fakeEmail, randomLocal, withEnv 
 
 const PNG = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82]);
 
+async function createUser(disabled = 0): Promise<string> {
+  const id = ulid();
+  await env.DB.prepare("INSERT INTO users (id, email, name, password_hash, role, disabled, created_at, updated_at) VALUES (?, ?, 'U', 'x', 'member', ?, ?, ?)")
+    .bind(id, `${randomLocal('user')}@users.test`, disabled, Date.now(), Date.now()).run();
+  return id;
+}
+
 async function deliver(to: string, opts: Parameters<typeof buildEml>[0], e: Env = env, headers: Record<string, string> = {}) {
   const msg = fakeEmail(opts.from.replace(/.*</, '').replace(/>.*/, ''), to, buildEml(opts), headers);
   const out = await processInbound(msg, e);
@@ -112,7 +119,11 @@ describe('inbound handler', () => {
       messageId: '<dup-1@lookalike.test>',
     });
     expect(spam.out.accepted && spam.out.folderId).toBe(mb.folders.spam);
-    const again = await deliver(addr, { from: 'billing@lookalike.test', to: addr, subject: 'Invoice overdue', body: 'pay now', messageId: '<dup-1@lookalike.test>' });
+    const again = await deliver(addr, {
+      from: 'Billing <billing@lookalike.test>', to: addr, subject: 'Invoice overdue', body: 'pay now',
+      headers: { 'Authentication-Results': 'mx.cloudflare.net; dkim=fail; spf=fail; dmarc=fail header.from=lookalike.test' },
+      messageId: '<dup-1@lookalike.test>',
+    });
     expect(again.out.accepted && again.out.duplicate).toBe(true);
 
     await env.DB.prepare('INSERT INTO blocked_senders (id, mailbox_id, pattern, created_at) VALUES (?, ?, ?, ?)').bind(ulid(), mb.id, '@blocked.test', Date.now()).run();
@@ -122,10 +133,11 @@ describe('inbound handler', () => {
 
   it('applies filters and survives a corrupt regex', async () => {
     const addr = `${randomLocal()}@inbound.test`;
-    const mb = await createMailbox(addr);
+    const owner = await createUser();
+    const mb = await createMailbox(addr, [{ userId: owner }]);
     const add = (conditions: unknown, actions: unknown, sort: number) =>
-      env.DB.prepare('INSERT INTO filters (id, mailbox_id, name, match, conditions, actions, enabled, sort, created_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)')
-        .bind(ulid(), mb.id, 'f', 'all', JSON.stringify(conditions), JSON.stringify(actions), sort, Date.now()).run();
+      env.DB.prepare('INSERT INTO filters (id, mailbox_id, name, match, conditions, actions, enabled, sort, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)')
+        .bind(ulid(), mb.id, 'f', 'all', JSON.stringify(conditions), JSON.stringify(actions), sort, Date.now(), owner).run();
     await add([{ field: 'subject', op: 'regex', value: '([unclosed' }], [{ type: 'delete' }], 1);
     await add([{ field: 'list_id', op: 'contains', value: 'digest' }], [{ type: 'move_to', folderId: mb.folders.archive }, { type: 'mark_read' }, { type: 'forward_to', email: 'me@forward.test' }], 2);
     const r = await deliver(addr, { from: 'news@digest.test', to: addr, subject: 'Weekly digest', body: 'x', headers: { 'List-Id': 'Digest <digest.example>' } });
@@ -136,7 +148,7 @@ describe('inbound handler', () => {
   });
 
   describe('vacation auto-reply', () => {
-    const PASS = { 'Authentication-Results': 'mx.cloudflare.net; dkim=pass; spf=pass smtp.mailfrom=partner.test; dmarc=pass' };
+    const PASS = { 'Authentication-Results': 'mx.cloudflare.net; dkim=pass header.d=partner.test header.s=s1; dmarc=pass header.from=partner.test policy.dmarc=none; spf=pass smtp.mailfrom=partner.test' };
     async function setup(subject = 'Out of office') {
       const addr = `${randomLocal()}@inbound.test`;
       const mb = await createMailbox(addr);
@@ -175,6 +187,23 @@ describe('inbound handler', () => {
       expect(sent).toHaveLength(1);
     });
 
+    it('#4 needs an aligned pass and an envelope that belongs to the From domain (no backscatter via DMARC)', async () => {
+      const { addr, sent, e } = await setup();
+      // Attacker's own aligned DMARC pass, envelope forged to a third party whose SPF softfails.
+      const raw = buildEml({ from: 'promo@attacker.test', to: addr, subject: 'Cheap watches', body: 'x',
+        headers: { 'Authentication-Results': 'mx.cloudflare.net; dkim=pass header.d=attacker.test; dmarc=pass header.from=attacker.test; spf=softfail smtp.mailfrom=thirdparty.test' } });
+      await processInbound(fakeEmail('victim@thirdparty.test', addr, raw), e);
+      // SPF and DKIM pass for the attacker's domain, but the From is someone else's (unaligned).
+      await deliver(addr, { from: 'payments@bank.test', to: addr, subject: 'Invoice', body: 'x',
+        headers: { 'Authentication-Results': 'mx.cloudflare.net; dkim=pass header.d=bank.test.attacker.test; spf=pass smtp.mailfrom=bank.test; dmarc=none' } }, e);
+      expect(sent).toHaveLength(0);
+      // Aligned From, and an ESP envelope that SPF authenticates: the reply goes to that envelope.
+      const esp = buildEml({ from: 'client@partner.test', to: addr, subject: 'Question', body: 'x',
+        headers: { 'Authentication-Results': 'mx.cloudflare.net; dkim=pass header.d=partner.test; dmarc=pass header.from=partner.test; spf=pass smtp.mailfrom=rp-77@esp.test' } });
+      await processInbound(fakeEmail('rp-77@esp.test', addr, esp), e);
+      expect(sent.map((m) => m.to)).toEqual(['rp-77@esp.test']);
+    });
+
     it('strips CR/LF smuggled through an encoded incoming subject', async () => {
       const { addr, sent, e } = await setup('');
       const evil = `=?UTF-8?B?${btoa('Hello\r\nBcc: victim@evil.test')}?=`;
@@ -183,5 +212,118 @@ describe('inbound handler', () => {
       expect(sent[0].subject).not.toMatch(/[\r\n]/);
       expect(sent[0].subject).toMatch(/^Re: Hello +Bcc: victim@evil\.test$/);
     });
+  });
+  it('#1 stores the alignment verdict: spf+dkim pass for another domain is not verified', async () => {
+    const addr = `${randomLocal()}@inbound.test`;
+    await createMailbox(addr);
+    const spoof = await deliver(addr, { from: 'Bank Payments <payments@bank.test>', to: addr, subject: 'New details', body: 'x',
+      headers: { 'Authentication-Results': 'mx.cloudflare.net; dkim=pass header.d=attacker.test header.s=s1; spf=pass smtp.mailfrom=bounce@attacker.test; dmarc=none' } });
+    const real = await deliver(addr, { from: 'Bank <payments@bank.test>', to: addr, subject: 'Statement', body: 'x',
+      headers: { 'Authentication-Results': 'mx.cloudflare.net; dkim=pass header.d=bank.test; dmarc=pass header.from=bank.test; spf=pass smtp.mailfrom=bank.test' } });
+    const auth = async (o: typeof spoof) => JSON.parse((await env.DB.prepare('SELECT auth_json FROM messages WHERE id = ?').bind(o.out.accepted ? o.out.messageId : '').first<string>('auth_json'))!);
+    expect(await auth(spoof)).toEqual({ spf: 'pass', dkim: 'pass', dmarc: 'none', aligned: false });
+    expect(await auth(real)).toMatchObject({ dmarc: 'pass', aligned: true });
+  });
+
+  it('lead: a sender-added Authentication-Results below or instead of Cloudflare\'s is ignored', async () => {
+    const addr = `${randomLocal()}@inbound.test`;
+    const mb = await createMailbox(addr);
+    // Cloudflare prepends its header; the forged one sits lower in the message.
+    const raw = buildEml({ from: 'ceo@bank.test', to: addr, subject: 'Wire', body: 'x', headers: { 'Authentication-Results': 'mx.cloudflare.net; dkim=pass header.d=bank.test; dmarc=pass header.from=bank.test' } });
+    const out = await processInbound(fakeEmail('x@evil.test', addr, `Authentication-Results: mx.cloudflare.net; dkim=none; spf=fail smtp.mailfrom=evil.test; dmarc=fail header.from=bank.test\r\n${raw}`), env);
+    expect(out.accepted && out.folderId).toBe(mb.folders.spam);
+    const arc = await deliver(addr, { from: 'ceo@bank.test', to: addr, subject: 'Wire 2', body: 'x',
+      headers: { 'ARC-Authentication-Results': 'i=1; mx.cloudflare.net; dmarc=pass header.from=bank.test', 'Authentication-Results': 'mx.google.com; dmarc=pass header.from=bank.test' } });
+    const row = await env.DB.prepare('SELECT auth_json FROM messages WHERE id = ?').bind(arc.out.accepted ? arc.out.messageId : '').first<string>('auth_json');
+    expect(row).toBeNull();
+  });
+
+  it('#6 an inbound copy of a sent Message-ID cannot capture replies to it', async () => {
+    const addr = `${randomLocal()}@inbound.test`;
+    const mb = await createMailbox(addr);
+    const now = Date.now();
+    const sentThread = ulid();
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO threads (id, mailbox_id, subject, subject_norm, last_message_at, created_at) VALUES (?, ?, 'Q3 invoices', 'q3 invoices', ?, ?)").bind(sentThread, mb.id, now, now),
+      env.DB.prepare(`INSERT INTO messages (id, mailbox_id, thread_id, folder_id, direction, status, message_id_hdr, from_email, to_json, subject, date, created_at, updated_at, folder_changed_at)
+                      VALUES (?, ?, ?, ?, 'out', 'sent', '<sent-1@cirrus.test>', ?, ?, 'Q3 invoices', ?, ?, ?, ?)`)
+        .bind(ulid(), mb.id, sentThread, mb.folders.sent, addr, JSON.stringify([{ email: 'cfo@client.test' }, { email: 'vendor@shady.test' }]), now, now, now, now),
+    ]);
+    const evil = await deliver(addr, { from: 'vendor@shady.test', to: addr, subject: 'Updated bank details for Q3', body: 'x', messageId: '<sent-1@cirrus.test>' });
+    if (!evil.out.accepted) throw new Error('rejected');
+    expect(evil.out.threadId).not.toBe(sentThread);
+    expect(await env.DB.prepare('SELECT message_id_hdr FROM messages WHERE id = ?').bind(evil.out.messageId).first<string | null>('message_id_hdr')).toBeNull();
+    const reply = await deliver(addr, { from: 'cfo@client.test', to: addr, subject: 'Re: Q3 invoices', body: 'ok', inReplyTo: '<sent-1@cirrus.test>' });
+    expect(reply.out.accepted && reply.out.threadId).toBe(sentThread);
+    expect(await env.DB.prepare('SELECT subject FROM threads WHERE id = ?').bind(sentThread).first<string>('subject')).toBe('Q3 invoices');
+  });
+
+  it('#7 a planted Message-ID neither drops the genuine message nor captures its replies', async () => {
+    const addr = `${randomLocal()}@inbound.test`;
+    await createMailbox(addr);
+    const id = '<advisory-123@github.test>';
+    const planted = await deliver(addr, { from: 'junk@evil.test', to: addr, subject: 'win', body: 'junk', messageId: id });
+    const genuine = await deliver(addr, { from: 'notifications@github.test', to: addr, subject: 'Security advisory', body: 'patch now', messageId: id,
+      headers: { 'Authentication-Results': 'mx.cloudflare.net; dkim=pass header.d=github.test; dmarc=pass header.from=github.test' } });
+    if (!planted.out.accepted || !genuine.out.accepted) throw new Error('rejected');
+    expect(genuine.out.duplicate).toBeUndefined();
+    expect(genuine.out.messageId).not.toBe(planted.out.messageId);
+    expect(await env.DB.prepare('SELECT COUNT(*) AS n FROM messages WHERE message_id_hdr = ?').bind(id).first<number>('n')).toBe(2);
+    // A true redelivery (same bytes) is still a duplicate.
+    const raw = buildEml({ from: 'notifications@github.test', to: addr, subject: 'Security advisory', body: 'patch now', messageId: id, date: new Date(0),
+      headers: { 'Authentication-Results': 'mx.cloudflare.net; dkim=pass header.d=github.test; dmarc=pass header.from=github.test' } });
+    const first = await processInbound(fakeEmail('n@github.test', addr, raw), env);
+    const again = await processInbound(fakeEmail('n@github.test', addr, `Received: from relay2 by mx; ${new Date().toUTCString()}\r\n${raw}`), env);
+    expect(again.accepted && again.duplicate).toBe(true);
+    expect(again.accepted && first.accepted && again.messageId).toBe(first.accepted ? first.messageId : null);
+    // Replies join the thread whose participants they share; a stranger referencing it starts a new one.
+    const reply = await deliver(addr, { from: 'notifications@github.test', to: addr, subject: 'Re: advisory', body: 'x', inReplyTo: id });
+    expect(reply.out.accepted && reply.out.threadId).toBe(genuine.out.threadId);
+    const stranger = await deliver(addr, { from: 'other@unrelated.test', to: addr, subject: 'Security advisory', body: 'x', inReplyTo: id });
+    expect(stranger.out.accepted && stranger.out.threadId).not.toBe(genuine.out.threadId);
+    expect(stranger.out.accepted && stranger.out.threadId).not.toBe(planted.out.threadId);
+  });
+
+  it('#8 a sender-chosen Date is clamped for display and never reorders or renames the thread', async () => {
+    const addr = `${randomLocal()}@inbound.test`;
+    await createMailbox(addr);
+    const first = await deliver(addr, { from: 'ap@vendor.test', to: addr, subject: 'Invoices', body: 'x', messageId: '<inv-1@vendor.test>' });
+    const old = await deliver(addr, { from: 'ap@vendor.test', to: addr, subject: 'New bank details for all invoices', body: 'evil',
+      inReplyTo: '<inv-1@vendor.test>', date: new Date('1971-01-01T00:00:00Z') });
+    const future = await deliver(addr, { from: 'ap@vendor.test', to: addr, subject: 'Re: Invoices', body: 'pinned?', inReplyTo: '<inv-1@vendor.test>',
+      date: new Date(Date.now() + 23 * 3600_000) });
+    const latest = await deliver(addr, { from: 'ap@vendor.test', to: addr, subject: 'Re: Invoices', body: 'genuinely newest', inReplyTo: '<inv-1@vendor.test>' });
+    if (!first.out.accepted || !old.out.accepted || !future.out.accepted || !latest.out.accepted) throw new Error('rejected');
+    expect(old.out.threadId).toBe(first.out.threadId);
+    const t = await env.DB.prepare('SELECT subject, snippet FROM threads WHERE id = ?').bind(first.out.threadId).first<{ subject: string; snippet: string }>();
+    expect(t).toEqual({ subject: 'Invoices', snippet: 'genuinely newest' });
+    const row = (id: string) => env.DB.prepare('SELECT date, display_date, created_at FROM messages WHERE id = ?').bind(id).first<{ date: number; display_date: number; created_at: number }>();
+    const o = (await row(old.out.messageId!))!;
+    expect(o.date).toBe(o.created_at);
+    expect(o.display_date).toBe(o.created_at - 7 * 86_400_000);
+    const f = (await row(future.out.messageId!))!;
+    expect(f.display_date).toBe(f.created_at + 5 * 60_000);
+  });
+
+  it('lead: forward_to only runs while its creator is an active member; other actions still run', async () => {
+    const addr = `${randomLocal()}@inbound.test`;
+    const owner = await createUser();
+    const mb = await createMailbox(addr, [{ userId: owner }]);
+    const rule = (createdBy: string | null) => env.DB.prepare('INSERT INTO filters (id, mailbox_id, name, match, conditions, actions, enabled, sort, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?, 1, 1, ?, ?)')
+      .bind(ulid(), mb.id, 'f', 'all', JSON.stringify([{ field: 'subject', op: 'contains', value: 'report' }]),
+        JSON.stringify([{ type: 'forward_to', email: 'out@forward.test' }, { type: 'star' }]), Date.now(), createdBy).run();
+    const send = () => deliver(addr, { from: 'a@partner.test', to: addr, subject: 'Monthly report', body: 'x' });
+    await rule(null);                                  // legacy row: no creator
+    const legacy = await send();
+    expect(legacy.msg.forwarded).toEqual([]);
+    expect(await env.DB.prepare('SELECT is_starred FROM messages WHERE id = ?').bind(legacy.out.accepted ? legacy.out.messageId : '').first<number>('is_starred')).toBe(1);
+    await env.DB.prepare('DELETE FROM filters WHERE mailbox_id = ?').bind(mb.id).run();
+    await rule(owner);
+    expect((await send()).msg.forwarded).toEqual(['out@forward.test']);
+    await env.DB.prepare('UPDATE users SET disabled = 1 WHERE id = ?').bind(owner).run();
+    expect((await send()).msg.forwarded).toEqual([]);
+    await env.DB.prepare('UPDATE users SET disabled = 0 WHERE id = ?').bind(owner).run();
+    await env.DB.prepare('DELETE FROM mailbox_members WHERE mailbox_id = ? AND user_id = ?').bind(mb.id, owner).run();
+    expect((await send()).msg.forwarded).toEqual([]);
   });
 });

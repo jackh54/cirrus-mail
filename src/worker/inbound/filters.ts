@@ -21,26 +21,54 @@ export interface FilterOutcome {
 }
 
 export const MAX_FIELD_LENGTH = 1024;
+/** Regex conditions see at most this much of a field. */
+export const MAX_REGEX_INPUT = 256;
+/** Upper bound on the product of alternatives and bounded-quantifier ranges in one pattern. */
+export const MAX_REGEX_BRANCHING = 32;
 
 export const REGEX_RULE =
-  'Patterns may not use backreferences (\\1, \\k<name>) or put a quantifier (*, +, ?, {n}) on a group that itself ' +
-  'contains a quantifier or |, such as (a+)+ or (a|b)*. These forms can take exponential time.';
+  'Patterns may use at most one unbounded quantifier (*, +, {n,}), may not put a quantifier on a group, and may not ' +
+  'use backreferences (\\1, \\k<name>) or lookarounds. Forms such as (a+)+ or .*.*x are refused because they can take ' +
+  'very long to run. Long chains of alternatives or optional parts are refused for the same reason.';
+
+/** `{n}`, `{n,}`, `{n,m}`, `*`, `+` or `?` at `i`: its length and range, else null. */
+function quantifierAt(pattern: string, i: number): { len: number; min: number; max: number } | null {
+  const ch = pattern[i];
+  if (ch === '*') return { len: 1, min: 0, max: Infinity };
+  if (ch === '+') return { len: 1, min: 1, max: Infinity };
+  if (ch === '?') return { len: 1, min: 0, max: 1 };
+  if (ch !== '{') return null;
+  const m = /^\{(\d+)(,(\d*))?\}/.exec(pattern.slice(i));
+  if (!m) return null;
+  const min = Number(m[1]);
+  const max = m[2] === undefined ? min : m[3] === '' ? Infinity : Number(m[3]);
+  return { len: m[0].length, min, max };
+}
 
 /**
- * Conservative ReDoS heuristic. Returns a reason when the pattern uses a backreference or a quantified
- * group whose body contains a quantifier or alternation (directly or in a nested group); else null.
+ * Conservative ReDoS check (input is capped at MAX_REGEX_INPUT). Returns a reason when the pattern uses a
+ * backreference or lookaround, quantifies a group, has more than one unbounded quantifier, or multiplies
+ * alternatives and bounded ranges (`?` counts 2, `{2,5}` counts 4) beyond MAX_REGEX_BRANCHING; else null.
  */
 export function regexSafetyIssue(pattern: string): string | null {
-  type Frame = { quant: boolean; alt: boolean };
-  const stack: Frame[] = [{ quant: false, alt: false }];
-  const top = () => stack[stack.length - 1];
-  const quantAt = (j: number) => {
-    const ch = pattern[j];
-    if (ch === '*' || ch === '+' || ch === '?') return true;
-    return ch === '{' && /^\{\d+(,\d*)?\}/.test(pattern.slice(j));
-  };
+  let unbounded = 0;
+  let branching = 1;
+  const alts: number[] = [1]; // alternatives per open group; [0] is the top level
+  let afterGroup = false;
   for (let i = 0; i < pattern.length; i++) {
     const ch = pattern[i];
+    const q = quantifierAt(pattern, i);
+    if (q) {
+      if (afterGroup) return 'quantified group';
+      if (q.max === Infinity) {
+        if (++unbounded > 1) return 'more than one unbounded quantifier';
+      } else branching *= q.max - q.min + 1;
+      i += q.len - 1;
+      if (pattern[i + 1] === '?') i++; // lazy modifier
+      afterGroup = false;
+      continue;
+    }
+    afterGroup = false;
     if (ch === '\\') {
       const next = pattern[i + 1] ?? '';
       if (/[1-9]/.test(next) || (next === 'k' && pattern[i + 2] === '<')) return 'backreference';
@@ -56,21 +84,21 @@ export function regexSafetyIssue(pattern: string): string | null {
       continue;
     }
     if (ch === '(') {
-      stack.push({ quant: false, alt: false });
-      const m = pattern.slice(i + 1).match(/^\?(?::|=|!|<=|<!|<[A-Za-z_$][\w$]*>)/);
+      if (/^\?(?:=|!|<=|<!)/.test(pattern.slice(i + 1))) return 'lookaround';
+      const m = pattern.slice(i + 1).match(/^\?(?::|<[A-Za-z_$][\w$]*>)/);
       if (m) i += m[0].length;
+      alts.push(1);
       continue;
     }
     if (ch === ')') {
-      const f = stack.length > 1 ? stack.pop()! : { quant: false, alt: false };
-      if (quantAt(i + 1) && (f.quant || f.alt)) return 'quantified group containing a quantifier or alternation';
-      top().quant ||= f.quant;
-      top().alt ||= f.alt;
+      branching *= alts.length > 1 ? alts.pop()! : 1;
+      afterGroup = true;
       continue;
     }
-    if (ch === '|') top().alt = true;
-    else if (quantAt(i)) top().quant = true;
+    if (ch === '|') alts[alts.length - 1]++;
   }
+  for (const n of alts) branching *= n;
+  if (branching > MAX_REGEX_BRANCHING) return 'too many alternatives or optional parts';
   return null;
 }
 
@@ -86,7 +114,8 @@ export function compileRegex(pattern: string): RegExp | null {
 
 function matchValue(value: string, op: FilterCondition['op'], needle: string): boolean {
   // Every matched field is capped, display names included, so no rule scans unbounded input.
-  const capped = value.slice(0, MAX_FIELD_LENGTH);
+  // Regexes get a shorter cap: even an allowed pattern can be quadratic in its input.
+  const capped = value.slice(0, op === 'regex' ? MAX_REGEX_INPUT : MAX_FIELD_LENGTH);
   const v = capped.toLowerCase();
   const n = needle.toLowerCase();
   switch (op) {

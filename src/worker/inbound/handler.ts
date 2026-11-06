@@ -2,13 +2,14 @@
 import PostalMime, { type Email } from 'postal-mime';
 import { LIMITS, type Address } from '../../shared/api';
 import { ulid } from '../../shared/ulid';
-import { dedupeAddresses, fromParsed, normalizeEmail } from '../lib/addresses';
+import { dedupeAddresses, domainOf, fromParsed, normalizeEmail } from '../lib/addresses';
+import { sha256Hex } from '../lib/crypto';
 import { addressesForFts, folderIdsByRole, ftsInsertStmts, recomputeThreadStmts } from '../lib/db';
 import { htmlToText, makeSnippet } from '../lib/html';
 import { maybeAutoreply, type AutoreplyMailbox } from './autoreply';
 import { evaluateFilters, rowToFilter, type FilterRow } from './filters';
 import { resolveRecipient } from './resolve';
-import { isBlocked, parseAuthResults, scoreSpam } from './spam';
+import { isBlocked, scoreSpam, spfPassesFor, toAuthResults, trustedAuthResults } from './spam';
 import { findThread, normalizeSubject, parseMessageIds } from './thread';
 
 export type InboundOutcome =
@@ -29,9 +30,35 @@ function toBytes(content: ArrayBuffer | Uint8Array | string): Uint8Array {
   return content instanceof Uint8Array ? content : new Uint8Array(content);
 }
 
-function parseDate(value: string | undefined, now: number): number {
+/** The sender's Date, clamped to [received − 7 days, received + 5 minutes]; display only, never used for order. */
+export function displayDate(value: string | undefined, now: number): number {
   const t = value ? Date.parse(value) : NaN;
-  return Number.isFinite(t) && t > 0 && t < now + 24 * 3600 * 1000 ? t : now;
+  if (!Number.isFinite(t)) return now;
+  return Math.min(Math.max(t, now - 7 * 24 * 3600 * 1000), now + 5 * 60 * 1000);
+}
+
+/** Offset just past the first empty line: the body. Trace headers added on each delivery sit above it. */
+function bodyOffset(raw: Uint8Array): number {
+  for (let i = 0; i + 1 < raw.length; i++) {
+    if (raw[i] !== 10) continue;
+    if (raw[i + 1] === 10) return i + 2;
+    if (raw[i + 1] === 13 && raw[i + 2] === 10) return i + 3;
+  }
+  return raw.length;
+}
+
+/**
+ * Identifies one message for duplicate suppression: its identifying headers, the auth verdict and the raw
+ * body. A retry or a second delivery of the same message hashes the same; a different message that only
+ * reuses the Message-ID (or an unauthenticated copy of an authenticated one) does not.
+ */
+async function contentHash(raw: Uint8Array, fields: unknown[]): Promise<string> {
+  const head = new TextEncoder().encode(JSON.stringify(fields) + '\n');
+  const body = raw.subarray(bodyOffset(raw));
+  const buf = new Uint8Array(head.byteLength + body.byteLength);
+  buf.set(head, 0);
+  buf.set(body, head.byteLength);
+  return sha256Hex(buf);
 }
 
 export async function processInbound(message: ForwardableEmailMessage, env: Env): Promise<InboundOutcome> {
@@ -65,16 +92,33 @@ export async function processInbound(message: ForwardableEmailMessage, env: Env)
   }
   const header = headerGetter(email);
   const now = Date.now();
-  const msgIdHdr = parseMessageIds(email.messageId)[0] ?? null;
+  let msgIdHdr: string | null = parseMessageIds(email.messageId)[0] ?? null;
 
-  // Same Message-ID delivered twice (retries, alias + mailbox): keep the first copy.
+  const fromList = fromParsed(email.from);
+  const from: Address = fromList[0] ?? { email: normalizeEmail(message.from) };
+  const to = dedupeAddresses(fromParsed(email.to));
+  const cc = dedupeAddresses(fromParsed(email.cc));
+  const subject = (email.subject ?? '').slice(0, LIMITS.maxSubject);
+  // Only Cloudflare's own (topmost) Authentication-Results counts; "aligned" ties a pass to the visible From.
+  const parsedAuth = trustedAuthResults(email.headers.filter((h) => h.key === 'authentication-results').map((h) => h.value));
+  const auth = toAuthResults(parsedAuth, domainOf(from.email));
+  const hash = await contentHash(raw, [msgIdHdr, from.email, from.name ?? '', to.map((a) => a.email), cc.map((a) => a.email), subject, email.date ?? '', auth]);
+
+  // The same message delivered twice (retries, alias + mailbox): keep the first copy. Only an identical copy
+  // counts, so a planted message reusing the Message-ID cannot make us drop a genuine one.
   if (msgIdHdr) {
-    const dup = await db.prepare("SELECT id, thread_id, folder_id FROM messages WHERE mailbox_id = ? AND message_id_hdr = ? AND direction = 'in'")
-      .bind(mailboxId, msgIdHdr).first<{ id: string; thread_id: string; folder_id: string }>();
-    if (dup) {
+    const seen = await db.prepare(
+      `SELECT (SELECT json_object('id', id, 'thread_id', thread_id, 'folder_id', folder_id) FROM messages
+                WHERE mailbox_id = ?1 AND message_id_hdr = ?2 AND direction = 'in' AND content_hash = ?3 LIMIT 1) AS dup,
+              EXISTS (SELECT 1 FROM messages WHERE mailbox_id = ?1 AND message_id_hdr = ?2 AND direction = 'out') AS sent`,
+    ).bind(mailboxId, msgIdHdr, hash).first<{ dup: string | null; sent: number }>();
+    if (seen?.dup) {
+      const dup = JSON.parse(seen.dup) as { id: string; thread_id: string; folder_id: string };
       await logReceive(db, mailboxId, true, 'duplicate', size);
       return { accepted: true, mailboxId, messageId: dup.id, threadId: dup.thread_id, folderId: dup.folder_id, duplicate: true };
     }
+    // An inbound copy may not take over the Message-ID of a message this mailbox sent (reply threading).
+    if (seen?.sent) msgIdHdr = null;
   }
 
   const [mbRow, own, blockedRows, roles, filterRows] = await Promise.all([
@@ -82,7 +126,12 @@ export async function processInbound(message: ForwardableEmailMessage, env: Env)
     db.prepare('SELECT address FROM mailboxes WHERE id = ?1 UNION SELECT address FROM aliases WHERE mailbox_id = ?1').bind(mailboxId).all<{ address: string }>(),
     db.prepare('SELECT pattern FROM blocked_senders WHERE mailbox_id = ?').bind(mailboxId).all<{ pattern: string }>(),
     folderIdsByRole(db, mailboxId),
-    db.prepare('SELECT * FROM filters WHERE mailbox_id = ? AND enabled = 1 ORDER BY sort').bind(mailboxId).all<FilterRow>(),
+    // creator_active: forward_to actions only run while their creator is an active member of the mailbox.
+    db.prepare(
+      `SELECT f.*, EXISTS (SELECT 1 FROM mailbox_members mm JOIN users u ON u.id = mm.user_id
+                            WHERE mm.mailbox_id = f.mailbox_id AND mm.user_id = f.created_by AND u.disabled = 0) AS creator_active
+         FROM filters f WHERE f.mailbox_id = ? AND f.enabled = 1 ORDER BY f.sort`,
+    ).bind(mailboxId).all<FilterRow & { creator_active: number }>(),
   ]);
   if (!mbRow || !roles.inbox) {
     message.setReject('550 5.1.1 No such user');
@@ -91,17 +140,13 @@ export async function processInbound(message: ForwardableEmailMessage, env: Env)
   }
   const ownAddresses = new Set(own.results.map((r) => r.address.toLowerCase()));
 
-  const fromList = fromParsed(email.from);
-  const from: Address = fromList[0] ?? { email: normalizeEmail(message.from) };
-  const to = dedupeAddresses(fromParsed(email.to));
-  const cc = dedupeAddresses(fromParsed(email.cc));
   const replyTo = email.replyTo?.length ? fromParsed(email.replyTo).map((a) => a.email).join(', ') : null;
-  const subject = (email.subject ?? '').slice(0, LIMITS.maxSubject);
   const text = email.text ?? (email.html ? htmlToText(email.html) : '');
   const html = email.html ?? null;
   const listId = header('list-id')?.slice(0, 300) ?? null;
-  const auth = parseAuthResults(header('authentication-results'));
-  const date = parseDate(email.date, now);
+  // Received time orders the thread; the sender's (clamped) Date is only displayed.
+  const date = now;
+  const shownDate = displayDate(email.date, now);
 
   // 6. Spam verdict.
   const sender = from.email.toLowerCase();
@@ -127,7 +172,11 @@ export async function processInbound(message: ForwardableEmailMessage, env: Env)
   let isStarred = 0;
   let forwards: string[] = [];
   if (!spam.isSpam && filterRows.results.length) {
-    const outcome = evaluateFilters(filterRows.results.map(rowToFilter), {
+    const rules = filterRows.results.map((r) => {
+      const f = rowToFilter(r);
+      return r.creator_active ? f : { ...f, actions: f.actions.filter((a) => a.type !== 'forward_to') };
+    });
+    const outcome = evaluateFilters(rules, {
       from, to: [...to, ...cc].map((a) => a.email).concat(normalizeEmail(message.to)), subject, hasAttachment: hasAttachments, listId,
     });
     if (outcome.folderId) {
@@ -173,11 +222,11 @@ export async function processInbound(message: ForwardableEmailMessage, env: Env)
   stmts.push(db.prepare(
     `INSERT INTO messages (id, mailbox_id, thread_id, folder_id, direction, status, message_id_hdr, in_reply_to, references_hdr,
        from_email, from_name, to_json, cc_json, bcc_json, reply_to, subject, snippet, body_key, raw_key, size, has_attachments,
-       is_read, is_starred, spam_score, auth_json, list_id, date, created_at, updated_at, folder_changed_at)
-     VALUES (?, ?, ?, ?, 'in', 'received', ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       is_read, is_starred, spam_score, auth_json, list_id, date, display_date, content_hash, created_at, updated_at, folder_changed_at)
+     VALUES (?, ?, ?, ?, 'in', 'received', ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).bind(id, mailboxId, threadId, folderId, msgIdHdr, inReplyTo[0] ?? null, references.length ? references.join(' ').slice(0, 8000) : null,
     from.email, from.name ?? '', JSON.stringify(to), JSON.stringify(cc), replyTo, subject, makeSnippet(text), bodyKey, rawKey, size,
-    hasAttachments ? 1 : 0, isRead, isStarred, spam.score, auth ? JSON.stringify(auth) : null, listId, date, now, now, now));
+    hasAttachments ? 1 : 0, isRead, isStarred, spam.score, auth ? JSON.stringify(auth) : null, listId, date, shownDate, hash, now, now, now));
   for (const a of atts) {
     stmts.push(db.prepare('INSERT INTO attachments (id, message_id, mailbox_id, filename, mime_type, size, content_id, inline, r2_key, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
       .bind(a.id, id, mailboxId, a.filename, a.mime, a.bytes.byteLength, a.contentId, a.inline, a.key, now));
@@ -206,7 +255,8 @@ export async function processInbound(message: ForwardableEmailMessage, env: Env)
   if (!spam.isSpam && folderId !== roles.trash) {
     try {
       await maybeAutoreply(env, mbRow, {
-        sender: normalizeEmail(message.from), subject, messageId: msgIdHdr, headers: header, auth, ownAddresses, now,
+        sender: normalizeEmail(message.from), fromDomain: domainOf(from.email), envelopeSpfPass: spfPassesFor(parsedAuth, domainOf(normalizeEmail(message.from))),
+        subject, messageId: msgIdHdr, headers: header, auth, ownAddresses, now,
       });
     } catch (e) {
       console.error('autoreply error', (e as Error).name);

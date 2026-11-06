@@ -4,6 +4,7 @@ import { ulid } from '../../shared/ulid';
 import { hashPassword, timingSafeEqual } from '../lib/crypto';
 import { rowToUser, type UserRow } from '../lib/db';
 import { HttpError } from '../lib/errors';
+import { isStrongSecret } from '../lib/sign';
 import { jsonBody, zEmail, zName, zPassword } from '../lib/validate';
 import { createSession } from '../middleware/session';
 import type { AppEnv } from '../types';
@@ -20,8 +21,11 @@ const SetupSchema = z.object({ token: z.string().min(1).max(500), name: zName, e
 
 setup.post('/', async (c) => {
   const body = await jsonBody(c, SetupSchema);
-  const expected = c.env.SETUP_TOKEN ?? '';
-  if (!expected) throw new HttpError(403, 'SETUP_DISABLED', 'SETUP_TOKEN is not configured');
+  const expected = c.env.SETUP_TOKEN;
+  // A placeholder or short token is guessable: refuse it before comparing anything.
+  if (!isStrongSecret(expected)) {
+    throw new HttpError(503, 'SETUP_NOT_CONFIGURED', 'SETUP_TOKEN is missing, shorter than 24 characters or a placeholder. Set it to a long random value (openssl rand -hex 32).');
+  }
   if (!timingSafeEqual(body.token, expected)) throw new HttpError(403, 'INVALID_TOKEN', 'Setup token does not match');
   if ((await userCount(c.env.DB)) > 0) throw new HttpError(409, 'ALREADY_SETUP', 'Setup has already been completed');
   const now = Date.now();

@@ -113,6 +113,8 @@ export interface AuthResults {
   spf?: string;                 // pass | fail | softfail | neutral | none
   dkim?: string;
   dmarc?: string;
+  /** A DMARC or DKIM pass for the visible From domain. Missing (older messages) means not verified. */
+  aligned?: boolean;
 }
 
 export interface MessageFull {

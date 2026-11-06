@@ -5,8 +5,22 @@ import { HttpError } from './errors';
 export const FILE_URL_TTL_S = 3600;
 export const PROXY_URL_TTL_S = 24 * 3600;
 
+/** False for missing, short (< 24 chars) or placeholder (`change-me…`) secrets. */
+export function isStrongSecret(value: string | undefined | null): value is string {
+  return !!value && value.length >= 24 && !value.trim().toLowerCase().startsWith('change-me');
+}
+
+let weakSecretLogged = false;
+
+/** Signing and verification refuse to run with a weak APP_SECRET: signed endpoints answer 503. */
 function secret(env: Env): string {
-  if (!env.APP_SECRET) throw new HttpError(500, 'NOT_CONFIGURED', 'APP_SECRET is not set');
+  if (!isStrongSecret(env.APP_SECRET)) {
+    if (!weakSecretLogged) {
+      weakSecretLogged = true;
+      console.error('APP_SECRET is missing, shorter than 24 characters or a placeholder; signed URLs are disabled');
+    }
+    throw new HttpError(503, 'NOT_CONFIGURED', 'APP_SECRET is missing or too weak. Set it to a long random value (openssl rand -hex 32).');
+  }
   return env.APP_SECRET;
 }
 
