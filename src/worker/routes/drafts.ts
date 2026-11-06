@@ -4,7 +4,7 @@ import { LIMITS, type ComposeMode } from '../../shared/api';
 import { ulid } from '../../shared/ulid';
 import { dedupeAddresses } from '../lib/addresses';
 import {
-  addressesForFts, attachmentToApi, deleteMessagesForever, folderIdsByRole, ftsInsertStmt, loadMessageFull,
+  addressesForFts, attachmentToApi, deleteMessagesForever, ftsInsertStmt, loadMessageFull, messageRowToFull,
   recomputeThreadStmts, recomputeThreads, type AttachmentRow, type MessageRow,
 } from '../lib/db';
 import { HttpError, notFound } from '../lib/errors';
@@ -33,14 +33,21 @@ const DraftSchema = z.object({
 });
 type DraftBody = z.infer<typeof DraftSchema>;
 
-/** Display name for an identity: the mailbox display name, else the user's name. */
-async function identityName(db: D1Database, mailboxId: string, from: string, fallback: string): Promise<string> {
-  const row = await db.prepare(
+function identityStmt(db: D1Database, mailboxId: string, from: string): D1PreparedStatement {
+  return db.prepare(
     `SELECT m.display_name FROM mailboxes m WHERE m.id = ?1 AND (m.address = ?2 OR EXISTS (
        SELECT 1 FROM aliases a WHERE a.mailbox_id = m.id AND a.address = ?2 AND a.can_send = 1))`,
-  ).bind(mailboxId, from).first<{ display_name: string }>();
+  ).bind(mailboxId, from);
+}
+
+function checkIdentity(row: { display_name: string } | null | undefined, fallback: string): string {
   if (!row) throw new HttpError(400, 'INVALID_FROM', 'You cannot send from that address');
   return row.display_name || fallback;
+}
+
+/** Display name for an identity: the mailbox display name, else the user's name. */
+async function identityName(db: D1Database, mailboxId: string, from: string, fallback: string): Promise<string> {
+  return checkIdentity(await identityStmt(db, mailboxId, from).first<{ display_name: string }>(), fallback);
 }
 
 function threadingHeaders(parent: MessageRow, mode: ComposeMode): { inReplyTo: string | null; references: string | null } {
@@ -57,11 +64,16 @@ async function writeDraftBody(env: Env, mb: string, id: string, b: DraftBody): P
   return { key, text };
 }
 
-async function loadDraft(db: D1Database, mb: string, id: string): Promise<MessageRow> {
-  const row = await db.prepare('SELECT * FROM messages WHERE id = ? AND mailbox_id = ?').bind(id, mb).first<MessageRow>();
+const draftStmt = (db: D1Database, mb: string, id: string) => db.prepare('SELECT * FROM messages WHERE id = ? AND mailbox_id = ?').bind(id, mb);
+
+function checkDraft(row: MessageRow | null | undefined): MessageRow {
   if (!row || row.direction !== 'out') throw notFound('Draft not found');
   if (!EDITABLE.includes(row.status)) throw new HttpError(409, 'NOT_A_DRAFT', 'This message is no longer a draft');
   return row;
+}
+
+async function loadDraft(db: D1Database, mb: string, id: string): Promise<MessageRow> {
+  return checkDraft(await draftStmt(db, mb, id).first<MessageRow>());
 }
 
 drafts.post('/drafts', async (c) => {
@@ -69,7 +81,7 @@ drafts.post('/drafts', async (c) => {
   const mb = c.get('mailbox').id;
   const db = c.env.DB;
   const fromName = await identityName(db, mb, b.from, c.get('user').name);
-  const roles = await folderIdsByRole(db, mb);
+  const { roles } = c.get('mailbox');
   const now = Date.now();
   const id = ulid(now);
   let parent: MessageRow | null = null;
@@ -100,14 +112,20 @@ drafts.post('/drafts', async (c) => {
   // Forwards carry the parent's regular attachments. Objects are copied so each row owns its key.
   if (parent && mode === 'forward') {
     const { results } = await db.prepare('SELECT * FROM attachments WHERE message_id = ? AND inline = 0').bind(parent.id).all<AttachmentRow>();
-    let total = 0;
-    const ins: D1PreparedStatement[] = [];
-    for (const a of results.slice(0, LIMITS.maxAttachments)) {
-      const obj = await c.env.BUCKET.get(a.r2_key);
-      if (!obj) continue;
+    // Copies run in parallel; ids are minted up front so their order matches the parent's.
+    const copies = await Promise.all(results.slice(0, LIMITS.maxAttachments).map(async (a) => {
       const aid = ulid();
+      const obj = await c.env.BUCKET.get(a.r2_key);
+      if (!obj) return null;
       const r2Key = `att/${mb}/${aid}`;
       await c.env.BUCKET.put(r2Key, await obj.arrayBuffer(), { httpMetadata: { contentType: a.mime_type } });
+      return { a, aid, r2Key };
+    }));
+    let total = 0;
+    const ins: D1PreparedStatement[] = [];
+    for (const copy of copies) {
+      if (!copy) continue;
+      const { a, aid, r2Key } = copy;
       total += a.size;
       ins.push(db.prepare('INSERT INTO attachments (id, message_id, mailbox_id, filename, mime_type, size, content_id, inline, r2_key, created_at) VALUES (?, ?, ?, ?, ?, ?, NULL, 0, ?, ?)')
         .bind(aid, id, mb, a.filename, a.mime_type, a.size, r2Key, Date.now()));
@@ -125,26 +143,37 @@ drafts.put('/drafts/:id', async (c) => {
   const b = await jsonBody(c, DraftSchema);
   const mb = c.get('mailbox').id;
   const db = c.env.DB;
-  const row = await loadDraft(db, mb, c.req.param('id'));
-  const fromName = await identityName(db, mb, b.from, c.get('user').name);
-  const { key, text } = await writeDraftBody(c.env, mb, row.id, b);
+  const [draft, identity] = await db.batch([draftStmt(db, mb, c.req.param('id')), identityStmt(db, mb, b.from)]);
+  const row = checkDraft(draft.results[0] as MessageRow | undefined);
+  const fromName = checkIdentity(identity.results[0] as { display_name: string } | undefined, c.get('user').name);
+  const text = b.text ?? htmlToText(b.html);
+  const key = `body/${mb}/${row.id}.json`;
   const to = dedupeAddresses(b.to), cc = dedupeAddresses(b.cc), bcc = dedupeAddresses(b.bcc);
-  const att = await db.prepare('SELECT COALESCE(SUM(size), 0) AS n FROM attachments WHERE message_id = ?').bind(row.id).first<number>('n');
   const now = Date.now();
-  await db.batch([
-    db.prepare(
-      `UPDATE messages SET status = 'draft', error_code = NULL, error_message = NULL, from_email = ?, from_name = ?, to_json = ?, cc_json = ?,
-         bcc_json = ?, subject = ?, snippet = ?, body_key = ?, size = ?, date = ?, updated_at = ? WHERE id = ?`,
-    ).bind(b.from, fromName, JSON.stringify(to), JSON.stringify(cc), JSON.stringify(bcc), b.subject, makeSnippet(text), key,
-      bytes(b.html) + bytes(text) + (att ?? 0), now, now, row.id),
-    db.prepare('DELETE FROM messages_fts WHERE message_id = ?').bind(row.id),
-    ftsInsertStmt(db, { id: row.id, mailboxId: mb, subject: b.subject, addresses: addressesForFts({ email: b.from, name: fromName }, to, cc, bcc), body: text }),
-    db.prepare("UPDATE threads SET subject_norm = ? WHERE id = ? AND NOT EXISTS (SELECT 1 FROM messages WHERE thread_id = ? AND status IN ('received','sent'))")
-      .bind(normalizeSubject(b.subject), row.thread_id, row.thread_id),
-    ...recomputeThreadStmts(db, row.thread_id),
+  // The body upload and the row update run side by side; the batch ends by reading back the saved row and
+  // its attachments, so the response needs no further round trip (the body is the one just written).
+  const [, results] = await Promise.all([
+    c.env.BUCKET.put(key, JSON.stringify({ html: b.html, text }), { httpMetadata: { contentType: 'application/json' } }),
+    db.batch([
+      db.prepare(
+        `UPDATE messages SET status = 'draft', error_code = NULL, error_message = NULL, from_email = ?, from_name = ?, to_json = ?, cc_json = ?,
+           bcc_json = ?, subject = ?, snippet = ?, body_key = ?, size = ? + (SELECT COALESCE(SUM(size), 0) FROM attachments WHERE message_id = ?),
+           date = ?, updated_at = ? WHERE id = ?`,
+      ).bind(b.from, fromName, JSON.stringify(to), JSON.stringify(cc), JSON.stringify(bcc), b.subject, makeSnippet(text), key,
+        bytes(b.html) + bytes(text), row.id, now, now, row.id),
+      db.prepare('DELETE FROM messages_fts WHERE message_id = ?').bind(row.id),
+      ftsInsertStmt(db, { id: row.id, mailboxId: mb, subject: b.subject, addresses: addressesForFts({ email: b.from, name: fromName }, to, cc, bcc), body: text }),
+      db.prepare("UPDATE threads SET subject_norm = ? WHERE id = ? AND NOT EXISTS (SELECT 1 FROM messages WHERE thread_id = ? AND status IN ('received','sent'))")
+        .bind(normalizeSubject(b.subject), row.thread_id, row.thread_id),
+      ...recomputeThreadStmts(db, row.thread_id),
+      db.prepare('SELECT * FROM messages WHERE id = ?').bind(row.id),
+      db.prepare('SELECT * FROM attachments WHERE message_id = ? ORDER BY created_at, id').bind(row.id),
+    ]),
   ]);
-  const updated = await db.prepare('SELECT * FROM messages WHERE id = ?').bind(row.id).first<MessageRow>();
-  return c.json(await loadMessageFull(c.env, origin(c.req.url), updated!));
+  const updated = results[results.length - 2].results[0] as unknown as MessageRow;
+  const o = origin(c.req.url);
+  const atts = await Promise.all((results[results.length - 1].results as unknown as AttachmentRow[]).map((a) => attachmentToApi(c.env, o, a)));
+  return c.json(messageRowToFull(updated, { html: b.html, text }, atts));
 });
 
 drafts.delete('/drafts/:id', async (c) => {
@@ -214,7 +243,7 @@ drafts.post('/drafts/:id/send', async (c) => {
   const o = origin(c.req.url);
   if (body.sendAt && body.sendAt > now + 10_000) {
     if (body.sendAt > now + 366 * 24 * 3600 * 1000) throw new HttpError(400, 'INVALID_SEND_AT', 'sendAt is too far in the future');
-    const roles = await folderIdsByRole(db, mb);
+    const { roles } = c.get('mailbox');
     const res = await db.prepare(
       `UPDATE messages SET status = 'scheduled', send_at = ?, scheduled_by = ?, folder_id = ?, folder_changed_at = ?, updated_at = ?, error_code = NULL, error_message = NULL
         WHERE id = ? AND status IN ('draft','failed')`,

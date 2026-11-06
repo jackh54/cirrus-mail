@@ -27,7 +27,8 @@ files.get('/:aid', async (c) => {
       'content-type': inline ? a.mime_type : a.mime_type.startsWith('text/') || a.mime_type.includes('html') || a.mime_type.includes('svg') ? 'application/octet-stream' : a.mime_type,
       'content-length': String(obj.size),
       'content-disposition': `${inline ? 'inline' : 'attachment'}; filename="${ascii}"; filename*=UTF-8''${encoded}`,
-      'cache-control': 'private, max-age=3600',
+      // The URL embeds its expiry and signature, so the bytes behind it never change.
+      'cache-control': 'private, max-age=3600, immutable',
       'x-content-type-options': 'nosniff',
       'content-security-policy': "default-src 'none'; sandbox",
       'cross-origin-resource-policy': 'same-origin',

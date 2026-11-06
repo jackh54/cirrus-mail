@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { errorBody, onError } from './lib/errors';
-import { csrf, mailboxAccess, requireAuth } from './middleware/session';
+import { csrf, requireMailbox } from './middleware/session';
 import { admin } from './routes/admin';
 import { auth } from './routes/auth';
 import { blocked } from './routes/blocked';
@@ -8,7 +8,7 @@ import { contacts } from './routes/contacts';
 import { drafts } from './routes/drafts';
 import { files } from './routes/files';
 import { filters } from './routes/filters';
-import { mail } from './routes/mail';
+import { mail, mailReads } from './routes/mail';
 import { mailboxSettings } from './routes/mailbox-settings';
 import { me } from './routes/me';
 import { proxy } from './routes/proxy';
@@ -16,7 +16,10 @@ import { setup } from './routes/setup';
 import type { AppEnv } from './types';
 
 const mailbox = new Hono<AppEnv>();
-mailbox.use('*', requireAuth, mailboxAccess);
+// Hot reads authorize themselves (authorizeMailbox): the session + membership check rides in the same D1 batch
+// as their queries. They are registered before the guard and never call next(), so the guard does not repeat it.
+mailbox.route('/', mailReads);
+mailbox.use('*', requireMailbox);
 mailbox.route('/', mail);
 mailbox.route('/', drafts);
 mailbox.route('/', mailboxSettings);

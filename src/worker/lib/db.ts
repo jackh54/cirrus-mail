@@ -60,11 +60,14 @@ export async function folderIdsByRole(db: D1Database, mailboxId: string): Promis
 /**
  * Statements that rebuild a thread's aggregates from its messages (and delete it when empty).
  * "Visible" messages are received or sent ones; drafts/scheduled/failed only count when the thread has nothing else.
+ * With `mailboxId`, a thread id from another mailbox is left untouched.
  */
-export function recomputeThreadStmts(db: D1Database, threadId: string): D1PreparedStatement[] {
+export function recomputeThreadStmts(db: D1Database, threadId: string, mailboxId?: string): D1PreparedStatement[] {
   const VIS = "status IN ('received','sent')";
   const anyVis = `EXISTS (SELECT 1 FROM messages WHERE thread_id = ?1 AND ${VIS})`;
   const scope = `thread_id = ?1 AND (${VIS} OR NOT ${anyVis})`;
+  const own = mailboxId === undefined ? '' : ' AND mailbox_id = ?2';
+  const params = mailboxId === undefined ? [threadId] : [threadId, mailboxId];
   return [
     db.prepare(`UPDATE threads SET
         message_count   = (SELECT COUNT(*) FROM messages WHERE ${scope}),
@@ -77,8 +80,8 @@ export function recomputeThreadStmts(db: D1Database, threadId: string): D1Prepar
         participants    = COALESCE((SELECT json_group_array(json_object('name', n, 'email', e)) FROM (
                             SELECT lower(from_email) AS e, MAX(from_name) AS n, MIN(date) AS d FROM messages
                             WHERE ${scope} AND from_email != '' GROUP BY lower(from_email) ORDER BY d LIMIT 10)), '[]')
-      WHERE id = ?1`).bind(threadId),
-    db.prepare('DELETE FROM threads WHERE id = ?1 AND NOT EXISTS (SELECT 1 FROM messages WHERE thread_id = ?1)').bind(threadId),
+      WHERE id = ?1${own}`).bind(...params),
+    db.prepare(`DELETE FROM threads WHERE id = ?1${own} AND NOT EXISTS (SELECT 1 FROM messages WHERE thread_id = ?1)`).bind(...params),
   ];
 }
 
@@ -99,22 +102,25 @@ export function threadRowToSummary(t: ThreadRow, folderIds: string[], lastMessag
   };
 }
 
-/** Loads summaries (with folderIds) for the given thread ids, preserving order. */
-export async function loadSummaries(db: D1Database, mailboxId: string, ids: string[], keys?: Map<string, number>): Promise<ThreadSummary[]> {
-  if (!ids.length) return [];
-  const ph = ids.map(() => '?').join(',');
-  const [threads, folders] = await db.batch([
-    db.prepare(`SELECT * FROM threads WHERE mailbox_id = ? AND id IN (${ph})`).bind(mailboxId, ...ids),
-    db.prepare(`SELECT DISTINCT thread_id, folder_id FROM messages WHERE mailbox_id = ? AND thread_id IN (${ph})`).bind(mailboxId, ...ids),
-  ]);
-  const fmap = new Map<string, string[]>();
-  for (const r of folders.results as { thread_id: string; folder_id: string }[]) {
-    const list = fmap.get(r.thread_id) ?? [];
-    list.push(r.folder_id);
-    fmap.set(r.thread_id, list);
-  }
-  const tmap = new Map((threads.results as unknown as ThreadRow[]).map((t) => [t.id, t]));
-  return ids.filter((id) => tmap.has(id)).map((id) => threadRowToSummary(tmap.get(id)!, fmap.get(id) ?? [], keys?.get(id)));
+export type PageRow = ThreadRow & { tid: string; k: number; folder_ids: string };
+
+/**
+ * Wraps a page query that returns `(tid, k)` so the same statement also returns each thread row and its
+ * folder ids, in `orderBy` order. Bind: the page query's params, the mailbox id, `extraCols` params, the mailbox id.
+ * Rows whose thread is gone have a NULL `id`. (A unary `+` on mailbox_id keeps SQLite on the thread index
+ * instead of scanning every message in the mailbox.)
+ */
+export function pageSummariesSql(pageSql: string, orderBy: string, extraCols = ''): string {
+  return `WITH page AS (${pageSql})
+    SELECT page.tid, page.k, t.*,
+           (SELECT json_group_array(DISTINCT x.folder_id) FROM messages x WHERE +x.mailbox_id = ? AND x.thread_id = page.tid) AS folder_ids${extraCols}
+      FROM page LEFT JOIN threads t ON t.id = page.tid AND t.mailbox_id = ?
+     ORDER BY ${orderBy}`;
+}
+
+/** Summaries from `pageSummariesSql` rows, skipping vanished threads. `lastMessageAt` is the page key. */
+export function pageRowsToSummaries(rows: PageRow[]): ThreadSummary[] {
+  return rows.filter((r) => r.id).map((r) => threadRowToSummary(r, JSON.parse(r.folder_ids) as string[], r.k));
 }
 
 export async function loadBody(env: Env, key: string | null): Promise<StoredBody> {

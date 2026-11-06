@@ -1,11 +1,17 @@
 import { runCron } from './cron';
 import { app } from './app';
 import { handleEmail } from './inbound/handler';
+import { Meter } from './lib/timing';
 
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
-    if (url.pathname === '/api' || url.pathname.startsWith('/api/')) return app.fetch(request, env, ctx);
+    if (url.pathname === '/api' || url.pathname.startsWith('/api/')) {
+      const meter = new Meter();
+      const res = await app.fetch(request, meter.instrument(env), ctx);
+      res.headers.set('server-timing', meter.header());
+      return res;
+    }
     // Only /api/* runs the Worker first; anything else that reaches us is an asset or SPA route.
     return env.ASSETS.fetch(request);
   },

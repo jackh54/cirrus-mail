@@ -3,31 +3,39 @@ import { z } from 'zod';
 import type { Folder, FolderRole, ThreadSummary } from '../../shared/api';
 import { ulid } from '../../shared/ulid';
 import {
-  attachmentToApi, decodeCursor, deleteMessagesForever, encodeCursor, folderIdsByRole, loadBody, loadMessageFull,
-  loadSummaries, messageRowToFull, recomputeThreads, type AttachmentRow, type MessageRow, type ThreadRow,
+  attachmentToApi, decodeCursor, deleteMessagesForever, encodeCursor, loadBody, loadMessageFull, messageRowToFull,
+  pageRowsToSummaries, pageSummariesSql, recomputeThreadStmts, recomputeThreads, threadRowToSummary,
+  type AttachmentRow, type MessageRow, type PageRow, type ThreadRow,
 } from '../lib/db';
 import { HttpError, notFound } from '../lib/errors';
 import { jsonBody, zId } from '../lib/validate';
 import { buildSearchSql, parseSearch } from '../search';
 import { parseJsonAddresses } from '../lib/addresses';
+import { authorizeMailbox } from '../middleware/session';
 import type { AppEnv } from '../types';
 
 export const mail = new Hono<AppEnv>();
+
+/**
+ * Hot reads. Mounted before the mailbox guard: each handler calls authorizeMailbox, which runs the session and
+ * membership check in the same D1 batch as the handler's reads and only hands back their results once access is
+ * confirmed. Read-only handlers only; everything else belongs on `mail`.
+ */
+export const mailReads = new Hono<AppEnv>();
 
 const origin = (url: string) => new URL(url).origin;
 
 // ---------- folders ----------
 
-mail.get('/folders', async (c) => {
-  const mb = c.get('mailbox').id;
-  const { results } = await c.env.DB.prepare(
+mailReads.get('/folders', async (c) => {
+  const [folders] = await authorizeMailbox(c, (mb) => [c.env.DB.prepare(
     `SELECT f.id, f.name, f.role, f.sort, COALESCE(s.total, 0) AS total, COALESCE(s.unread, 0) AS unread
        FROM folders f
        LEFT JOIN (SELECT folder_id, COUNT(*) AS total, SUM(is_read = 0) AS unread FROM messages WHERE mailbox_id = ?1 GROUP BY folder_id) s
          ON s.folder_id = f.id
       WHERE f.mailbox_id = ?1 ORDER BY f.sort, f.name`,
-  ).bind(mb).all<Folder>();
-  return c.json(results);
+  ).bind(mb)]);
+  return c.json(folders.results as unknown as Folder[]);
 });
 
 const FolderName = z.string().trim().min(1).max(64);
@@ -68,9 +76,8 @@ mail.patch('/folders/:id', async (c) => {
 });
 
 mail.delete('/folders/:id', async (c) => {
-  const mb = c.get('mailbox').id;
+  const { id: mb, roles } = c.get('mailbox');
   const f = await customFolder(c.env.DB, mb, c.req.param('id'));
-  const roles = await folderIdsByRole(c.env.DB, mb);
   const now = Date.now();
   // Messages in a deleted folder are kept and moved to Archive.
   await c.env.DB.batch([
@@ -82,32 +89,35 @@ mail.delete('/folders/:id', async (c) => {
 
 // ---------- thread listing ----------
 
+const INBOX_SQL = "(SELECT id FROM folders WHERE mailbox_id = ? AND role = 'inbox')";
+const TRASH_SPAM_SQL = "(SELECT id FROM folders WHERE mailbox_id = ? AND role IN ('trash','spam'))";
+
+type ListRow = PageRow & { draft?: string | null };
+
 /**
  * Threads appear in a folder when any of their messages is in it. They are sorted by the date of the
  * latest message *in that folder* (so `lastMessageAt` in the list is that date), newest first.
+ *
+ * Read-only statements (system folders are resolved in SQL, so they can share the authorization round trip);
+ * `readThreadList` turns their results into the page.
  */
-export async function listThreads(
-  env: Env, mb: string, opts: { folder?: string; q?: string; cursor?: string; limit: number },
-): Promise<{ items: ThreadSummary[]; nextCursor: string | null }> {
-  const roles = await folderIdsByRole(env.DB, mb);
+export function listThreadsStmts(
+  db: D1Database, mb: string, opts: { folder?: string; q?: string; cursor?: string; limit: number },
+): D1PreparedStatement[] {
   const where: string[] = ['m.mailbox_id = ?'];
   const params: unknown[] = [mb];
-  let isDrafts = false;
   if (opts.folder === 'starred') {
-    where.push('m.is_starred = 1', 'm.folder_id NOT IN (?, ?)');
-    params.push(roles.trash, roles.spam);
+    where.push('m.is_starred = 1', `m.folder_id NOT IN ${TRASH_SPAM_SQL}`);
+    params.push(mb);
   } else if (opts.folder) {
-    const f = await env.DB.prepare('SELECT id FROM folders WHERE id = ? AND mailbox_id = ?').bind(opts.folder, mb).first<string>('id');
-    if (!f) throw notFound('Folder not found');
     where.push('m.folder_id = ?');
-    params.push(f);
-    isDrafts = f === roles.drafts;
+    params.push(opts.folder);
   } else if (opts.q) {
-    where.push('m.folder_id NOT IN (?, ?)');
-    params.push(roles.trash, roles.spam);
+    where.push(`m.folder_id NOT IN ${TRASH_SPAM_SQL}`);
+    params.push(mb);
   } else {
-    where.push('m.folder_id = ?');
-    params.push(roles.inbox);
+    where.push(`m.folder_id = ${INBOX_SQL}`);
+    params.push(mb);
   }
   if (opts.q) {
     const s = buildSearchSql(parseSearch(opts.q));
@@ -121,55 +131,59 @@ export async function listThreads(
     params.push(cur.k, cur.k, cur.id);
   }
   params.push(opts.limit + 1);
-  const { results } = await env.DB.prepare(
-    `SELECT m.thread_id AS tid, MAX(m.date) AS k FROM messages m WHERE ${where.join(' AND ')}
-      GROUP BY m.thread_id ${having} ORDER BY k DESC, tid DESC LIMIT ?`,
-  ).bind(...params).all<{ tid: string; k: number }>();
-  const page = results.slice(0, opts.limit);
-  const keys = new Map(page.map((r) => [r.tid, r.k]));
-  let items = await loadSummaries(env.DB, mb, page.map((r) => r.tid), keys);
-  if (isDrafts && items.length) items = await overlayDrafts(env.DB, mb, roles.drafts, items);
-  const last = page[page.length - 1];
-  return { items, nextCursor: results.length > opts.limit && last ? encodeCursor(last.k, last.tid) : null };
+  const pageSql = `SELECT m.thread_id AS tid, MAX(m.date) AS k FROM messages m WHERE ${where.join(' AND ')}
+      GROUP BY m.thread_id ${having} ORDER BY k DESC, tid DESC LIMIT ?`;
+  // In Drafts, a row shows the latest draft itself: its subject, snippet and recipients.
+  const draftCol = opts.folder && opts.folder !== 'starred'
+    ? `, CASE WHEN EXISTS (SELECT 1 FROM folders WHERE id = ? AND mailbox_id = ? AND role = 'drafts') THEN (
+         SELECT json_object('subject', d.subject, 'snippet', d.snippet, 'to', d.to_json) FROM messages d
+          WHERE +d.mailbox_id = ? AND +d.folder_id = ? AND d.thread_id = page.tid ORDER BY d.date DESC LIMIT 1) END AS draft`
+    : '';
+  const draftParams = draftCol ? [opts.folder, mb, mb, opts.folder] : [];
+  const list = db.prepare(pageSummariesSql(pageSql, 'page.k DESC, page.tid DESC', draftCol)).bind(...params, mb, ...draftParams, mb);
+  // A named folder must exist in this mailbox (404 otherwise); its check runs first in the same batch.
+  return draftCol ? [db.prepare('SELECT id FROM folders WHERE id = ? AND mailbox_id = ?').bind(opts.folder, mb), list] : [list];
 }
 
-/** In Drafts, a row shows the latest draft itself: its subject, snippet and recipients. */
-async function overlayDrafts(db: D1Database, mb: string, draftsId: string, items: ThreadSummary[]): Promise<ThreadSummary[]> {
-  const ph = items.map(() => '?').join(',');
-  const { results } = await db.prepare(
-    `SELECT thread_id, subject, snippet, to_json, date FROM messages
-      WHERE mailbox_id = ? AND folder_id = ? AND thread_id IN (${ph}) ORDER BY date ASC`,
-  ).bind(mb, draftsId, ...items.map((i) => i.id)).all<{ thread_id: string; subject: string; snippet: string; to_json: string }>();
-  const latest = new Map(results.map((r) => [r.thread_id, r]));
-  return items.map((t) => {
-    const d = latest.get(t.id);
-    return d ? { ...t, subject: d.subject, snippet: d.snippet, participants: parseJsonAddresses(d.to_json) } : t;
+export function readThreadList(results: D1Result[], limit: number): { items: ThreadSummary[]; nextCursor: string | null } {
+  if (results.length === 2 && !results[0].results.length) throw notFound('Folder not found');
+  const rows = results[results.length - 1].results as unknown as ListRow[];
+  const page = rows.slice(0, limit);
+  const drafts = new Map(page.filter((r) => r.draft).map((r) => [r.tid, JSON.parse(r.draft!) as { subject: string; snippet: string; to: string }]));
+  const items = pageRowsToSummaries(page).map((t) => {
+    const d = drafts.get(t.id);
+    return d ? { ...t, subject: d.subject, snippet: d.snippet, participants: parseJsonAddresses(d.to) } : t;
   });
+  const last = page[page.length - 1];
+  return { items, nextCursor: rows.length > limit && last ? encodeCursor(last.k, last.tid) : null };
 }
 
-mail.get('/threads', async (c) => {
+mailReads.get('/threads', async (c) => {
   const limit = Math.min(Math.max(Number(c.req.query('limit')) || 50, 1), 100);
   const q = c.req.query('q')?.trim() || undefined;
-  return c.json(await listThreads(c.env, c.get('mailbox').id, { folder: c.req.query('folder') || undefined, q, cursor: c.req.query('cursor'), limit }));
+  const opts = { folder: c.req.query('folder') || undefined, q, cursor: c.req.query('cursor'), limit };
+  return c.json(readThreadList(await authorizeMailbox(c, (mb) => listThreadsStmts(c.env.DB, mb, opts)), limit));
 });
 
-mail.get('/threads/:tid', async (c) => {
-  const mb = c.get('mailbox').id;
+mailReads.get('/threads/:tid', async (c) => {
   const tid = c.req.param('tid');
-  const thread = await c.env.DB.prepare('SELECT * FROM threads WHERE id = ? AND mailbox_id = ?').bind(tid, mb).first<ThreadRow>();
-  if (!thread) throw notFound('Thread not found');
-  const [msgs, atts] = await c.env.DB.batch([
+  const [thread, msgs, atts] = await authorizeMailbox(c, (mb) => [
+    c.env.DB.prepare('SELECT * FROM threads WHERE id = ? AND mailbox_id = ?').bind(tid, mb),
     c.env.DB.prepare('SELECT * FROM messages WHERE thread_id = ? AND mailbox_id = ? ORDER BY date ASC, id ASC').bind(tid, mb),
     c.env.DB.prepare('SELECT a.* FROM attachments a JOIN messages m ON m.id = a.message_id WHERE m.thread_id = ? AND a.mailbox_id = ? ORDER BY a.created_at, a.id').bind(tid, mb),
   ]);
+  const t = thread.results[0] as unknown as ThreadRow | undefined;
+  if (!t) throw notFound('Thread not found');
+  const rows = msgs.results as unknown as MessageRow[];
   const o = origin(c.req.url);
   const attByMsg = new Map<string, AttachmentRow[]>();
   for (const a of atts.results as unknown as AttachmentRow[]) attByMsg.set(a.message_id, [...(attByMsg.get(a.message_id) ?? []), a]);
-  const messages = await Promise.all((msgs.results as unknown as MessageRow[]).map(async (m) => {
+  // All R2 bodies in parallel.
+  const messages = await Promise.all(rows.map(async (m) => {
     const [body, list] = await Promise.all([loadBody(c.env, m.body_key), Promise.all((attByMsg.get(m.id) ?? []).map((a) => attachmentToApi(c.env, o, a)))]);
     return messageRowToFull(m, body, list);
   }));
-  const [summary] = await loadSummaries(c.env.DB, mb, [tid]);
+  const summary = threadRowToSummary(t, [...new Set(rows.map((m) => m.folder_id))]);
   return c.json({ thread: summary, messages });
 });
 
@@ -183,61 +197,79 @@ const ActionSchema = z.object({
 
 mail.post('/threads/actions', async (c) => {
   const body = await jsonBody(c, ActionSchema);
-  const mb = c.get('mailbox').id;
+  const { id: mb, roles } = c.get('mailbox');
   const db = c.env.DB;
   const ids = [...new Set(body.threadIds)];
   const ph = ids.map(() => '?').join(',');
-  const owned = (await db.prepare(`SELECT id FROM threads WHERE mailbox_id = ? AND id IN (${ph})`).bind(mb, ...ids).all<{ id: string }>()).results.map((r) => r.id);
-  if (!owned.length) throw notFound('Thread not found');
-  const tph = owned.map(() => '?').join(',');
-  const roles = await folderIdsByRole(db, mb);
+  const ownedStmt = db.prepare(`SELECT id FROM threads WHERE mailbox_id = ? AND id IN (${ph})`).bind(mb, ...ids);
+  // Every write is scoped to this mailbox, so ids from another mailbox match nothing.
+  // The unary `+` keeps SQLite on the thread index instead of scanning the whole mailbox.
+  const scope = `+mailbox_id = ? AND thread_id IN (${ph})`;
   const now = Date.now();
-  const scope = `mailbox_id = ? AND thread_id IN (${tph})`;
+
+  if (body.action === 'delete_forever') {
+    const [owned, msgs] = await db.batch([
+      ownedStmt,
+      db.prepare(`SELECT id FROM messages WHERE ${scope} AND folder_id IN (?, ?)`).bind(mb, ...ids, roles.trash, roles.spam),
+    ]);
+    if (!owned.results.length) throw notFound('Thread not found');
+    const results = msgs.results as { id: string }[];
+    if (!results.length) throw new HttpError(400, 'NOT_IN_TRASH', 'Only messages in Trash or Spam can be deleted forever');
+    await deleteMessagesForever(c.env, mb, results.map((r) => r.id));
+    return c.json({ ok: true });
+  }
+
+  let target: { id: string; role: FolderRole | null } | null = null;
+  if (body.action === 'move') {
+    const [owned, folder] = await db.batch([
+      ownedStmt,
+      db.prepare('SELECT id, role FROM folders WHERE id = ? AND mailbox_id = ?').bind(body.folderId ?? '', mb),
+    ]);
+    if (!owned.results.length) throw notFound('Thread not found');
+    if (!body.folderId) throw new HttpError(400, 'FOLDER_REQUIRED', 'folderId is required for move');
+    target = (folder.results[0] as { id: string; role: FolderRole | null } | undefined) ?? null;
+    if (!target) throw notFound('Folder not found');
+    if (target.role === 'drafts' || target.role === 'scheduled') throw new HttpError(400, 'INVALID_FOLDER', 'Messages cannot be moved there');
+  }
+
   const move = (to: string, extra = '', extraParams: unknown[] = []) =>
     db.prepare(`UPDATE messages SET folder_id = ?, folder_changed_at = ?, updated_at = ? WHERE ${scope} AND folder_id != ? ${extra}`)
-      .bind(to, now, now, mb, ...owned, to, ...extraParams);
+      .bind(to, now, now, mb, ...ids, to, ...extraParams);
   const NOT_OUTBOX = "AND status NOT IN ('draft','scheduled','sending')";
+  let writes: D1PreparedStatement[];
   switch (body.action) {
     case 'read':
     case 'unread':
-      await db.prepare(`UPDATE messages SET is_read = ?, updated_at = ? WHERE ${scope}`).bind(body.action === 'read' ? 1 : 0, now, mb, ...owned).run();
+      writes = [db.prepare(`UPDATE messages SET is_read = ?, updated_at = ? WHERE ${scope}`).bind(body.action === 'read' ? 1 : 0, now, mb, ...ids)];
       break;
     case 'star':
     case 'unstar':
-      await db.prepare(`UPDATE messages SET is_starred = ?, updated_at = ? WHERE ${scope} ${NOT_OUTBOX}`).bind(body.action === 'star' ? 1 : 0, now, mb, ...owned).run();
+      writes = [db.prepare(`UPDATE messages SET is_starred = ?, updated_at = ? WHERE ${scope} ${NOT_OUTBOX}`).bind(body.action === 'star' ? 1 : 0, now, mb, ...ids)];
       break;
     case 'archive':
-      await move(roles.archive, 'AND folder_id = ?', [roles.inbox]).run();
+      writes = [move(roles.archive, 'AND folder_id = ?', [roles.inbox])];
       break;
     case 'trash':
       // Trashing cancels any scheduled send in the thread so the cron cannot deliver it from Trash.
-      await db.batch([
-        db.prepare(`UPDATE messages SET status = 'draft', send_at = NULL WHERE ${scope} AND status = 'scheduled'`).bind(mb, ...owned),
+      writes = [
+        db.prepare(`UPDATE messages SET status = 'draft', send_at = NULL WHERE ${scope} AND status = 'scheduled'`).bind(mb, ...ids),
         move(roles.trash),
-      ]);
+      ];
       break;
     case 'spam':
-      await move(roles.spam, "AND direction = 'in' AND folder_id != ?", [roles.trash]).run();
+      writes = [move(roles.spam, "AND direction = 'in' AND folder_id != ?", [roles.trash])];
       break;
     case 'not_spam':
-      await move(roles.inbox, 'AND folder_id = ?', [roles.spam]).run();
+      writes = [move(roles.inbox, 'AND folder_id = ?', [roles.spam])];
       break;
-    case 'move': {
-      if (!body.folderId) throw new HttpError(400, 'FOLDER_REQUIRED', 'folderId is required for move');
-      const f = await db.prepare('SELECT id, role FROM folders WHERE id = ? AND mailbox_id = ?').bind(body.folderId, mb).first<{ id: string; role: FolderRole | null }>();
-      if (!f) throw notFound('Folder not found');
-      if (f.role === 'drafts' || f.role === 'scheduled') throw new HttpError(400, 'INVALID_FOLDER', 'Messages cannot be moved there');
-      await move(f.id, NOT_OUTBOX).run();
+    case 'move':
+      writes = [move(target!.id, NOT_OUTBOX)];
       break;
-    }
-    case 'delete_forever': {
-      const { results } = await db.prepare(`SELECT id FROM messages WHERE ${scope} AND folder_id IN (?, ?)`).bind(mb, ...owned, roles.trash, roles.spam).all<{ id: string }>();
-      if (!results.length) throw new HttpError(400, 'NOT_IN_TRASH', 'Only messages in Trash or Spam can be deleted forever');
-      await deleteMessagesForever(c.env, mb, results.map((r) => r.id));
-      return c.json({ ok: true });
-    }
   }
-  await recomputeThreads(db, owned);
+  // One round trip: the ownership check (read before the writes in the same transaction), the writes and the
+  // thread aggregates. When nothing is owned, every statement matched nothing and the result is a 404 as before.
+  const [owned] = await db.batch([ownedStmt, ...writes, ...ids.flatMap((t) => recomputeThreadStmts(db, t, mb))]);
+  if (!owned.results.length) throw notFound('Thread not found');
   return c.json({ ok: true });
 });
 
@@ -258,24 +290,21 @@ mail.get('/messages/:id/raw', async (c) => {
   });
 });
 
-mail.get('/poll', async (c) => {
-  const mb = c.get('mailbox').id;
+/** Nearly free when nothing changed: one round trip with the authorization, two indexed range reads that find nothing. */
+mailReads.get('/poll', async (c) => {
   const since = Number(c.req.query('since')) || 0;
-  const roles = await folderIdsByRole(c.env.DB, mb);
-  const [count, latest] = await c.env.DB.batch([
-    c.env.DB.prepare('SELECT COUNT(*) AS n FROM messages WHERE mailbox_id = ? AND folder_id = ? AND is_read = 0 AND created_at > ?').bind(mb, roles.inbox, since),
-    c.env.DB.prepare(`SELECT thread_id AS tid, MAX(date) AS k FROM messages WHERE mailbox_id = ? AND folder_id = ? AND created_at > ?
-                       GROUP BY thread_id ORDER BY k DESC LIMIT 10`).bind(mb, roles.inbox, since),
+  const [count, latest] = await authorizeMailbox(c, (mb) => [
+    c.env.DB.prepare(`SELECT COUNT(*) AS n FROM messages WHERE mailbox_id = ? AND folder_id = ${INBOX_SQL} AND is_read = 0 AND created_at > ?`).bind(mb, mb, since),
+    c.env.DB.prepare(pageSummariesSql(
+      `SELECT thread_id AS tid, MAX(date) AS k FROM messages WHERE mailbox_id = ? AND folder_id = ${INBOX_SQL} AND created_at > ?
+        GROUP BY thread_id ORDER BY k DESC LIMIT 10`, 'page.k DESC')).bind(mb, mb, since, mb, mb),
   ]);
-  const rows = latest.results as { tid: string; k: number }[];
-  const items = await loadSummaries(c.env.DB, mb, rows.map((r) => r.tid), new Map(rows.map((r) => [r.tid, r.k])));
-  return c.json({ newCount: (count.results[0] as { n: number }).n, latest: items });
+  return c.json({ newCount: (count.results[0] as { n: number }).n, latest: pageRowsToSummaries(latest.results as unknown as PageRow[]) });
 });
 
 mail.post('/messages/:id/cancel-schedule', async (c) => {
-  const mb = c.get('mailbox').id;
+  const { id: mb, roles } = c.get('mailbox');
   const id = c.req.param('id');
-  const roles = await folderIdsByRole(c.env.DB, mb);
   const now = Date.now();
   const res = await c.env.DB.prepare(
     `UPDATE messages SET status = 'draft', send_at = NULL, folder_id = ?, folder_changed_at = ?, updated_at = ?
