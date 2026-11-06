@@ -91,7 +91,7 @@ const STEPS = [
   {
     icon: RouteIcon,
     title: 'Route all mail to the Worker',
-    body: 'In the Cloudflare dashboard open Email → Email Routing → Routing rules, edit the catch-all address, and choose "Send to a Worker" → cirrus-mail.',
+    body: 'In the Cloudflare dashboard open Compute & AI → Email Service → Email Routing → Routing rules, edit the catch-all address, and choose "Send to a Worker" → cirrus-mail.',
     to: '/admin/domains#guide',
     cta: 'Show the guide',
   },

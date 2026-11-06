@@ -52,7 +52,7 @@ Move to `p=quarantine` once you have seen a few days of passing reports.
 
 Inbound mail arrives through Email Routing.
 
-1. In the dashboard, open your domain and go to **Email → Email Routing**.
+1. In the dashboard, go to **Compute & AI → Email Service → Email Routing**.
 2. Enable it and let Cloudflare add its MX and SPF records.
 
 Don't create the catch-all rule yet. The Worker has to exist first; you'll do that in [step 8](#8-route-all-mail-to-the-worker-catch-all).
@@ -151,7 +151,7 @@ Mail to an address that matches no mailbox, alias or catch-all is rejected with 
 
 This tells Email Routing to hand every message for the domain to Cirrus. Cirrus then decides which mailbox it belongs to.
 
-**Dashboard:** your domain → **Email → Email Routing → Routing rules → Catch-all address** → edit → action **Send to a Worker** → destination `cirrus-mail` → save, and make sure it is enabled.
+**Dashboard:** **Compute & AI → Email Service → Email Routing → Routing rules → Catch-all address** → edit → action **Send to a Worker** → destination `cirrus-mail` → save, and make sure it is enabled.
 
 **Or in `wrangler.jsonc`** (CLI deploys): add a top-level `addresses` list, and `wrangler deploy` reconciles the routing for you:
 

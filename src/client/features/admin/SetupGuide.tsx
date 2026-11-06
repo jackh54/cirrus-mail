@@ -3,14 +3,14 @@ import { Section } from '../../components/PageShell';
 
 const ROUTING = [
   'Open the Cloudflare dashboard and select your domain.',
-  'Go to Email → Email Routing. If it is not enabled yet, click "Enable Email Routing" and let it add the MX and SPF records.',
+  'Go to Compute & AI → Email Service → Email Routing. If it is not enabled yet, click "Enable Email Routing" and let it add the MX and SPF records.',
   'Open the "Routing rules" tab and find "Catch-all address".',
   'Click Edit, set the action to "Send to a Worker", choose the cirrus-mail Worker, and save.',
   'Make sure the catch-all is Enabled. Mail to any address @yourdomain now reaches Cirrus, which delivers to mailboxes, aliases and the catch-all you pick above, and rejects everything else.',
 ];
 
 const SENDING = [
-  'In the dashboard go to Email → Email Sending (Email Service) and onboard the same domain.',
+  'In the dashboard go to Compute & AI → Email Service → Email Sending and onboard the same domain.',
   'Add the DNS records it shows (DKIM and the sending SPF include). If the domain uses Cloudflare DNS this is one click.',
   'Wait until the domain shows as verified. Until then, sends fail with a clear error and stay in Drafts.',
   'New accounts start with a small daily sending quota that grows as you send real mail. Cirrus shows a friendly message if you hit it.',
