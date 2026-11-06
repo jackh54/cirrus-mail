@@ -14,7 +14,7 @@ export interface MessageRow {
   status: MessageFull['status']; message_id_hdr: string | null; in_reply_to: string | null; references_hdr: string | null;
   parent_id: string | null; compose_mode: MessageFull['composeMode']; from_email: string; from_name: string;
   to_json: string; cc_json: string; bcc_json: string; reply_to: string | null; subject: string; snippet: string;
-  body_key: string | null; raw_key: string | null; size: number; has_attachments: number; is_read: number;
+  body_key: string | null; body_inline: string | null; raw_key: string | null; size: number; has_attachments: number; is_read: number;
   is_starred: number; spam_score: number; auth_json: string | null; list_id: string | null; send_at: number | null;
   sent_at: number | null; error_code: string | null; error_message: string | null; date: number; scheduled_by: string | null;
   created_at: number; updated_at: number; folder_changed_at: number; fts_rowid: number | null;
@@ -133,6 +133,26 @@ export function pageRowsToSummaries(rows: PageRow[]): ThreadSummary[] {
   return rows.filter((r) => r.id).map((r) => threadRowToSummary(r, JSON.parse(r.folder_ids) as string[], r.k, JSON.parse(r.label_ids) as string[]));
 }
 
+/** Bodies up to this many bytes (html + text) are also kept inline on the message row (messages.body_inline). */
+export const INLINE_BODY_MAX = 64 * 1024;
+
+/** The `body_inline` value for a body: its {html,text} JSON when small enough, else null (R2 only). */
+export function inlineBodyJson(html: string | null, text: string | null): string | null {
+  const enc = new TextEncoder();
+  const size = (html ? enc.encode(html).byteLength : 0) + (text ? enc.encode(text).byteLength : 0);
+  return size <= INLINE_BODY_MAX ? JSON.stringify({ html, text }) : null;
+}
+
+/** A message's body: the inline copy when present, else R2. */
+export async function loadRowBody(env: Env, r: Pick<MessageRow, 'body_key' | 'body_inline'>): Promise<StoredBody> {
+  if (r.body_inline) {
+    try {
+      return JSON.parse(r.body_inline) as StoredBody;
+    } catch { /* fall back to R2 */ }
+  }
+  return loadBody(env, r.body_key);
+}
+
 export async function loadBody(env: Env, key: string | null): Promise<StoredBody> {
   if (!key) return { html: null, text: null };
   const obj = await env.BUCKET.get(key);
@@ -197,11 +217,11 @@ export function messageRowToFull(r: MessageRow, body: StoredBody, attachments: A
   };
 }
 
-/** Full API shape for one message row (body from R2, signed attachment URLs). */
+/** Full API shape for one message row (body inline or from R2, signed attachment URLs). */
 export async function loadMessageFull(env: Env, origin: string, r: MessageRow): Promise<MessageFull> {
   const [{ results }, body] = await Promise.all([
     env.DB.prepare('SELECT * FROM attachments WHERE message_id = ? ORDER BY created_at, id').bind(r.id).all<AttachmentRow>(),
-    loadBody(env, r.body_key),
+    loadRowBody(env, r),
   ]);
   const atts = await Promise.all(results.map((a) => attachmentToApi(env, origin, a)));
   return messageRowToFull(r, body, atts, origin);

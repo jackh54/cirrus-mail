@@ -4,7 +4,7 @@ import { LIMITS, type Address } from '../../shared/api';
 import { ulid } from '../../shared/ulid';
 import { dedupeAddresses, domainOf, fromParsed, normalizeEmail } from '../lib/addresses';
 import { sha256Hex } from '../lib/crypto';
-import { addressesForFts, folderIdsByRole, ftsInsertStmts, recomputeThreadStmts } from '../lib/db';
+import { addressesForFts, folderIdsByRole, ftsInsertStmts, inlineBodyJson, recomputeThreadStmts } from '../lib/db';
 import { htmlToText, makeSnippet } from '../lib/html';
 import { notifyNewMail } from '../push';
 import { maybeAutoreply, type AutoreplyMailbox } from './autoreply';
@@ -232,11 +232,11 @@ export async function processInbound(message: ForwardableEmailMessage, env: Env,
   }
   stmts.push(db.prepare(
     `INSERT INTO messages (id, mailbox_id, thread_id, folder_id, direction, status, message_id_hdr, in_reply_to, references_hdr,
-       from_email, from_name, to_json, cc_json, bcc_json, reply_to, subject, snippet, body_key, raw_key, size, has_attachments,
+       from_email, from_name, to_json, cc_json, bcc_json, reply_to, subject, snippet, body_key, body_inline, raw_key, size, has_attachments,
        is_read, is_starred, spam_score, auth_json, list_id, date, display_date, content_hash, created_at, updated_at, folder_changed_at)
-     VALUES (?, ?, ?, ?, 'in', 'received', ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, 'in', 'received', ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).bind(id, mailboxId, threadId, folderId, msgIdHdr, inReplyTo[0] ?? null, references.length ? references.join(' ').slice(0, 8000) : null,
-    from.email, from.name ?? '', JSON.stringify(to), JSON.stringify(cc), replyTo, subject, makeSnippet(text), bodyKey, rawKey, size,
+    from.email, from.name ?? '', JSON.stringify(to), JSON.stringify(cc), replyTo, subject, makeSnippet(text), bodyKey, inlineBodyJson(html, text), rawKey, size,
     hasAttachments ? 1 : 0, isRead, isStarred, spam.score, auth ? JSON.stringify(auth) : null, listId, date, shownDate, hash, now, now, now));
   for (const a of atts) {
     stmts.push(db.prepare('INSERT INTO attachments (id, message_id, mailbox_id, filename, mime_type, size, content_id, inline, r2_key, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
