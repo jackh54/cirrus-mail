@@ -653,6 +653,8 @@ export interface EventView extends Omit<EventInput, 'calendarId'> {
   uid: string;
   etag: string;
   recurring: boolean;
+  /** IANA zone of a timed event's DTSTART (its recurrences repeat at this wall-clock time); null for UTC, floating, all-day or unknown zones. */
+  tzid: string | null;
   updatedAt: Millis;
 }
 // ---------- mbox import / export ----------

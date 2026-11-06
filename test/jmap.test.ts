@@ -1,7 +1,7 @@
 import { env } from 'cloudflare:workers';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { ulid } from '../src/shared/ulid';
-import { hourlyMaintenance } from '../src/worker/cron';
+import { hourlyMaintenance, runCron } from '../src/worker/cron';
 import { normalizeAppPassword } from '../src/worker/dav/auth';
 import { processInbound } from '../src/worker/inbound/handler';
 import { eventStream } from '../src/worker/jmap/handler';
@@ -203,7 +203,7 @@ describe('Email/query and Email/get', () => {
     expect((await one('Email/query', { filter: { text: 'pizza' } })).ids).toEqual([m3]);
     expect((await one('Email/query', { filter: { from: 'billing@shop' } })).ids.sort()).toEqual([m1, m2].sort());
     expect((await one('Email/query', { filter: { operator: 'AND', conditions: [{ from: 'billing' }, { operator: 'NOT', conditions: [{ text: 'already' }] }] } })).ids).toEqual([m1]);
-    expect((await one('Email/query', { filter: { operator: 'OR', conditions: [{ text: 'pizza' }, { text: 'already' }] }, sort: [{ property: 'receivedAt' }] })).ids).toEqual([m3, m2]);
+    expect((await one('Email/query', { filter: { operator: 'OR', conditions: [{ text: 'pizza' }, { text: 'already' }] }, sort: [{ property: 'receivedAt' }] })).ids).toEqual([m2, m3]); // isAscending defaults to true (RFC 8620 5.5)
     expect((await one('Email/query', { filter: { hasKeyword: '$seen', inMailbox: W.folders.inbox } })).ids).toEqual([]);
     expect((await one('Email/query', { filter: { notKeyword: '$seen', subject: 'lunch' } })).ids).toEqual([m3]);
     expect((await one('Email/query', { filter: { hasAttachment: true } })).ids).toEqual([]);
@@ -223,6 +223,14 @@ describe('Email/query and Email/get', () => {
     // inMailboxOtherThan: everything here is in the inbox only.
     expect((await one('Email/query', { filter: { inMailboxOtherThan: [W.folders.inbox], subject: 'lunch' } })).ids).toEqual([]);
     expect((await one('Email/query', { filter: { inMailboxOtherThan: [W.folders.trash], subject: 'lunch' } })).ids).toEqual([m3]);
+  });
+
+  it('sorts ascending when isAscending is omitted, descending only when it is false', async () => {
+    const a = await deliver(A, 'Order probe one', { from: 'Order <order@probe.test>' });
+    const b = await deliver(A, 'Order probe two', { from: 'Order <order@probe.test>' });
+    const filter = { from: 'order@probe.test' };
+    expect((await one('Email/query', { filter, sort: [{ property: 'receivedAt' }] })).ids).toEqual([a, b]);
+    expect((await one('Email/query', { filter, sort: [{ property: 'receivedAt', isAscending: false }] })).ids).toEqual([b, a]);
   });
 
   it('returns properties, body structure and truncated body values', async () => {
@@ -336,6 +344,32 @@ describe('Email/set', () => {
     const second = await one('Email/set', { destroy: [id] });
     expect(second.destroyed).toEqual([id]);
     expect((await one('Email/get', { ids: [id] })).notFound).toEqual([id]);
+  });
+
+  it('destroying a draft in Drafts deletes it outright instead of moving it to Trash', async () => {
+    const made = await one('Email/set', { create: { d: { mailboxIds: { [A.folders.drafts]: true }, keywords: { $draft: true }, from: [{ email: A.addr }], to: [{ email: 'rcpt@elsewhere.test' }], subject: 'Throwaway', textBody: [{ partId: 't', type: 'text/plain' }], bodyValues: { t: { value: 'bye' } } } } });
+    const id = made.created.d.id;
+    const row = await env.DB.prepare('SELECT body_key FROM messages WHERE id = ?').bind(id).first<{ body_key: string | null }>();
+    const res = await one('Email/set', { destroy: [id] });
+    expect(res.destroyed).toEqual([id]);
+    expect((await one('Email/get', { ids: [id] })).notFound).toEqual([id]);
+    expect(await env.DB.prepare('SELECT 1 FROM messages WHERE id = ?').bind(id).first()).toBeNull();
+    if (row?.body_key) expect(await env.BUCKET.get(row.body_key)).toBeNull();
+  });
+
+  it('rewrites creation ids only where ids belong, never in subjects or body text', async () => {
+    const r = await jmap([
+      ['Email/set', { accountId: A.mb, create: { c1: { mailboxIds: { [A.folders.drafts]: true }, keywords: { $draft: true }, from: [{ email: A.addr }], subject: 'first' } } }, 'a'],
+      ['Email/set', {
+        accountId: A.mb,
+        create: { c2: { mailboxIds: { [A.folders.drafts]: true }, keywords: { $draft: true }, from: [{ email: A.addr }], subject: '#c1', textBody: [{ partId: 't', type: 'text/plain' }], bodyValues: { t: { value: '#c1' } } } },
+      }, 'b'],
+      ['Email/get', { accountId: A.mb, ids: ['#c1', '#c2'], properties: ['subject', 'bodyValues', 'textBody'], fetchTextBodyValues: true }, 'g'],
+    ]);
+    const [first, second] = r[2][1].list;
+    expect(first.subject).toBe('first');
+    expect(second.subject).toBe('#c1');
+    expect(Object.values(second.bodyValues).map((v: any) => v.value)).toEqual(['#c1']);
   });
 
   it('creates drafts with back-references and creation ids, then sends them via EmailSubmission', async () => {
@@ -459,6 +493,48 @@ describe('uploads and downloads', () => {
     const shared = await createMailbox(`${randomLocal('shared')}@${DOMAIN}`, [{ userId: A.id }, { userId: B.id, role: 'member' }]);
     const session = await (await req('GET', '/jmap/session', { auth: B.auth })).json<any>();
     expect(session.accounts[shared.id].isPersonal).toBe(false);
+  });
+});
+
+describe('cleanup', () => {
+  it('prunes expired uploads on every cron tick, not just at minute 0', async () => {
+    const id = ulid();
+    await env.DB.prepare('INSERT INTO jmap_uploads (id, mailbox_id, user_id, size, type, created_at) VALUES (?, ?, ?, 1, ?, ?)').bind(id, A.mb, A.id, 'text/plain', Date.now() - 24 * 3600_000).run();
+    await runCron(env, Date.UTC(2026, 10, 6, 12, 7)); // minute 7
+    expect(await env.DB.prepare('SELECT 1 FROM jmap_uploads WHERE id = ?').bind(id).first()).toBeNull();
+  });
+
+  it('deletes a big mailbox in bounded chunks and leaves no change-tracking rows behind', async () => {
+    const adminId = ulid();
+    const now = Date.now();
+    const email = `${randomLocal('adm')}@${DOMAIN}`;
+    await env.DB.prepare('INSERT INTO users (id, email, name, password_hash, role, must_change_password, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 0, ?, ?)')
+      .bind(adminId, email, 'adm', await hashPassword(PASSWORD), 'admin', now, now).run();
+    const cookie = sessionCookie(await call('/api/auth/login', { body: { email, password: PASSWORD } }));
+    const box = await createMailbox(`${randomLocal('big')}@${DOMAIN}`);
+    const tid = ulid();
+    await env.DB.prepare("INSERT INTO threads (id, mailbox_id, subject, subject_norm, last_message_at, created_at) VALUES (?, ?, 'bulk', 'bulk', ?, ?)").bind(tid, box.id, now, now).run();
+    const N = 1200;
+    for (let i = 0; i < N; i += 100) {
+      await env.DB.batch(Array.from({ length: Math.min(100, N - i) }, () => env.DB.prepare(
+        `INSERT INTO messages (id, mailbox_id, thread_id, folder_id, direction, status, from_email, subject, date, created_at, updated_at, folder_changed_at) VALUES (?, ?, ?, ?, 'in', 'received', 'x@y.test', 'bulk', ?, ?, ?, ?)`,
+      ).bind(ulid(), box.id, tid, box.folders.inbox, now, now, now, now)));
+    }
+    const count = async (t: string) => (await env.DB.prepare(`SELECT COUNT(*) AS n FROM ${t} WHERE mailbox_id = ?`).bind(box.id).first<number>('n'))!;
+    expect(await count('messages')).toBe(N);
+
+    const sql: string[] = [];
+    const spy = new Proxy(env.DB, { get: (t, k) => (k === 'prepare' ? (q: string) => { sql.push(q); return t.prepare(q); } : typeof Reflect.get(t, k) === 'function' ? (Reflect.get(t, k) as (...a: unknown[]) => unknown).bind(t) : Reflect.get(t, k)) });
+    const res = await call(`/api/admin/mailboxes/${box.id}`, { method: 'DELETE', cookie, env: withEnv({ DB: spy as unknown as D1Database }) });
+    expect(res.status).toBe(200);
+    // No statement deletes every message of the mailbox at once.
+    const deletes = sql.filter((q) => /^DELETE FROM messages\b/.test(q));
+    expect(deletes.length).toBeGreaterThan(0);
+    for (const q of deletes) expect(q).toMatch(/LIMIT/);
+    expect(await env.DB.prepare('SELECT 1 FROM mailboxes WHERE id = ?').bind(box.id).first()).toBeNull();
+    expect(await env.DB.prepare('SELECT COUNT(*) AS n FROM messages WHERE mailbox_id = ?').bind(box.id).first<number>('n')).toBe(0);
+    expect(await count('jmap_state')).toBe(0);
+    expect(await count('jmap_tombstones')).toBe(0);
   });
 });
 

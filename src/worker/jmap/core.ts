@@ -184,13 +184,23 @@ function resolveBackRefs(args: J, responses: [string, J, string][]): J {
   return out;
 }
 
-/** Replaces `#creationId` strings (and object keys) with the ids the server assigned earlier in this request. */
-function resolveCreationIds(v: J, ids: Map<string, string>): J {
-  if (typeof v === 'string') return v.startsWith('#') && ids.has(v.slice(1)) ? ids.get(v.slice(1)) : v;
-  if (Array.isArray(v)) return v.map((x) => resolveCreationIds(x, ids));
+/** Properties whose string value is an id, arrays whose strings are ids, and maps keyed by ids (RFC 8620/8621). */
+const ID_PROPS = new Set(['emailId', 'identityId', 'threadId', 'blobId', 'parentId', 'mailboxId', 'inMailbox', 'anchor']);
+const ID_LISTS = new Set(['ids', 'destroy', 'emailIds', 'threadIds', 'inMailboxOtherThan', 'onSuccessDestroyEmail']);
+const ID_KEYED = new Set(['mailboxIds', 'keywords', 'update', 'onSuccessUpdateEmail']);
+
+/** Replaces `#creationId` with the ids the server assigned earlier in this request, in id positions only: subjects and bodies are left alone. */
+function resolveCreationIds(v: J, ids: Map<string, string>, prop = ''): J {
+  const sub = (s: string): string => (s.startsWith('#') && ids.has(s.slice(1)) ? ids.get(s.slice(1))! : s);
+  if (typeof v === 'string') return ID_PROPS.has(prop) ? sub(v) : v;
+  if (Array.isArray(v)) return v.map((x) => (typeof x === 'string' ? (ID_LISTS.has(prop) ? sub(x) : x) : resolveCreationIds(x, ids, prop)));
   if (v && typeof v === 'object') {
+    const keyed = ID_KEYED.has(prop);
     const o: J = {};
-    for (const [k, x] of Object.entries(v)) o[k.startsWith('#') && ids.has(k.slice(1)) ? ids.get(k.slice(1))! : k] = resolveCreationIds(x, ids);
+    for (const [k, x] of Object.entries(v)) {
+      const patch = /^mailboxIds\/(#.+)$/.exec(k); // patch path to one mailbox
+      o[keyed ? sub(k) : patch ? `mailboxIds/${sub(patch[1])}` : k] = resolveCreationIds(x, ids, keyed ? '' : k);
+    }
     return o;
   }
   return v;

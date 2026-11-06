@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { addDays, dayKey, localeWeekStart, monthGrid, startOfWeek } from '../src/client/features/calendar/dates';
 import { layoutColumns } from '../src/client/features/calendar/layout';
 import { expandRecurrence, isExpandable } from '../src/client/features/calendar/recurrence';
+import { WINDOWS_ZONES, resolveZone } from '../src/shared/tz';
 
 const at = (y: number, m: number, d: number, h = 0, mi = 0) => new Date(y, m - 1, d, h, mi).getTime();
 const days = (occ: { start: number }[]) => occ.map((o) => dayKey(new Date(o.start)));
@@ -54,6 +55,27 @@ describe('recurrence expander', () => {
       expect(isExpandable(rule)).toBe(false);
       expect(expandRecurrence({ ...hour, rrule: rule }, at(2026, 3, 1), at(2027, 3, 1))).toHaveLength(1);
     }
+  });
+});
+
+describe('recurrence in the event zone', () => {
+  const iso = (occ: { start: number }[]) => occ.map((o) => new Date(o.start).toISOString());
+  // Mondays 10:00 New York, first on 2 March 2026 (EST); US clocks go forward on 8 March, EU clocks on 29 March.
+  const ny = { start: Date.UTC(2026, 2, 2, 15), end: Date.UTC(2026, 2, 2, 16), allDay: false, rrule: 'FREQ=WEEKLY', tzid: 'America/New_York' };
+
+  it('repeats at the same wall-clock time in the event zone, whatever the viewer zone does', () => {
+    const o = expandRecurrence(ny, Date.UTC(2026, 2, 1), Date.UTC(2026, 3, 7));
+    expect(iso(o)).toEqual(['2026-03-02T15:00:00.000Z', '2026-03-09T14:00:00.000Z', '2026-03-16T14:00:00.000Z', '2026-03-23T14:00:00.000Z', '2026-03-30T14:00:00.000Z', '2026-04-06T14:00:00.000Z']);
+    expect(o[1].end - o[1].start).toBe(3_600_000);
+    // Starting the walk later (skipTo) gives the same instants.
+    expect(iso(expandRecurrence(ny, Date.UTC(2026, 2, 28), Date.UTC(2026, 3, 1)))).toEqual(['2026-03-30T14:00:00.000Z']);
+  });
+
+  it('knows the Windows zone names it maps to', () => {
+    expect(resolveZone('Pacific Standard Time')).toBe('America/Los_Angeles');
+    expect(resolveZone('Europe/Paris')).toBe('Europe/Paris');
+    expect(resolveZone('Nowhere Standard Time')).toBeNull();
+    for (const [win, iana] of Object.entries(WINDOWS_ZONES)) expect(resolveZone(win), win).toBe(iana);
   });
 });
 

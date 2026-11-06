@@ -342,6 +342,8 @@ admin.patch('/mailboxes/:id', async (c) => {
   return c.json((await adminMailboxes(db, id))[0]);
 });
 
+const DELETE_CHUNK = 500;
+
 async function deletePrefix(bucket: R2Bucket, prefix: string) {
   let cursor: string | undefined;
   do {
@@ -359,8 +361,19 @@ admin.delete('/mailboxes/:id', async (c) => {
     db.prepare('DELETE FROM messages_fts WHERE mailbox_id = ?').bind(id),
     db.prepare('UPDATE domains SET catch_all_mailbox_id = NULL WHERE catch_all_mailbox_id = ?').bind(id),
     db.prepare('DELETE FROM attachments WHERE mailbox_id = ?').bind(id),
-    db.prepare('DELETE FROM messages WHERE mailbox_id = ?').bind(id),
+  ]);
+  // Every deleted row fires JMAP change-tracking triggers, so delete in bounded chunks instead of one huge statement.
+  // Threads go the same way; otherwise the mailbox delete would cascade through all of them at once.
+  for (const table of ['messages', 'threads']) {
+    do {
+      await db.prepare(`DELETE FROM ${table} WHERE id IN (SELECT id FROM ${table} WHERE mailbox_id = ? LIMIT ?)`).bind(id, DELETE_CHUNK).run();
+    } while (await db.prepare(`SELECT 1 FROM ${table} WHERE mailbox_id = ? LIMIT 1`).bind(id).first());
+  }
+  await db.batch([
     db.prepare('DELETE FROM mailboxes WHERE id = ?').bind(id),
+    // The triggers above wrote change-tracking rows for a mailbox that no longer exists.
+    db.prepare('DELETE FROM jmap_tombstones WHERE mailbox_id = ?').bind(id),
+    db.prepare('DELETE FROM jmap_state WHERE mailbox_id = ?').bind(id),
   ]);
   for (const p of ['raw', 'body', 'att']) await deletePrefix(c.env.BUCKET, `${p}/${id}/`);
   return c.json({ ok: true });

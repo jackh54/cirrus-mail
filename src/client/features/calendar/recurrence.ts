@@ -1,7 +1,9 @@
 // Client-side expansion of RRULE for the visible range. Supported: FREQ=DAILY|WEEKLY|MONTHLY|YEARLY with
 // INTERVAL, COUNT, UNTIL (and WKST) and, for WEEKLY only, BYDAY without ordinals. Anything else yields the
-// first occurrence only. Occurrences keep their local wall-clock time across DST changes.
-import { addDays, dayDiff, startOfDay, type Weekday } from './dates';
+// first occurrence only. Occurrences keep their wall-clock time across DST changes: in the event's own zone when it has
+// one (tzid), else in the viewer's zone.
+import { tzOffset, tzToUtc } from '../../../shared/tz';
+import { addDays, dayDiff, type Weekday } from './dates';
 
 export interface Span {
   /** Epoch ms. All-day events start at local midnight. */
@@ -10,6 +12,8 @@ export interface Span {
   end: number;
   allDay: boolean;
   rrule: string | null;
+  /** IANA zone of a timed event; its series repeats at the same wall-clock time there. Null: the viewer's zone. */
+  tzid?: string | null;
 }
 
 export interface Occurrence { start: number; end: number }
@@ -76,42 +80,62 @@ export function parseRule(rrule: string): Rule | null {
 /** True when `rrule` is one this module expands in full (otherwise only the first occurrence shows). */
 export const isExpandable = (rrule: string): boolean => parseRule(rrule) !== null;
 
-/** Local start of step `n` (every `interval` periods from the first occurrence); weekly rules give several. */
-function candidates(rule: Rule, base: Date, n: number): Date[] {
+const DAY = 86_400_000;
+
+/** Calendar arithmetic on a Date: the viewer's zone, or (with `WALL`) wall-clock fields read as UTC so no viewer DST gap can interfere. */
+interface Cal {
+  year(d: Date): number; month(d: Date): number; date(d: Date): number; day(d: Date): number;
+  hours(d: Date): number; minutes(d: Date): number; seconds(d: Date): number;
+  make(y: number, mo: number, d: number, h: number, mi: number, s: number): Date;
+}
+const LOCAL: Cal = {
+  year: (d) => d.getFullYear(), month: (d) => d.getMonth(), date: (d) => d.getDate(), day: (d) => d.getDay(),
+  hours: (d) => d.getHours(), minutes: (d) => d.getMinutes(), seconds: (d) => d.getSeconds(),
+  make: (y, mo, d, h, mi, s) => new Date(y, mo, d, h, mi, s),
+};
+const WALL: Cal = {
+  year: (d) => d.getUTCFullYear(), month: (d) => d.getUTCMonth(), date: (d) => d.getUTCDate(), day: (d) => d.getUTCDay(),
+  hours: (d) => d.getUTCHours(), minutes: (d) => d.getUTCMinutes(), seconds: (d) => d.getUTCSeconds(),
+  make: (y, mo, d, h, mi, s) => new Date(Date.UTC(y, mo, d, h, mi, s)),
+};
+
+/** Start of step `n` (every `interval` periods from the first occurrence); weekly rules give several. */
+function candidates(rule: Rule, base: Date, n: number, c: Cal): Date[] {
   const k = n * rule.interval;
-  const h = base.getHours(), mi = base.getMinutes(), s = base.getSeconds();
+  const y = c.year(base), mo = c.month(base), dt = c.date(base);
+  const h = c.hours(base), mi = c.minutes(base), s = c.seconds(base);
   switch (rule.freq) {
     case 'DAILY':
-      return [new Date(base.getFullYear(), base.getMonth(), base.getDate() + k, h, mi, s)];
+      return [c.make(y, mo, dt + k, h, mi, s)];
     case 'WEEKLY': {
-      if (!rule.byDay.length) return [new Date(base.getFullYear(), base.getMonth(), base.getDate() + 7 * k, h, mi, s)];
-      const weekFirst = base.getDate() - ((base.getDay() - rule.wkst + 7) % 7);
+      if (!rule.byDay.length) return [c.make(y, mo, dt + 7 * k, h, mi, s)];
+      const weekFirst = dt - ((c.day(base) - rule.wkst + 7) % 7);
       return rule.byDay
         .map((d) => (d - rule.wkst + 7) % 7)
         .sort((a, b) => a - b)
-        .map((off) => new Date(base.getFullYear(), base.getMonth(), weekFirst + 7 * k + off, h, mi, s));
+        .map((off) => c.make(y, mo, weekFirst + 7 * k + off, h, mi, s));
     }
     case 'MONTHLY': {
-      const d = new Date(base.getFullYear(), base.getMonth() + k, base.getDate(), h, mi, s);
-      return d.getDate() === base.getDate() ? [d] : []; // e.g. the 31st skips short months
+      const d = c.make(y, mo + k, dt, h, mi, s);
+      return c.date(d) === dt ? [d] : []; // e.g. the 31st skips short months
     }
     case 'YEARLY': {
-      const d = new Date(base.getFullYear() + k, base.getMonth(), base.getDate(), h, mi, s);
-      return d.getMonth() === base.getMonth() ? [d] : [];
+      const d = c.make(y + k, mo, dt, h, mi, s);
+      return c.month(d) === mo ? [d] : [];
     }
   }
 }
 
 /** A step index from which no occurrence can still overlap `from`, so far-past series are not walked from the start. */
-function skipTo(rule: Rule, base: Date, from: Date, lookbackDays: number): number {
+function skipTo(rule: Rule, base: Date, from: Date, lookbackDays: number, c: Cal): number {
   if (rule.count !== null) return 0; // COUNT needs every earlier occurrence counted
-  const ref = addDays(startOfDay(from), -lookbackDays - 7);
+  const ref = new Date(from.getTime() - (lookbackDays + 8) * DAY);
   let steps: number;
   switch (rule.freq) {
-    case 'DAILY': steps = dayDiff(base, ref); break;
-    case 'WEEKLY': steps = Math.floor(dayDiff(base, ref) / 7); break;
-    case 'MONTHLY': steps = (ref.getFullYear() - base.getFullYear()) * 12 + ref.getMonth() - base.getMonth(); break;
-    case 'YEARLY': steps = ref.getFullYear() - base.getFullYear(); break;
+    case 'DAILY': steps = Math.floor((ref.getTime() - base.getTime()) / DAY); break;
+    case 'WEEKLY': steps = Math.floor(Math.floor((ref.getTime() - base.getTime()) / DAY) / 7); break;
+    case 'MONTHLY': steps = (c.year(ref) - c.year(base)) * 12 + c.month(ref) - c.month(base); break;
+    case 'YEARLY': steps = c.year(ref) - c.year(base); break;
   }
   return Math.max(0, Math.floor(steps / rule.interval) - 1);
 }
@@ -120,34 +144,43 @@ function skipTo(rule: Rule, base: Date, from: Date, lookbackDays: number): numbe
 export function expandRecurrence(span: Span, rangeStart: number, rangeEnd: number): Occurrence[] {
   const out: Occurrence[] = [];
   const dur = span.end - span.start;
-  const startDate = new Date(span.start);
-  const endOf = (s: Date): number => {
-    if (!span.allDay) return s.getTime() + dur;
+  const tz = span.tzid && !span.allDay && tzOffset(span.tzid, span.start) !== null ? span.tzid : null;
+  const cal = tz ? WALL : LOCAL;
+  const wallOf = (ms: number): Date => new Date(tz ? ms + tzOffset(tz, ms)! : ms);
+  /** The instant of a candidate (a wall-clock Date in the event's zone, or a viewer-local Date). */
+  const inst = (d: Date): number => (tz ? tzToUtc(tz, d.getTime())! : d.getTime());
+  const startDate = wallOf(span.start);
+  const endOf = (s: Date, ms: number): number => {
+    if (!span.allDay) return ms + dur;
     return addDays(s, Math.max(1, dayDiff(startDate, new Date(span.end)))).getTime();
   };
   const overlaps = (s: number, e: number) => s < rangeEnd && (e > rangeStart || (e === s && s >= rangeStart));
-  const push = (s: Date): void => {
-    const e = endOf(s);
-    if (overlaps(s.getTime(), e)) out.push({ start: s.getTime(), end: e });
+  const push = (s: Date, ms = inst(s)): void => {
+    const e = endOf(s, ms);
+    if (overlaps(ms, e)) out.push({ start: ms, end: e });
   };
 
   const rule = span.rrule ? parseRule(span.rrule) : null;
-  push(startDate);
+  push(startDate, span.start);
   if (!rule) return out;
 
   let seen = 1; // the first occurrence counts toward COUNT whether or not the rule would generate it
-  const lookbackDays = Math.ceil(dur / 86_400_000) + 1;
-  for (let n = skipTo(rule, startDate, new Date(rangeStart), lookbackDays), steps = 0; steps < MAX_STEPS && out.length < MAX_OCCURRENCES; n++, steps++) {
-    const list = candidates(rule, startDate, n).filter((d) => d.getTime() > span.start);
+  const lookbackDays = Math.ceil(dur / DAY) + 1;
+  for (let n = skipTo(rule, startDate, wallOf(rangeStart), lookbackDays, cal), steps = 0; steps < MAX_STEPS && out.length < MAX_OCCURRENCES; n++, steps++) {
+    const list = candidates(rule, startDate, n, cal).filter((d) => inst(d) > span.start);
     for (const d of list) {
+      const ms = inst(d);
       seen++;
       if (rule.count !== null && seen > rule.count) return out;
-      if (rule.until !== null && d.getTime() > rule.until) return out;
-      if (d.getTime() >= rangeEnd) return out;
-      push(d);
+      if (rule.until !== null && ms > rule.until) return out;
+      if (ms >= rangeEnd) return out;
+      push(d, ms);
     }
     // Candidates of later steps are never earlier than this step's first one.
-    if (!list.length && candidates(rule, startDate, n)[0]?.getTime() >= rangeEnd) return out;
+    if (!list.length) {
+      const first = candidates(rule, startDate, n, cal)[0];
+      if (first && inst(first) >= rangeEnd) return out;
+    }
   }
   return out;
 }

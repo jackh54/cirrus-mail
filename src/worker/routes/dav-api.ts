@@ -3,7 +3,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import type { ContactView, DavCollectionInfo, EventView, InvitePreview, Page } from '../../shared/api';
 import { ulid } from '../../shared/ulid';
-import { applyEvent, buildEvent, eventFields, IcsError, inviteFields } from '../dav/ical';
+import { acceptedInvite, applyEvent, buildEvent, eventFields, IcsError, inviteFields } from '../dav/ical';
 import {
   createCollection, DavError, deleteObject, ensureDefaults, getCollectionById, getObjectById, listCollections, putObject, queryObjects, updateCollection,
   type CollectionRow, type Kind, type ObjectRow,
@@ -270,14 +270,24 @@ davApi.post('/invite/accept', async (c) => {
   if (inv.method && inv.method !== 'REQUEST' && inv.method !== 'PUBLISH') throw new HttpError(400, 'INVALID_DATA', `A ${inv.method.toLowerCase()} message cannot be added to a calendar`);
   const parsed = EventSchema.safeParse({ ...inv.event, rrule: inv.event.rrule && RRULE_RE.test(inv.event.rrule) ? inv.event.rrule : null });
   if (!parsed.success) throw new HttpError(400, 'INVALID_DATA', 'The invitation has no usable date');
-  const { calendarId: _ignored, ...fields } = parsed.data;
   const userId = c.get('user').id;
+  const { results } = await c.env.DB.prepare(
+    `SELECT m.address AS a FROM mailboxes m JOIN mailbox_members mm ON mm.mailbox_id = m.id WHERE mm.user_id = ?1
+     UNION SELECT a.address FROM aliases a JOIN mailbox_members mm ON mm.mailbox_id = a.mailbox_id WHERE mm.user_id = ?1`,
+  ).bind(userId).all<{ a: string }>();
+  const self = [c.get('user').email, ...results.map((r) => r.a)].map((e) => e.toLowerCase());
+  // The original event is stored (TZID, EXDATE, overrides and VTIMEZONE intact), with our own PARTSTAT.
+  const stored = await guard(async () => acceptedInvite(ics, self, (r) => RRULE_RE.test(r)));
   if (row) {
     const { o, coll } = await loadEvent(c, row.id);
-    const r = await guard(async () => putObject(c.env.DB, coll, o.uri, applyEvent(o.data!, fields)));
+    // Only the organizer may update the event, and never with an older revision.
+    const cur = await guard(async () => inviteFields(o.data!));
+    if ((cur.organizer?.email ?? null) !== (inv.organizer?.email ?? null)) throw new HttpError(409, 'ORGANIZER_MISMATCH', 'This invitation is from a different organizer than the event already in your calendar, so it was not applied');
+    if (inv.sequence < cur.sequence) throw new HttpError(409, 'OUTDATED_INVITATION', 'This invitation is older than the event already in your calendar, so it was not applied');
+    const r = await guard(async () => putObject(c.env.DB, coll, o.uri, stored));
     return c.json(eventView((await getObjectById(c.env.DB, userId, 'calendar', r.id))!));
   }
   const coll = await pick(c, 'calendar', calendarId);
-  const r = await guard(async () => putObject(c.env.DB, coll, `${ulid()}.ics`, buildEvent(fields, inv.uid), { ifNoneMatch: '*' }));
+  const r = await guard(async () => putObject(c.env.DB, coll, `${ulid()}.ics`, stored, { ifNoneMatch: '*' }));
   return c.json(eventView((await getObjectById(c.env.DB, userId, 'calendar', r.id))!), 201);
 });

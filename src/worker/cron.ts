@@ -1,4 +1,4 @@
-// scheduled(): every minute send due scheduled messages; at minute 0 purge and prune.
+// scheduled(): every minute send due scheduled messages and prune expired uploads; at minute 0 purge and prune.
 import { deleteMessagesForever } from './lib/db';
 import { pruneUploads } from './jmap/blob';
 import { backfillInlineBodies } from './lib/inline-backfill';
@@ -94,12 +94,12 @@ export async function runCron(env: Env, scheduledTime: number): Promise<void> {
   } catch (e) {
     console.error('cron inline backfill error', (e as Error).name);
   }
+  try {
+    await pruneUploads(env, Date.now());
+  } catch (e) {
+    console.error('cron upload cleanup error', (e as Error).name);
+  }
   if (new Date(scheduledTime).getUTCMinutes() === 0) {
-    try {
-      await pruneUploads(env, Date.now());
-    } catch (e) {
-      console.error('cron upload cleanup error', (e as Error).name);
-    }
     try {
       await hourlyMaintenance(env);
     } catch (e) {

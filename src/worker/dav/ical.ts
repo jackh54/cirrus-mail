@@ -1,5 +1,6 @@
 // iCalendar (RFC 5545) analysis for storage and calendar-query, plus the structured event view used by the JSON API.
 import type { Address, EventInput } from '../../shared/api';
+import { resolveZone, tzToUtc } from '../../shared/tz';
 import { escapeText, oneLine, parseLines, serialize, unescapeText, type Line } from './lines';
 
 export class IcsError extends Error {}
@@ -41,35 +42,75 @@ function scan(lines: Line[]): Comp[] {
 const prop = (lines: Line[], c: Comp, name: string): Line | undefined => c.props.map((i) => lines[i]).find((l) => l.name === name);
 const props = (lines: Line[], c: Comp, name: string): Line[] => c.props.map((i) => lines[i]).filter((l) => l.name === name);
 
-const tzFormatters = new Map<string, Intl.DateTimeFormat>();
+interface Observance { onset: number; from: number; to: number; rrule: string | null }
+type Zones = Map<string, Observance[]>;
 
-/** Offset (ms) of `tz` at the UTC instant `utc`, or null for an unknown zone. */
-function tzOffset(tz: string, utc: number): number | null {
-  try {
-    let f = tzFormatters.get(tz);
-    if (!f) {
-      f = new Intl.DateTimeFormat('en-US', { timeZone: tz, hourCycle: 'h23', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' });
-      tzFormatters.set(tz, f);
-    }
-    const p: Record<string, number> = {};
-    for (const part of f.formatToParts(new Date(utc))) if (part.type !== 'literal') p[part.type] = Number(part.value);
-    return Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second) - Math.floor(utc / 1000) * 1000;
-  } catch {
-    return null;
+const utcOffset = (v: string): number | null => {
+  const m = /^([+-])(\d{2})(\d{2})(\d{2})?$/.exec(v.trim());
+  return m ? (m[1] === '-' ? -1 : 1) * ((+m[2] * 60 + +m[3]) * 60 + +(m[4] ?? 0)) * 1000 : null;
+};
+
+/** The offset rules of the VTIMEZONE blocks, by TZID, for zones that are neither IANA names nor known Windows names. */
+function vtimezones(lines: Line[]): Zones {
+  const zones: Zones = new Map();
+  let tzid = '', cur: Observance | null = null;
+  let obs: Observance[] = [];
+  for (const l of lines) {
+    if (l.name === 'BEGIN' && l.value.trim().toUpperCase() === 'VTIMEZONE') { tzid = ''; obs = []; }
+    else if (l.name === 'BEGIN' && /^(STANDARD|DAYLIGHT)$/i.test(l.value.trim())) cur = { onset: NaN, from: NaN, to: NaN, rrule: null };
+    else if (l.name === 'END' && /^(STANDARD|DAYLIGHT)$/i.test(l.value.trim())) {
+      if (cur && Number.isFinite(cur.onset) && Number.isFinite(cur.from) && Number.isFinite(cur.to)) obs.push(cur);
+      cur = null;
+    } else if (l.name === 'END' && l.value.trim().toUpperCase() === 'VTIMEZONE') { if (tzid && obs.length) zones.set(tzid, obs); tzid = ''; }
+    else if (cur) {
+      if (l.name === 'DTSTART') { const m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})/.exec(l.value.trim()); if (m) cur.onset = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]); }
+      else if (l.name === 'TZOFFSETFROM') cur.from = utcOffset(l.value) ?? NaN;
+      else if (l.name === 'TZOFFSETTO') cur.to = utcOffset(l.value) ?? NaN;
+      else if (l.name === 'RRULE') cur.rrule = l.value;
+    } else if (l.name === 'TZID') tzid = l.value.trim();
   }
+  return zones;
 }
 
-function tzToUtc(tz: string, local: number): number | null {
-  const o1 = tzOffset(tz, local);
-  if (o1 === null) return null;
-  const guess = local - o1;
-  const o2 = tzOffset(tz, guess);
-  return o2 === null ? null : local - o2;
+const WEEKDAYS = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
+
+/** The latest wall-clock start of `o` at or before `local` (UTC-field ms), or null when it has not begun yet. */
+function lastOnset(o: Observance, local: number): number | null {
+  if (o.onset > local) return null;
+  const kv: Record<string, string> = {};
+  for (const part of (o.rrule ?? '').split(';')) { const eq = part.indexOf('='); if (eq > 0) kv[part.slice(0, eq).toUpperCase()] = part.slice(eq + 1); }
+  const month = Number(kv.BYMONTH), by = /^(-?\d)?([A-Z]{2})$/.exec(kv.BYDAY ?? '');
+  if (kv.FREQ !== 'YEARLY' || !month || !by) return o.onset;
+  const wd = WEEKDAYS.indexOf(by[2]);
+  const n = Number(by[1] ?? 1);
+  if (wd < 0) return o.onset;
+  const start = new Date(o.onset);
+  const tod = o.onset - Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate());
+  const until = kv.UNTIL ? parseDt({ group: '', name: 'UNTIL', params: {}, value: kv.UNTIL, raw: '' })?.ms ?? Infinity : Infinity;
+  let best = o.onset;
+  for (let y = new Date(local).getUTCFullYear(); y >= start.getUTCFullYear() && y >= new Date(local).getUTCFullYear() - 1; y--) {
+    const first = new Date(Date.UTC(y, month - 1, 1)).getUTCDay();
+    const dim = new Date(Date.UTC(y, month, 0)).getUTCDate();
+    const day = n > 0 ? 1 + ((wd - first + 7) % 7) + (n - 1) * 7 : dim - ((new Date(Date.UTC(y, month - 1, dim)).getUTCDay() - wd + 7) % 7) + (n + 1) * 7;
+    const at = Date.UTC(y, month - 1, day) + tod;
+    if (day >= 1 && day <= dim && at <= local && at <= until) { best = Math.max(best, at); break; }
+  }
+  return best;
+}
+
+/** UTC instant of a wall-clock time in a zone defined by a VTIMEZONE block. */
+function vtzToUtc(obs: Observance[], local: number): number {
+  let best: { at: number; to: number } | null = null;
+  for (const o of obs) {
+    const at = lastOnset(o, local);
+    if (at !== null && (!best || at > best.at)) best = { at, to: o.to };
+  }
+  return local - (best ? best.to : [...obs].sort((x, y) => x.onset - y.onset)[0].from);
 }
 
 interface DT { ms: number; allDay: boolean; approx: boolean }
 
-function parseDt(l: Line): DT | null {
+function parseDt(l: Line, zones?: Zones): DT | null {
   const v = l.value.trim();
   let m = /^(\d{4})(\d{2})(\d{2})$/.exec(v);
   if (m) {
@@ -83,7 +124,9 @@ function parseDt(l: Line): DT | null {
   if (m[7]) return { ms: local, allDay: false, approx: false };
   const tz = l.params.TZID;
   if (tz) {
-    const ms = tzToUtc(tz, local);
+    const iana = resolveZone(tz);
+    const def = zones?.get(tz);
+    const ms = iana ? tzToUtc(iana, local) : def ? vtzToUtc(def, local) : null;
     if (ms !== null) return { ms, allDay: false, approx: false };
   }
   return { ms: local, allDay: false, approx: true };
@@ -99,11 +142,11 @@ function parseDuration(v: string): number | null {
 
 interface CompTimes { start: number | null; end: number | null; approx: boolean; allDay: boolean }
 
-function compTimes(lines: Line[], c: Comp): CompTimes {
+function compTimes(lines: Line[], c: Comp, zones: Zones): CompTimes {
   const ds = prop(lines, c, 'DTSTART');
-  const start = ds ? parseDt(ds) : null;
+  const start = ds ? parseDt(ds, zones) : null;
   const endLine = prop(lines, c, c.name === 'VTODO' ? 'DUE' : 'DTEND');
-  const endDt = endLine ? parseDt(endLine) : null;
+  const endDt = endLine ? parseDt(endLine, zones) : null;
   const dur = prop(lines, c, 'DURATION');
   let end: number | null = null;
   let approx = !!(start?.approx || endDt?.approx);
@@ -159,6 +202,7 @@ export function analyzeIcs(text: string): IcsInfo {
   } catch {
     throw new IcsError('Malformed content line');
   }
+  const zones = vtimezones(lines);
   const items = scan(lines).filter((c) => c.name !== 'VTIMEZONE');
   if (!items.length) throw new IcsError('No VEVENT or VTODO');
   const component = items[0].name;
@@ -172,7 +216,7 @@ export function analyzeIcs(text: string): IcsInfo {
     const u = prop(lines, c, 'UID')?.value.trim() ?? '';
     if (!u || (uid && u !== uid)) throw new IcsError('Missing or inconsistent UID');
     uid = u;
-    const t = compTimes(lines, c);
+    const t = compTimes(lines, c, zones);
     approx = approx || t.approx;
     if (t.start !== null) minStart = minStart === null ? t.start : Math.min(minStart, t.start);
     const rrules = props(lines, c, 'RRULE');
@@ -209,11 +253,13 @@ function masterOf(lines: Line[], comps: Comp[]): Comp {
   return m;
 }
 
-export function eventFields(text: string): EventFields & { recurring: boolean } {
+export function eventFields(text: string): EventFields & { recurring: boolean; tzid: string | null } {
   const lines = parseLines(text);
   const comps = scan(lines);
   const m = masterOf(lines, comps);
-  const t = compTimes(lines, m);
+  const t = compTimes(lines, m, vtimezones(lines));
+  const ds = prop(lines, m, 'DTSTART');
+  const tzid = ds && !t.allDay && !/Z$/i.test(ds.value.trim()) && ds.params.TZID ? resolveZone(ds.params.TZID) : null;
   const txt = (n: string) => unescapeText(prop(lines, m, n)?.value ?? '');
   return {
     summary: txt('SUMMARY'),
@@ -224,6 +270,7 @@ export function eventFields(text: string): EventFields & { recurring: boolean } 
     description: txt('DESCRIPTION'),
     rrule: prop(lines, m, 'RRULE')?.value ?? null,
     recurring: !!(prop(lines, m, 'RRULE') || prop(lines, m, 'RDATE')),
+    tzid,
   };
 }
 
@@ -245,6 +292,35 @@ export function inviteFields(text: string): { method: string | null; uid: string
     attendees: props(lines, m, 'ATTENDEE').map((l) => mailto(l.value)).filter((e) => e.includes('@')).slice(0, 100),
     sequence: Number(prop(lines, m, 'SEQUENCE')?.value) || 0,
   };
+}
+
+/**
+ * The invitation's own events (master and RECURRENCE-ID overrides) with the VTIMEZONEs they use, as a plain VCALENDAR
+ * without METHOD, and with the PARTSTAT of the attendee matching one of `self` set to ACCEPTED.
+ * Keeps TZID, EXDATE and overrides intact. RRULEs that `ruleOk` refuses are dropped.
+ */
+export function acceptedInvite(text: string, self: string[], ruleOk: (rule: string) => boolean): string {
+  const lines = parseLines(text);
+  const comps = scan(lines);
+  const uid = prop(lines, masterOf(lines, comps), 'UID')?.value.trim();
+  const events = comps.filter((c) => c.name === 'VEVENT' && prop(lines, c, 'UID')?.value.trim() === uid);
+  const zoneIds = new Set(events.flatMap((c) => c.props.map((i) => lines[i].params.TZID).filter(Boolean)));
+  const zones = comps.filter((c) => c.name === 'VTIMEZONE' && zoneIds.has(prop(lines, c, 'TZID')?.value.trim() ?? ''));
+  const out = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Cirrus Mail//DAV//EN', 'CALSCALE:GREGORIAN'];
+  for (const c of [...zones, ...events]) {
+    const own = new Set(c.props);
+    for (let i = c.start; i <= c.end; i++) {
+      const l = lines[i];
+      if (!own.has(i)) out.push(l.raw);
+      else if (l.name === 'RRULE' && !ruleOk(l.value)) continue;
+      else if (c.name === 'VEVENT' && l.name === 'ATTENDEE' && self.includes(mailto(l.value))) {
+        const head = l.raw.slice(0, l.raw.length - l.value.length - 1).replace(/;PARTSTAT=("[^"]*"|[^;]*)/gi, '');
+        out.push(`${head.replace(/^[^;]*/, '$&;PARTSTAT=ACCEPTED')}:${l.value}`);
+      } else out.push(l.raw);
+    }
+  }
+  out.push('END:VCALENDAR');
+  return serialize(out);
 }
 
 function dtLines(f: EventFields): string[] {

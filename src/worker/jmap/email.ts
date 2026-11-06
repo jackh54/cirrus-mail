@@ -367,10 +367,10 @@ const emailQuery: MethodDef = {
       const expr = SORT_EXPR[s?.property];
       if (!expr) throw new MethodError('unsupportedSort', `Unsupported sort ${s?.property}`);
       keys.push(`${expr} AS k${i}`);
-      order.push(`k${i} ${s.isAscending === true ? 'ASC' : 'DESC'}`);
-      rawOrder.push(`${expr} ${s.isAscending === true ? 'ASC' : 'DESC'}`);
+      order.push(`k${i} ${s.isAscending === false ? 'DESC' : 'ASC'}`);
+      rawOrder.push(`${expr} ${s.isAscending === false ? 'DESC' : 'ASC'}`);
     });
-    const tie = sorts[0].isAscending === true ? 'ASC' : 'DESC';
+    const tie = sorts[0].isAscending === false ? 'DESC' : 'ASC';
     const orderBy = `${order.join(', ')}, id ${tie}`;
     const collapse = !!args.collapseThreads;
     const inner = `SELECT m.id AS id, m.thread_id AS tid, ${keys.join(', ')}${collapse ? `, ROW_NUMBER() OVER (PARTITION BY m.thread_id ORDER BY ${rawOrder.join(', ')}, m.id ${tie}) AS rn` : ''}
@@ -766,7 +766,8 @@ export async function setEmails(ctx: Ctx, acc: Account, args: { update?: Record<
     if (!cur) { notDestroyed[id] = { type: 'notFound' }; continue; }
     if (cur.status === 'scheduled' || cur.status === 'sending') { notDestroyed[id] = { type: 'forbidden', description: 'The message is scheduled or being sent' }; continue; }
     const role = st.folders.find((f) => f.id === cur.folder_id)?.role;
-    if (role === 'trash' || role === 'spam') forever.push(id);
+    // A draft in Drafts is deleted outright, not parked in Trash.
+    if (role === 'trash' || role === 'spam' || (role === 'drafts' && cur.status === 'draft')) forever.push(id);
     else {
       // Cirrus semantics (threads/actions "trash"): not yet in Trash means it goes to Trash.
       stmts.push(db.prepare('UPDATE messages SET folder_id = ?, folder_changed_at = ?, updated_at = ? WHERE id = ? AND mailbox_id = ?').bind(st.roles.trash, now, now, id, acc.id));

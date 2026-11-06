@@ -33,6 +33,14 @@ const invite = (uid: string, summary: string, extra: string[] = [], method = 'RE
   'END:VEVENT', 'END:VCALENDAR',
 ].join('\r\n');
 
+const rawInvite = (uid: string, body: string[], pre: string[] = []) => [
+  'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Test//EN', 'METHOD:REQUEST', ...pre,
+  'BEGIN:VEVENT', `UID:${uid}`, 'DTSTAMP:20260301T000000Z', ...body, 'SUMMARY:Zoned', 'ORGANIZER:mailto:boss@navy.test',
+  'ATTENDEE;PARTSTAT=NEEDS-ACTION:mailto:cal-a@calui.test', 'ATTENDEE;PARTSTAT=NEEDS-ACTION:mailto:other@calui.test',
+  'END:VEVENT', 'END:VCALENDAR',
+].join('\r\n');
+const storedOf = async (id: string) => (await env.DB.prepare('SELECT data FROM dav_objects WHERE id = ?').bind(id).first<string>('data'))!;
+
 describe('calendar collections API', () => {
   it('creates, recolours and renames a calendar', async () => {
     const res = await call('/api/dav/collections', { cookie, body: { kind: 'calendar', name: 'Work', color: '#2B63E8' } });
@@ -98,6 +106,49 @@ describe('invitations', () => {
     const odd = await call('/api/dav/invite/accept', { cookie, body: { ics: invite('inv-4@test', 'Odd rule', ['RRULE:FREQ=WEEKLY;BYDAY=MO;X-FOO=a b']) } });
     expect(odd.status).toBe(201);
     expect(((await odd.json()) as EventView).rrule).toBeNull();
+  });
+
+  it('keeps a Windows TZID and its EXDATE, resolves them to the right instant and marks only our own PARTSTAT', async () => {
+    const ics = rawInvite('tz-win@test', ['DTSTART;TZID=Pacific Standard Time:20260310T090000', 'DTEND;TZID=Pacific Standard Time:20260310T100000', 'RRULE:FREQ=DAILY;COUNT=5', 'EXDATE;TZID=Pacific Standard Time:20260311T090000']);
+    const res = await call('/api/dav/invite/accept', { cookie, body: { ics } });
+    expect(res.status).toBe(201);
+    const ev = (await res.json()) as EventView;
+    expect(ev).toMatchObject({ start: '2026-03-10T16:00:00Z', end: '2026-03-10T17:00:00Z', tzid: 'America/Los_Angeles' }); // PDT, not UTC
+    const data = await storedOf(ev.id);
+    expect(data).toContain('DTSTART;TZID=Pacific Standard Time:20260310T090000');
+    expect(data).toContain('EXDATE;TZID=Pacific Standard Time:20260311T090000');
+    expect(data).not.toContain('METHOD');
+    expect(data).toMatch(/ATTENDEE;PARTSTAT=ACCEPTED:mailto:cal-a@calui\.test/);
+    expect(data).toMatch(/ATTENDEE;PARTSTAT=NEEDS-ACTION:mailto:other@calui\.test/);
+  });
+
+  it('round-trips an IANA TZID as a TZID, not as UTC', async () => {
+    const ics = rawInvite('tz-iana@test', ['DTSTART;TZID=Europe/Berlin:20260315T090000', 'DTEND;TZID=Europe/Berlin:20260315T100000']);
+    const ev = (await (await call('/api/dav/invite/accept', { cookie, body: { ics } })).json()) as EventView;
+    expect(ev).toMatchObject({ start: '2026-03-15T08:00:00Z', tzid: 'Europe/Berlin' });
+    expect(await storedOf(ev.id)).toContain('DTSTART;TZID=Europe/Berlin:20260315T090000');
+  });
+
+  it('computes the offset from the VTIMEZONE when the TZID is unknown, and keeps the block', async () => {
+    const vtz = ['BEGIN:VTIMEZONE', 'TZID:Contoso HQ', 'BEGIN:STANDARD', 'DTSTART:19701101T020000', 'TZOFFSETFROM:+0630', 'TZOFFSETTO:+0530', 'END:STANDARD', 'END:VTIMEZONE'];
+    const ics = rawInvite('tz-vtz@test', ['DTSTART;TZID=Contoso HQ:20260310T090000', 'DTEND;TZID=Contoso HQ:20260310T100000'], vtz);
+    const ev = (await (await call('/api/dav/invite/accept', { cookie, body: { ics } })).json()) as EventView;
+    expect(ev.start).toBe('2026-03-10T03:30:00Z');
+    expect(await storedOf(ev.id)).toContain('TZID:Contoso HQ');
+  });
+
+  it('refuses an update from another organizer or with an older SEQUENCE', async () => {
+    const mk = (org: string, seq: number, summary: string) => invite('inv-seq@test', summary, [`SEQUENCE:${seq}`]).replace('mailto:Grace@Navy.test', `mailto:${org}`);
+    expect((await call('/api/dav/invite/accept', { cookie, body: { ics: mk('Grace@Navy.test', 2, 'v2') } })).status).toBe(201);
+    const other = await call('/api/dav/invite/accept', { cookie, body: { ics: mk('mallory@evil.test', 3, 'hijack') } });
+    expect(other.status).toBe(409);
+    expect(((await other.json()) as { error: { code: string } }).error.code).toBe('ORGANIZER_MISMATCH');
+    const old = await call('/api/dav/invite/accept', { cookie, body: { ics: mk('grace@navy.test', 1, 'stale') } });
+    expect(old.status).toBe(409);
+    expect(((await old.json()) as { error: { code: string } }).error.code).toBe('OUTDATED_INVITATION');
+    // Same organizer (any case) and the same or a newer SEQUENCE are applied.
+    expect((await call('/api/dav/invite/accept', { cookie, body: { ics: mk('GRACE@navy.test', 2, 'same seq') } })).status).toBe(200);
+    expect(await (await call('/api/dav/invite/accept', { cookie, body: { ics: mk('grace@navy.test', 3, 'v3') } })).json()).toMatchObject({ summary: 'v3' });
   });
 
   it('requires a session', async () => {

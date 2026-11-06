@@ -45,7 +45,7 @@ export function toCalEvent(v: EventView): CalEvent | null {
 export function occurrencesBetween(events: CalEvent[], from: Date, to: Date): Occ[] {
   const out: Occ[] = [];
   for (const ev of events) {
-    for (const o of expandRecurrence({ start: ev.start, end: ev.end, allDay: ev.allDay, rrule: ev.rrule }, from.getTime(), to.getTime())) {
+    for (const o of expandRecurrence({ start: ev.start, end: ev.end, allDay: ev.allDay, rrule: ev.rrule, tzid: ev.view.tzid }, from.getTime(), to.getTime())) {
       out.push({ key: `${ev.id}:${o.start}`, event: ev, start: o.start, end: o.end });
     }
   }

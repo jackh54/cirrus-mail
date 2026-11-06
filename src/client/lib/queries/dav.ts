@@ -108,7 +108,7 @@ export function useEventMutations() {
   const rollback = (_e: unknown, _v: unknown, ctx: { prev: EventCache } | undefined) => ctx?.prev.forEach(([k, d]) => qc.setQueryData(k, d));
   const settle = () => qc.invalidateQueries({ queryKey: davKeys.eventsAll });
   const view = (i: EventInput, base: Partial<EventView>): EventView => ({
-    id: '', uid: '', etag: '', recurring: !!i.rrule, updatedAt: Date.now(), calendarId: i.calendarId ?? '', ...i, ...base,
+    id: '', uid: '', etag: '', recurring: !!i.rrule, tzid: null, updatedAt: Date.now(), calendarId: i.calendarId ?? '', ...i, ...base,
   });
   return {
     create: useMutation({
