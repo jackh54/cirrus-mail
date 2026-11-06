@@ -51,6 +51,11 @@ export async function hourlyMaintenance(env: Env, now = Date.now()): Promise<voi
     db.prepare('DELETE FROM rate_limits WHERE window_end < ?').bind(now),
     db.prepare('DELETE FROM autoreply_log WHERE sent_at < ?').bind(now - 30 * DAY),
     db.prepare('DELETE FROM send_counts WHERE day < ?').bind(utcDay(now - 60 * DAY)),
+    // CalDAV/CardDAV change log: keep 30 days. Record how far it was pruned so older sync tokens are refused (RFC 6578 §3.2).
+    db.prepare(
+      `UPDATE dav_collections SET pruned_rev = MAX(pruned_rev, COALESCE((SELECT MAX(rev) FROM dav_changes WHERE collection_id = dav_collections.id AND created_at < ?1), 0))`,
+    ).bind(now - 30 * DAY),
+    db.prepare('DELETE FROM dav_changes WHERE created_at < ?').bind(now - 30 * DAY),
     // A send interrupted mid-flight (isolate killed) would stay 'sending' forever; surface it as failed.
     db.prepare(
       `UPDATE messages SET status = 'failed', error_code = 'E_INTERRUPTED', error_message = 'Sending was interrupted. Try again.',

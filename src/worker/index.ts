@@ -1,5 +1,6 @@
 import { runCron } from './cron';
 import { app } from './app';
+import { handleDav } from './dav/handler';
 import { handleEmail } from './inbound/handler';
 import { Meter, meters } from './lib/timing';
 
@@ -11,7 +12,11 @@ export default {
       meters.set(request, meter);
       return app.fetch(request, meter.instrument(env), ctx);
     }
-    // Only /api/* runs the Worker first; anything else that reaches us is an asset or SPA route.
+    // CardDAV/CalDAV: Basic auth with app passwords, outside the cookie/CSRF world of /api.
+    if (url.pathname === '/dav' || url.pathname.startsWith('/dav/') || url.pathname === '/.well-known/caldav' || url.pathname === '/.well-known/carddav') {
+      return handleDav(request, env);
+    }
+    // Only /api/*, /dav/* and the DAV discovery paths run the Worker first; anything else that reaches us is an asset or SPA route.
     return env.ASSETS.fetch(request);
   },
   email: handleEmail,

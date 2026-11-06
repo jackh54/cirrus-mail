@@ -26,6 +26,7 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
   if (url.pathname.startsWith('/api/')) return; // never touch mail or auth
+  if (url.pathname.startsWith('/dav/') || url.pathname.startsWith('/.well-known/')) return; // CardDAV/CalDAV is served by the Worker
 
   // Navigations: network first, fall back to the cached shell when offline.
   if (req.mode === 'navigate') {
