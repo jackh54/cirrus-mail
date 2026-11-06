@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { INVITE_TTL_MS, type AdminInviteResponse, type AdminMailbox, type AdminStats, type AdminUser, type Alias, type Domain, type DomainCheck } from '../../shared/api';
 import { ulid } from '../../shared/ulid';
 import { domainOf } from '../lib/addresses';
-import { sendInviteEmail } from '../invite-email';
+import { sendInviteEmail, memberAddresses } from '../invite-email';
 import { hashPassword, randomBytes, sha256Hex, toBase64Url } from '../lib/crypto';
 import { rowToUser, SYSTEM_FOLDERS, type UserRow } from '../lib/db';
 import { HttpError, notFound } from '../lib/errors';
@@ -93,6 +93,7 @@ const INVITE_SENDS_PER_ADMIN = 50;
 const InviteSchema = z.object({
   name: zName, email: zEmail, role: z.enum(['admin', 'member']),
   mailbox: z.object({ localPart: zLocalPart, domainId: zId }).optional(),
+  joinMailboxes: z.array(z.object({ mailboxId: zId, role: z.enum(['owner', 'member']) })).max(50).optional(),
   send: z.boolean().optional(),
 });
 
@@ -104,12 +105,12 @@ async function inviteSendBudget(c: Context<AppEnv>) {
 }
 
 /** Emails the invite (unless told not to) and records sent_at on success. */
-async function deliverInvite(c: Context<AppEnv>, o: { userId: string; name: string; email: string; mailboxAddress: string | null; token: string; expiresAt: number; send: boolean }): Promise<AdminInviteResponse> {
+async function deliverInvite(c: Context<AppEnv>, o: { userId: string; name: string; email: string; token: string; expiresAt: number; send: boolean }): Promise<AdminInviteResponse> {
   const db = c.env.DB;
   const inviteUrl = `${new URL(c.req.url).origin}/invite#${o.token}`;
   const email = await sendInviteEmail(c.env, {
     adminId: c.get('user').id, adminName: c.get('user').name, to: o.email, name: o.name,
-    mailboxAddress: o.mailboxAddress, url: inviteUrl, expiresAt: o.expiresAt, send: o.send,
+    mailboxAddresses: await memberAddresses(db, o.userId), url: inviteUrl, expiresAt: o.expiresAt, send: o.send,
   });
   if (email.sent) await db.prepare('UPDATE invites SET sent_at = ? WHERE user_id = ?').bind(Date.now(), o.userId).run();
   return { user: await adminUser(db, o.userId), inviteUrl, email };
@@ -128,15 +129,22 @@ admin.post('/users/invite', async (c) => {
   const stmts = [db.prepare(
     `INSERT INTO users (id, email, name, password_hash, role, must_change_password, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 0, ?, ?)`,
   ).bind(id, b.email, b.name, await hashPassword(toBase64Url(randomBytes(32))), b.role, now, now)];
-  let mailboxAddress: string | null = null;
   if (b.mailbox) {
-    mailboxAddress = await resolveNewAddress(db, b.mailbox.localPart, b.mailbox.domainId);
-    stmts.push(...createMailboxStmts(db, { id: ulid(now), domainId: b.mailbox.domainId, localPart: b.mailbox.localPart, address: mailboxAddress, displayName: b.name, members: [{ userId: id, role: 'owner' }] }, now));
+    const address = await resolveNewAddress(db, b.mailbox.localPart, b.mailbox.domainId);
+    stmts.push(...createMailboxStmts(db, { id: ulid(now), domainId: b.mailbox.domainId, localPart: b.mailbox.localPart, address, displayName: b.name, members: [{ userId: id, role: 'owner' }] }, now));
+  }
+  // Existing mailboxes to join (one role per mailbox; the last entry wins if one is listed twice).
+  const join = new Map((b.joinMailboxes ?? []).map((j) => [j.mailboxId, j.role]));
+  if (join.size) {
+    const ids = [...join.keys()];
+    const { results } = await db.prepare(`SELECT id FROM mailboxes WHERE id IN (${ids.map(() => '?').join(',')})`).bind(...ids).all<{ id: string }>();
+    if (results.length !== ids.length) throw new HttpError(400, 'INVALID_MAILBOX', 'One of the mailboxes to join no longer exists');
+    for (const [mailboxId, role] of join) stmts.push(db.prepare('INSERT INTO mailbox_members (mailbox_id, user_id, role) VALUES (?, ?, ?)').bind(mailboxId, id, role));
   }
   stmts.push(db.prepare('INSERT INTO invites (user_id, token_hash, created_by, created_at, expires_at) VALUES (?, ?, ?, ?, ?)')
     .bind(id, await sha256Hex(token), c.get('user').id, now, expiresAt));
   await db.batch(stmts);
-  return c.json(await deliverInvite(c, { userId: id, name: b.name, email: b.email, mailboxAddress, token, expiresAt, send: b.send !== false }), 201);
+  return c.json(await deliverInvite(c, { userId: id, name: b.name, email: b.email, token, expiresAt, send: b.send !== false }), 201);
 });
 
 admin.post('/users/:id/invite', async (c) => {
@@ -154,10 +162,7 @@ admin.post('/users/:id/invite', async (c) => {
   const expiresAt = now + INVITE_TTL_MS;
   await db.prepare('UPDATE invites SET token_hash = ?, created_at = ?, expires_at = ?, sent_at = NULL WHERE user_id = ?')
     .bind(await sha256Hex(token), now, expiresAt, id).run();
-  const mailboxAddress = await db.prepare(
-    'SELECT m.address FROM mailbox_members mm JOIN mailboxes m ON m.id = mm.mailbox_id WHERE mm.user_id = ? ORDER BY m.address LIMIT 1',
-  ).bind(id).first<string>('address');
-  return c.json(await deliverInvite(c, { userId: id, name: target.name, email: target.email, mailboxAddress, token, expiresAt, send: b.send !== false }));
+  return c.json(await deliverInvite(c, { userId: id, name: target.name, email: target.email, token, expiresAt, send: b.send !== false }));
 });
 
 /** Number of enabled admins other than `exceptId`. */

@@ -148,7 +148,7 @@ Mail to an address that matches no mailbox, alias or catch-all is rejected with 
 
 ### Invite your team
 
-In **Admin → Users**, click **Invite user**. Enter their name, the email they'll sign in with, and optionally a new mailbox for them (for example `sam@example.com`). Cirrus creates the account and emails them a link to choose their password.
+In **Admin → Users**, click **Invite user**. Enter their name, the email they'll sign in with, and optionally a new mailbox for them (for example `sam@example.com`). You can also add them to existing mailboxes, such as a shared `support@` and `help@`, as an owner or member of each. Cirrus creates the account and emails them a link to choose their password.
 
 - Use a sign-in email they can **already read**, such as their personal or work address. An address on a domain Cirrus hosts can't receive the invite before the account exists, so Cirrus shows you the link to share yourself instead.
 - The email is sent from your own mailbox (or `noreply@` your domain if you have none), so finish step 2 (Email Sending) first. If sending fails, the invite still exists and you can copy the link.

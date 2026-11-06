@@ -8,6 +8,7 @@ import { hit } from '../lib/ratelimit';
 import { jsonBody, zName, zPassword } from '../lib/validate';
 import { createSession } from '../middleware/session';
 import type { AppEnv } from '../types';
+import { memberAddresses } from '../invite-email';
 
 export const invites = new Hono<AppEnv>();
 
@@ -36,10 +37,8 @@ invites.post('/lookup', async (c) => {
       WHERE i.token_hash = ? AND i.expires_at > ? AND u.disabled = 0`,
   ).bind(await sha256Hex(token), Date.now()).first<{ user_id: string; expires_at: number; email: string; name: string; inviter_name: string | null }>();
   if (!row) throw invalid();
-  const mailboxAddress = await db.prepare(
-    'SELECT m.address FROM mailbox_members mm JOIN mailboxes m ON m.id = mm.mailbox_id WHERE mm.user_id = ? ORDER BY m.address LIMIT 1',
-  ).bind(row.user_id).first<string>('address');
-  const out: InviteLookupResponse = { email: row.email, name: row.name, inviterName: row.inviter_name, mailboxAddress, expiresAt: row.expires_at };
+  const mailboxAddresses = await memberAddresses(db, row.user_id);
+  const out: InviteLookupResponse = { email: row.email, name: row.name, inviterName: row.inviter_name, mailboxAddresses, expiresAt: row.expires_at };
   return c.json(out);
 });
 

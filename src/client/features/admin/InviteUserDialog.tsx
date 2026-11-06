@@ -6,7 +6,7 @@ import { Dialog } from '../../components/Dialog';
 import { Field, Input, Select } from '../../components/Field';
 import { errorMessage } from '../../lib/api';
 import { isValidEmail, longDate } from '../../lib/format';
-import { useAdminDomains, useUserMutations } from '../../lib/queries/admin';
+import { useAdminDomains, useAdminMailboxes, useUserMutations } from '../../lib/queries/admin';
 import { CreateUserDialog } from './CreateUserDialog';
 
 function resultMessage(r: AdminInviteResponse): string | null {
@@ -61,6 +61,9 @@ export function InviteResultDialog({ result, onClose }: { result: AdminInviteRes
 export function InviteUserDialog({ onClose }: { onClose: () => void }) {
   const { invite } = useUserMutations();
   const domains = useAdminDomains();
+  const mailboxes = useAdminMailboxes();
+  /** Existing mailboxes to join, by id, with their role in each. */
+  const [join, setJoin] = useState<Record<string, 'owner' | 'member'>>({});
   const [f, setF] = useState({ name: '', email: '', role: 'member' as Role, localPart: '', domainId: '' });
   const [withMailbox, setWithMailbox] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -78,6 +81,7 @@ export function InviteUserDialog({ onClose }: { onClose: () => void }) {
       email: f.email.trim(),
       role: f.role,
       mailbox: withMailbox ? { localPart: f.localPart.trim().toLowerCase(), domainId } : undefined,
+      joinMailboxes: Object.entries(join).map(([mailboxId, role]) => ({ mailboxId, role })),
     };
     invite.mutate(input, { onSuccess: setResult, onError: (e) => setError(errorMessage(e)) });
   };
@@ -125,6 +129,41 @@ export function InviteUserDialog({ onClose }: { onClose: () => void }) {
               {domains.data?.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
             </Select>
           </div>
+        )}
+        {!!mailboxes.data?.length && (
+          <fieldset className="space-y-2">
+            <legend className="text-[13px] font-medium">Add to existing mailboxes</legend>
+            <p className="text-[12px] text-muted">For shared addresses like support@. Owners can manage the mailbox's settings; members can read and send.</p>
+            <ul className="max-h-48 divide-y divide-border overflow-y-auto rounded-md border border-border">
+              {mailboxes.data.map((m) => {
+                const role = join[m.id];
+                const toggle = (on: boolean) => setJoin((j) => {
+                  const next = { ...j };
+                  if (on) next[m.id] = 'member';
+                  else delete next[m.id];
+                  return next;
+                });
+                return (
+                  <li key={m.id} className="flex min-h-10 items-center gap-2 px-3 py-1.5">
+                    <label className="flex min-w-0 flex-1 items-center gap-2 text-[13px]">
+                      <input type="checkbox" className="size-4 shrink-0" checked={!!role} onChange={(e) => toggle(e.target.checked)} />
+                      <span className="min-w-0 truncate">{m.address}</span>
+                      {m.displayName && m.displayName !== m.address && <span className="hidden min-w-0 truncate text-faint sm:inline">{m.displayName}</span>}
+                    </label>
+                    {role && (
+                      // cn() doesn't merge Tailwind classes, so the width lives on a wrapper (Select is w-full).
+                      <div className="w-32 shrink-0">
+                        <Select aria-label={`Role in ${m.address}`} value={role} onChange={(e) => setJoin((j) => ({ ...j, [m.id]: e.target.value === 'owner' ? 'owner' : 'member' }))}>
+                          <option value="member">Member</option>
+                          <option value="owner">Owner</option>
+                        </Select>
+                      </div>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          </fieldset>
         )}
       </div>
     </Dialog>

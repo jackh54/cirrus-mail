@@ -296,6 +296,8 @@ export interface AdminInviteInput {
   email: string;                // sign-in email: must be an address the person can already read
   role: Role;
   mailbox?: { localPart: string; domainId: ID };
+  /** Existing mailboxes (shared ones like support@) to add them to, with their role in each. Max 50. */
+  joinMailboxes?: { mailboxId: ID; role: 'owner' | 'member' }[];
   /** false = create the link only, don't email it. Default true. */
   send?: boolean;
 }
@@ -322,7 +324,7 @@ export interface InviteLookupResponse {
   email: string;
   name: string;
   inviterName: string | null;
-  mailboxAddress: string | null; // first mailbox the user belongs to, if any
+  mailboxAddresses: string[];   // every mailbox they belong to, sorted by address
   expiresAt: Millis;
 }
 

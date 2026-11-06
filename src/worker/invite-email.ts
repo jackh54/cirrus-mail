@@ -10,14 +10,14 @@ export interface InviteEmailInput {
   adminName: string;
   to: string;                  // the invitee's sign-in email
   name: string;                // the invitee's name
-  mailboxAddress: string | null; // the new address they got, if any
+  mailboxAddresses: string[];  // every mailbox they belong to (a new one and any shared ones)
   url: string;
   expiresAt: number;
   send: boolean;
 }
 
 /** The inviting admin's first mailbox (owned ones first), else noreply@ on the invited mailbox's domain, else the first domain. */
-async function pickSender(env: Env, adminId: string, mailboxAddress: string | null): Promise<string | null> {
+async function pickSender(env: Env, adminId: string, mailboxAddress: string | undefined): Promise<string | null> {
   const own = await env.DB.prepare(
     `SELECT m.address FROM mailbox_members mm JOIN mailboxes m ON m.id = mm.mailbox_id
       WHERE mm.user_id = ? ORDER BY (mm.role = 'owner') DESC, m.address LIMIT 1`,
@@ -27,6 +27,14 @@ async function pickSender(env: Env, adminId: string, mailboxAddress: string | nu
     ? domainOf(mailboxAddress)
     : await env.DB.prepare('SELECT name FROM domains ORDER BY created_at, name LIMIT 1').first<string>('name');
   return domain ? `noreply@${domain}` : null;
+}
+
+/** Every mailbox address the user belongs to, sorted. */
+export async function memberAddresses(db: D1Database, userId: string): Promise<string[]> {
+  const { results } = await db.prepare(
+    'SELECT m.address FROM mailbox_members mm JOIN mailboxes m ON m.id = mm.mailbox_id WHERE mm.user_id = ? ORDER BY m.address',
+  ).bind(userId).all<{ address: string }>();
+  return results.map((r) => r.address);
 }
 
 function formatDate(ms: number): string {
@@ -39,7 +47,7 @@ export function renderInvite(appName: string, i: InviteEmailInput): { subject: s
   const expires = formatDate(i.expiresAt);
   const e = escapeHtml;
   const facts: [string, string][] = [];
-  if (i.mailboxAddress) facts.push(['Your new address', i.mailboxAddress]);
+  if (i.mailboxAddresses.length) facts.push([i.mailboxAddresses.length > 1 ? 'Your addresses' : 'Your address', i.mailboxAddresses.join(', ')]);
   facts.push(['Sign-in email', i.to]);
 
   const factRows = facts.map(([k, v]) =>
@@ -62,7 +70,7 @@ export function renderInvite(appName: string, i: InviteEmailInput): { subject: s
     '',
     `Hi ${i.name}, an account has been set up for you.`,
     '',
-    ...(i.mailboxAddress ? [`Your new address: ${i.mailboxAddress}`] : []),
+    ...(i.mailboxAddresses.length ? [`${i.mailboxAddresses.length > 1 ? 'Your addresses' : 'Your address'}: ${i.mailboxAddresses.join(', ')}`] : []),
     `Sign-in email: ${i.to}`,
     '',
     'Set up your account:',
@@ -78,7 +86,7 @@ export async function sendInviteEmail(env: Env, i: InviteEmailInput): Promise<Ad
   if (!i.send) return { sent: false, reason: 'NOT_REQUESTED' };
   const host = domainOf(i.to);
   if (await env.DB.prepare('SELECT 1 FROM domains WHERE name = ? COLLATE NOCASE').bind(host).first()) return { sent: false, reason: 'HOSTED_HERE' };
-  const address = await pickSender(env, i.adminId, i.mailboxAddress);
+  const address = await pickSender(env, i.adminId, i.mailboxAddresses[0]);
   if (!address) return { sent: false, reason: 'NO_SENDING_DOMAIN' };
   const appName = cleanHeaderText(env.APP_NAME || 'Cirrus Mail').trim();
   const fromName = cleanHeaderText(`${i.adminName} via ${appName}`).trim().slice(0, 120);

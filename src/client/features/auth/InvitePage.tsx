@@ -72,7 +72,7 @@ export function InvitePage() {
         <FormError message={error} />
         <dl className="space-y-1 rounded-md bg-surface-2 px-3 py-2 text-[13px]">
           <div className="flex justify-between gap-3"><dt className="text-muted">Sign-in email</dt><dd className="min-w-0 truncate">{invite.email}</dd></div>
-          {invite.mailboxAddress && <div className="flex justify-between gap-3"><dt className="text-muted">Mailbox</dt><dd className="min-w-0 truncate">{invite.mailboxAddress}</dd></div>}
+          {invite.mailboxAddresses.length > 0 && <div className="flex justify-between gap-3"><dt className="shrink-0 text-muted">{invite.mailboxAddresses.length > 1 ? 'Mailboxes' : 'Mailbox'}</dt><dd className="min-w-0 text-right">{invite.mailboxAddresses.map((a) => <div key={a} className="truncate">{a}</div>)}</dd></div>}
         </dl>
         <Field label="Name">{(id) => <Input id={id} autoComplete="name" required value={name} onChange={(e) => setName(e.target.value)} />}</Field>
         <Field label="Password" hint={`At least ${MIN_PASSWORD} characters.`}>

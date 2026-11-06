@@ -74,6 +74,32 @@ describe('invites', () => {
     expect(JSON.stringify(row)).not.toContain(tokenOf(body.inviteUrl));
   });
 
+  it('adds the user to existing shared mailboxes and lists every address', async () => {
+    const { id: support } = await createMailbox('support@invtest.test', [{ userId: state.adminId, role: 'owner' }]);
+    const { id: help } = await createMailbox('help@invtest.test', [{ userId: state.adminId, role: 'owner' }]);
+    const { res, calls } = await invite({
+      name: 'Ola', email: 'ola@elsewhere.test', role: 'member', mailbox: { localPart: 'ola', domainId: state.domainId },
+      joinMailboxes: [{ mailboxId: support, role: 'owner' }, { mailboxId: help, role: 'member' }],
+    });
+    expect(res.status).toBe(201);
+    const body = await res.json<AdminInviteResponse>();
+    expect(body.user.mailboxCount).toBe(3);
+    const roles = await env.DB.prepare('SELECT m.address, mm.role FROM mailbox_members mm JOIN mailboxes m ON m.id = mm.mailbox_id WHERE mm.user_id = ? ORDER BY m.address').bind(body.user.id).all();
+    expect(roles.results).toEqual([
+      { address: 'help@invtest.test', role: 'member' },
+      { address: 'ola@invtest.test', role: 'owner' },
+      { address: 'support@invtest.test', role: 'owner' },
+    ]);
+    expect(calls[0].text).toContain('Your addresses: help@invtest.test, ola@invtest.test, support@invtest.test');
+    const look = await (await lookup(tokenOf(body.inviteUrl))).json<InviteLookupResponse>();
+    expect(look.mailboxAddresses).toEqual(['help@invtest.test', 'ola@invtest.test', 'support@invtest.test']);
+
+    // An unknown mailbox rejects the whole invite: no half-made user is left behind.
+    const bad = await invite({ name: 'Nia', email: 'nia@elsewhere.test', role: 'member', joinMailboxes: [{ mailboxId: '01ZZZZZZZZZZZZZZZZZZZZZZZZ', role: 'member' }] });
+    expect(bad.res.status).toBe(400);
+    expect(await env.DB.prepare('SELECT 1 FROM users WHERE email = ?').bind('nia@elsewhere.test').first()).toBeNull();
+  });
+
   it('keeps an invited user from signing in, and 409s on a taken email', async () => {
     const { res } = await invite({ name: 'Quinn', email: 'quinn@elsewhere.test', role: 'member' });
     expect(res.status).toBe(201);
@@ -90,7 +116,7 @@ describe('invites', () => {
     const ok = await lookup(tokenOf(inviteUrl));
     expect(ok.status).toBe(200);
     const body = await ok.json<InviteLookupResponse>();
-    expect(body).toMatchObject({ email: 'robin@elsewhere.test', name: 'Robin', inviterName: 'Alex Rivera', mailboxAddress: 'robin@invtest.test' });
+    expect(body).toMatchObject({ email: 'robin@elsewhere.test', name: 'Robin', inviterName: 'Alex Rivera', mailboxAddresses: ['robin@invtest.test'] });
     const unknown = await lookup('not-a-real-token');
     await env.DB.prepare('UPDATE invites SET expires_at = ? WHERE user_id = ?').bind(Date.now() - 1000, user.id).run();
     const expired = await lookup(tokenOf(inviteUrl));
