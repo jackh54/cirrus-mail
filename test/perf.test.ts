@@ -7,6 +7,7 @@ import { processInbound } from '../src/worker/inbound/handler';
 import { randomBytes, sha256Hex, toBase64Url } from '../src/worker/lib/crypto';
 import { mailboxAuthz } from '../src/worker/middleware/session';
 import { folderListStmts, listThreadsStmts, pollStmts, threadDetailStmts } from '../src/worker/routes/mail';
+import { backfillInlineBodies } from '../src/worker/lib/inline-backfill';
 import { BASE, buildEml, call, createMailbox, fakeEmail, randomLocal, type CallOpts } from './helpers';
 
 const DOMAIN = 'perf.test';
@@ -121,7 +122,7 @@ describe('round trips per request (Server-Timing)', () => {
 
     const detail = await call(`/api/mailboxes/${s.mbA}/threads/${s.threadA}`, { cookie: s.alice });
     expect(d1Trips(detail)).toBe(1);
-    expect(r2Ops(detail)).toBe(1);
+    expect(r2Ops(detail)).toBe(0); // a small body is read from D1 (messages.body_inline)
     const d = await detail.json<ThreadDetail>();
     expect(d.thread).toMatchObject({ id: s.threadA, folderIds: [s.foldersA.inbox], messageCount: 1 });
     expect(d.messages[0].text).toContain('Hello there');
@@ -343,5 +344,62 @@ describe('draft bodies and FTS rows', () => {
     expect(await env.DB.prepare('SELECT COUNT(*) AS n FROM messages_fts').first<number>('n')).toBe(before);
     const search = await (await call(`/api/mailboxes/${s.mbA}/threads?q=Quarterly`, { cookie: s.alice })).json<Page<ThreadSummary>>();
     expect(search.items.map((t) => t.subject)).toContain('Quarterly numbers');
+  });
+});
+
+describe('inline bodies', () => {
+  const inline = (id: string) => env.DB.prepare('SELECT body_key, body_inline FROM messages WHERE id = ?').bind(id).first<{ body_key: string; body_inline: string | null }>();
+  const draftBody = (subject: string, html: string) => ({ from: s.addrA, to: [], cc: [], bcc: [], subject, html });
+
+  it('opening a thread of small messages does no R2 get', async () => {
+    await deliver(s.addrA, 'Inline thread', 'small body one');
+    const list = await (await call(`/api/mailboxes/${s.mbA}/threads?q=Inline`, { cookie: s.alice })).json<Page<ThreadSummary>>();
+    const tid = list.items[0].id;
+    const row = await env.DB.prepare('SELECT id, body_inline FROM messages WHERE thread_id = ?').bind(tid).first<{ id: string; body_inline: string }>();
+    expect(JSON.parse(row!.body_inline).text).toContain('small body one');
+    const detail = await call(`/api/mailboxes/${s.mbA}/threads/${tid}`, { cookie: s.alice });
+    expect(r2Ops(detail)).toBe(0);
+    expect((await detail.json<ThreadDetail>()).messages[0].text).toContain('small body one');
+  });
+
+  it('large bodies stay in R2 only and still load', async () => {
+    const big = `<p>${'x'.repeat(70 * 1024)}</p>`;
+    const d = await (await call(`/api/mailboxes/${s.mbA}/drafts`, { body: draftBody('Big draft', big), cookie: s.alice })).json<MessageFull>();
+    expect((await inline(d.id))!.body_inline).toBeNull();
+    const detail = await call(`/api/mailboxes/${s.mbA}/threads/${d.threadId}`, { cookie: s.alice });
+    expect(r2Ops(detail)).toBe(1);
+    expect((await detail.json<ThreadDetail>()).messages[0].html).toBe(big);
+    await call(`/api/mailboxes/${s.mbA}/drafts/${d.id}`, { method: 'DELETE', cookie: s.alice });
+  });
+
+  it('draft saves keep the inline copy and R2 consistent, in both size directions', async () => {
+    const d = await (await call(`/api/mailboxes/${s.mbA}/drafts`, { body: draftBody('Inline draft', '<p>one</p>'), cookie: s.alice })).json<MessageFull>();
+    const put = (html: string) => call(`/api/mailboxes/${s.mbA}/drafts/${d.id}`, { method: 'PUT', body: draftBody('Inline draft', html), cookie: s.alice });
+    expect(JSON.parse((await inline(d.id))!.body_inline!).html).toBe('<p>one</p>');
+    await put('<p>two</p>');
+    let r = (await inline(d.id))!;
+    expect(JSON.parse(r.body_inline!)).toEqual(await (await env.BUCKET.get(r.body_key))!.json());
+    expect(JSON.parse(r.body_inline!).html).toBe('<p>two</p>');
+    await put(`<p>${'y'.repeat(70 * 1024)}</p>`);
+    r = (await inline(d.id))!;
+    expect(r.body_inline).toBeNull();
+    await put('<p>three</p>');
+    r = (await inline(d.id))!;
+    expect(JSON.parse(r.body_inline!)).toEqual(await (await env.BUCKET.get(r.body_key))!.json());
+    await call(`/api/mailboxes/${s.mbA}/drafts/${d.id}`, { method: 'DELETE', cookie: s.alice });
+  });
+
+  it('the backfill inlines small bodies from R2, skips large ones and is idempotent', async () => {
+    const small = await (await call(`/api/mailboxes/${s.mbA}/drafts`, { body: draftBody('Backfill small', '<p>old small</p>'), cookie: s.alice })).json<MessageFull>();
+    const large = await (await call(`/api/mailboxes/${s.mbA}/drafts`, { body: draftBody('Backfill large', `<p>${'z'.repeat(70 * 1024)}</p>`), cookie: s.alice })).json<MessageFull>();
+    await env.DB.prepare('UPDATE messages SET body_inline = NULL WHERE id = ?').bind(small.id).run();
+    await env.DB.prepare("DELETE FROM settings WHERE key = 'inline_backfill_cursor'").run();
+    while (await backfillInlineBodies(env, 50)) { /* until the cursor passes the last row */ }
+    const r = (await inline(small.id))!;
+    expect(JSON.parse(r.body_inline!)).toEqual(await (await env.BUCKET.get(r.body_key))!.json());
+    expect((await inline(large.id))!.body_inline).toBeNull();
+    expect(await backfillInlineBodies(env, 50)).toBe(0);
+    await call(`/api/mailboxes/${s.mbA}/drafts/${small.id}`, { method: 'DELETE', cookie: s.alice });
+    await call(`/api/mailboxes/${s.mbA}/drafts/${large.id}`, { method: 'DELETE', cookie: s.alice });
   });
 });

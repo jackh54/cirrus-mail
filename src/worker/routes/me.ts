@@ -66,7 +66,7 @@ export const REAUTH_MAX_FAILURES = 5;
  * Checks the current password for a sensitive change. Like login, the attempt is counted atomically before
  * any hashing, per user, so a stolen session cannot brute-force the password (15-minute window).
  */
-async function requireCurrentPassword(db: D1Database, user: UserRow, password: string, message: string): Promise<void> {
+export async function requireCurrentPassword(db: D1Database, user: UserRow, password: string, message: string): Promise<void> {
   const key = `reauth:${user.id}`;
   if ((await hit(db, key, LOGIN_WINDOW_MS)) > REAUTH_MAX_FAILURES) {
     throw new HttpError(429, 'RATE_LIMITED', 'Too many password attempts. Try again in 15 minutes.');
@@ -80,14 +80,16 @@ const UpdateMeSchema = z.object({
   theme: z.enum(['system', 'light', 'dark']).optional(),
   density: z.enum(['comfortable', 'compact']).optional(),
   pushPreview: z.boolean().optional(),
+  categoryTabs: z.boolean().optional(),
 });
 
 me.patch('/', async (c) => {
   const body = await jsonBody(c, UpdateMeSchema);
   const u = c.get('user');
   const pushPreview = body.pushPreview === undefined ? u.push_preview : body.pushPreview ? 1 : 0;
-  await c.env.DB.prepare('UPDATE users SET name = ?, theme = ?, density = ?, push_preview = ?, updated_at = ? WHERE id = ?')
-    .bind(body.name ?? u.name, body.theme ?? u.theme, body.density ?? u.density, pushPreview, Date.now(), u.id).run();
+  const categoryTabs = body.categoryTabs === undefined ? u.category_tabs : body.categoryTabs ? 1 : 0;
+  await c.env.DB.prepare('UPDATE users SET name = ?, theme = ?, density = ?, push_preview = ?, category_tabs = ?, updated_at = ? WHERE id = ?')
+    .bind(body.name ?? u.name, body.theme ?? u.theme, body.density ?? u.density, pushPreview, categoryTabs, Date.now(), u.id).run();
   const user = await c.env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(u.id).first<UserRow>();
   return c.json({ user: rowToUser(user!) });
 });

@@ -12,6 +12,7 @@ import { getLastMailbox, setLastMailbox } from '../../lib/storage';
 import { RichEditor } from '../compose/RichEditor';
 import { BlockedSection } from './BlockedSection';
 import { FiltersSection } from './FiltersSection';
+import { TemplatesSection } from './TemplatesSection';
 
 function toDateInput(ms: number | null): string {
   if (!ms) return '';
@@ -59,6 +60,7 @@ export function MailboxSettingsPage() {
         }
       />
       <SettingsForm key={mb} mb={mb} />
+      <TemplatesSection key={`t${mb}`} mb={mb} />
       <FiltersSection key={`f${mb}`} mb={mb} />
       <BlockedSection key={`b${mb}`} mb={mb} />
     </>

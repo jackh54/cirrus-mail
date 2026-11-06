@@ -1,6 +1,8 @@
 // scheduled(): every minute send due scheduled messages; at minute 0 purge and prune.
 import { deleteMessagesForever } from './lib/db';
+import { backfillInlineBodies } from './lib/inline-backfill';
 import { utcDay } from './lib/sendcount';
+import { wakeDueSnoozed } from './snooze';
 import { checkScheduled, claimForSend, mailboxMemberIds, performSend, recordOutcome } from './outbound/send';
 
 const DAY = 24 * 3600 * 1000;
@@ -51,6 +53,11 @@ export async function hourlyMaintenance(env: Env, now = Date.now()): Promise<voi
     db.prepare('DELETE FROM rate_limits WHERE window_end < ?').bind(now),
     db.prepare('DELETE FROM autoreply_log WHERE sent_at < ?').bind(now - 30 * DAY),
     db.prepare('DELETE FROM send_counts WHERE day < ?').bind(utcDay(now - 60 * DAY)),
+    // CalDAV/CardDAV change log: keep 30 days. Record how far it was pruned so older sync tokens are refused (RFC 6578 §3.2).
+    db.prepare(
+      `UPDATE dav_collections SET pruned_rev = MAX(pruned_rev, COALESCE((SELECT MAX(rev) FROM dav_changes WHERE collection_id = dav_collections.id AND created_at < ?1), 0))`,
+    ).bind(now - 30 * DAY),
+    db.prepare('DELETE FROM dav_changes WHERE created_at < ?').bind(now - 30 * DAY),
     // A send interrupted mid-flight (isolate killed) would stay 'sending' forever; surface it as failed.
     db.prepare(
       `UPDATE messages SET status = 'failed', error_code = 'E_INTERRUPTED', error_message = 'Sending was interrupted. Try again.',
@@ -65,6 +72,16 @@ export async function runCron(env: Env, scheduledTime: number): Promise<void> {
     await sendDueScheduled(env);
   } catch (e) {
     console.error('cron send error', (e as Error).name);
+  }
+  try {
+    await wakeDueSnoozed(env);
+  } catch (e) {
+    console.error('cron snooze error', (e as Error).name);
+  }
+  try {
+    await backfillInlineBodies(env);
+  } catch (e) {
+    console.error('cron inline backfill error', (e as Error).name);
   }
   if (new Date(scheduledTime).getUTCMinutes() === 0) {
     try {

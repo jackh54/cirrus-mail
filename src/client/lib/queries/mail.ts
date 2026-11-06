@@ -1,14 +1,17 @@
 import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient, type InfiniteData, type QueryClient } from '@tanstack/react-query';
 import type {
-  Contact, Folder, Page, ThreadAction, ThreadActionInput, ThreadDetail, ThreadSummary,
+  Contact, Folder, Page, ThreadAction, ThreadActionInput, ThreadCategory, ThreadDetail, ThreadSummary,
 } from '@shared/api';
 import { api, asList, asPage } from '../api';
 import { qk } from './keys';
 
 export type ThreadsData = InfiniteData<Page<ThreadSummary>, string | null>;
 
-/** List key for a view: a folder id, `starred`, or `search`. */
+/** List key for a view: a folder id, `starred`, `search`, or `label:<id>`. */
 export type ListKey = string;
+
+export const LABEL_KEY = 'label:';
+export const isLabelKey = (k: string) => k.startsWith(LABEL_KEY);
 
 export function useFolders(mb: string | undefined) {
   return useQuery({
@@ -18,9 +21,9 @@ export function useFolders(mb: string | undefined) {
   });
 }
 
-export function useThreads(mb: string, listKey: ListKey, q: string, enabled = true) {
+export function useThreads(mb: string, listKey: ListKey, q: string, enabled = true, category?: ThreadCategory) {
   return useInfiniteQuery({
-    queryKey: qk.threads(mb, listKey, q),
+    queryKey: category ? [...qk.threads(mb, listKey, q), category] : qk.threads(mb, listKey, q),
     enabled: enabled && !!mb && !!listKey,
     // Switching folders keeps the previous list on screen until the next one arrives (no empty flash).
     placeholderData: keepPreviousData,
@@ -30,7 +33,7 @@ export function useThreads(mb: string, listKey: ListKey, q: string, enabled = tr
       asPage(
         await api.get<Page<ThreadSummary> | ThreadSummary[]>(
           `/api/mailboxes/${mb}/threads`,
-          { folder: listKey === 'search' ? undefined : listKey, q: q || undefined, cursor: pageParam, limit: 50 },
+          { folder: listKey === 'search' || isLabelKey(listKey) ? undefined : listKey, label: isLabelKey(listKey) ? listKey.slice(LABEL_KEY.length) : undefined, q: q || undefined, category, cursor: pageParam, limit: 50 },
           signal,
         ),
       ),
@@ -65,8 +68,12 @@ export function prefetchThread(qc: QueryClient, mb: string, tid: string): void {
 
 const MOVES: ThreadAction[] = ['archive', 'trash', 'spam', 'not_spam', 'move', 'delete_forever'];
 
-function patchThread(t: ThreadSummary, action: ThreadAction): ThreadSummary {
+function patchThread(t: ThreadSummary, action: ThreadAction, until?: number): ThreadSummary {
   switch (action) {
+    case 'snooze': return { ...t, snoozedUntil: until ?? null };
+    case 'unsnooze': return { ...t, snoozedUntil: null };
+    case 'mute': return { ...t, muted: true };
+    case 'unmute': return { ...t, muted: false };
     case 'read': return { ...t, unreadCount: 0 };
     case 'unread': return { ...t, unreadCount: Math.max(1, t.unreadCount) };
     case 'star': return { ...t, isStarred: true };
@@ -75,19 +82,24 @@ function patchThread(t: ThreadSummary, action: ThreadAction): ThreadSummary {
   }
 }
 
-function patchList(data: ThreadsData, ids: Set<string>, input: ThreadActionInput, listKey: string): ThreadsData {
+function patchList(data: ThreadsData, ids: Set<string>, input: ThreadActionInput, listKey: string, inboxId?: string): ThreadsData {
   const { action } = input;
   const removes =
     action === 'delete_forever' ||
     (action === 'unstar' && listKey === 'starred') ||
-    (MOVES.includes(action) && listKey !== 'starred' && listKey !== 'search' && input.folderId !== listKey);
+    (action === 'snooze' && !!inboxId && listKey === inboxId) ||
+    (action === 'unsnooze' && listKey === 'snoozed') ||
+    // A label list keeps a thread through archive and moves; only Trash and Spam take it out.
+    (isLabelKey(listKey)
+      ? action === 'trash' || action === 'spam'
+      : MOVES.includes(action) && listKey !== 'starred' && listKey !== 'snoozed' && listKey !== 'search' && input.folderId !== listKey);
   return {
     ...data,
     pages: data.pages.map((p) => ({
       ...p,
       items: removes
         ? p.items.filter((t) => !ids.has(t.id))
-        : p.items.map((t) => (ids.has(t.id) ? patchThread(t, action) : t)),
+        : p.items.map((t) => (ids.has(t.id) ? patchThread(t, action, input.until) : t)),
     })),
   };
 }
@@ -129,11 +141,11 @@ export function useThreadAction(mb: string) {
       }
 
       for (const [key, data] of lists) {
-        if (data) qc.setQueryData<ThreadsData>(key, patchList(data, ids, input, String(key[2] ?? '')));
+        if (data) qc.setQueryData<ThreadsData>(key, patchList(data, ids, input, String(key[2] ?? ''), folders?.find((f) => f.role === 'inbox')?.id));
       }
       for (const [id, d] of details) {
         if (!d) continue;
-        const thread = patchThread(d.thread, input.action);
+        const thread = patchThread(d.thread, input.action, input.until);
         const messages = d.messages.map((m) => {
           if (input.action === 'read') return { ...m, isRead: true };
           if (input.action === 'star' || input.action === 'unstar') return { ...m, isStarred: input.action === 'star' };
@@ -155,6 +167,8 @@ export function useThreadAction(mb: string) {
     onSettled: (_r, _e, input) => {
       void qc.invalidateQueries({ queryKey: qk.threadsAll(mb) });
       void qc.invalidateQueries({ queryKey: qk.folders(mb) });
+      void qc.invalidateQueries({ queryKey: qk.categories(mb) });
+      void qc.invalidateQueries({ queryKey: qk.labels(mb) });
       void qc.invalidateQueries({ queryKey: qk.me });
       if (input.action === 'delete_forever') {
         input.threadIds.forEach((id) => qc.removeQueries({ queryKey: qk.thread(mb, id) }));

@@ -4,7 +4,7 @@ import { LIMITS, type ComposeMode } from '../../shared/api';
 import { ulid } from '../../shared/ulid';
 import { dedupeAddresses } from '../lib/addresses';
 import {
-  addressesForFts, attachmentToApi, deleteMessagesForever, ftsDeleteStmts, ftsInsertStmts, loadMessageFull, messageRowToFull,
+  addressesForFts, attachmentToApi, deleteMessagesForever, ftsDeleteStmts, ftsInsertStmts, inlineBodyJson, loadMessageFull, messageRowToFull,
   recomputeThreadStmts, recomputeThreads, type AttachmentRow, type MessageRow, type SqlGuard,
 } from '../lib/db';
 import { HttpError, notFound } from '../lib/errors';
@@ -104,10 +104,10 @@ drafts.post('/drafts', async (c) => {
   }
   stmts.push(db.prepare(
     `INSERT INTO messages (id, mailbox_id, thread_id, folder_id, direction, status, in_reply_to, references_hdr, parent_id, compose_mode,
-       from_email, from_name, to_json, cc_json, bcc_json, subject, snippet, body_key, size, is_read, date, created_at, updated_at, folder_changed_at)
-     VALUES (?, ?, ?, ?, 'out', 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
+       from_email, from_name, to_json, cc_json, bcc_json, subject, snippet, body_key, body_inline, size, is_read, date, created_at, updated_at, folder_changed_at)
+     VALUES (?, ?, ?, ?, 'out', 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
   ).bind(id, mb, threadId, roles.drafts, th.inReplyTo, th.references, parent?.id ?? null, mode, b.from, fromName,
-    JSON.stringify(to), JSON.stringify(cc), JSON.stringify(bcc), b.subject, makeSnippet(text), key, bytes(b.html) + bytes(text), now, now, now, now));
+    JSON.stringify(to), JSON.stringify(cc), JSON.stringify(bcc), b.subject, makeSnippet(text), key, inlineBodyJson(b.html, text), bytes(b.html) + bytes(text), now, now, now, now));
   stmts.push(...ftsInsertStmts(db, { id, mailboxId: mb, subject: b.subject, addresses: addressesForFts({ email: b.from, name: fromName }, to, cc, bcc), body: text }));
   stmts.push(...recomputeThreadStmts(db, threadId));
   await db.batch(stmts);
@@ -181,9 +181,9 @@ drafts.put('/drafts/:id', async (c) => {
     db.prepare('SELECT body_key FROM messages WHERE id = ?').bind(row.id),
     db.prepare(
       `UPDATE messages SET status = 'draft', error_code = NULL, error_message = NULL, from_email = ?, from_name = ?, to_json = ?, cc_json = ?,
-         bcc_json = ?, subject = ?, snippet = ?, body_key = ?, size = ? + (SELECT COALESCE(SUM(size), 0) FROM attachments WHERE message_id = ?),
+         bcc_json = ?, subject = ?, snippet = ?, body_key = ?, body_inline = ?, size = ? + (SELECT COALESCE(SUM(size), 0) FROM attachments WHERE message_id = ?),
          date = ?, updated_at = ?, pgp_mode = ? WHERE id = ? AND status IN ('draft','failed')`,
-    ).bind(b.from, fromName, JSON.stringify(to), JSON.stringify(cc), JSON.stringify(bcc), b.subject, b.pgp === 'mime' ? 'Encrypted message' : makeSnippet(text), key,
+    ).bind(b.from, fromName, JSON.stringify(to), JSON.stringify(cc), JSON.stringify(bcc), b.subject, b.pgp === 'mime' ? 'Encrypted message' : makeSnippet(text), key, inlineBodyJson(b.html, text),
       bytes(b.html) + bytes(text), row.id, now, now, b.pgp ?? null, row.id),
     ...ftsDeleteStmts(db, [row.id], applied),
     ...ftsInsertStmts(db, { id: row.id, mailboxId: mb, subject: b.subject, addresses: addressesForFts({ email: b.from, name: fromName }, to, cc, bcc), body: text }, applied),

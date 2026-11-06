@@ -2,7 +2,7 @@
 import { LIMITS, type Address } from '../../shared/api';
 import { ulid } from '../../shared/ulid';
 import { parseJsonAddresses } from '../lib/addresses';
-import { folderIdsByRole, loadBody, recomputeThreadStmts, type AttachmentRow, type MessageRow } from '../lib/db';
+import { folderIdsByRole, loadRowBody, recomputeThreadStmts, type AttachmentRow, type MessageRow } from '../lib/db';
 import { HttpError } from '../lib/errors';
 import { cleanHeaderText } from '../lib/validate';
 import { htmlToText } from '../lib/html';
@@ -93,7 +93,7 @@ export async function performSend(env: Env, row: MessageRow, contactUserIds: str
   const bcc = parseJsonAddresses(row.bcc_json);
   let result: SendResult;
   try {
-    const body = await loadBody(env, row.body_key);
+    const body = await loadRowBody(env, row);
     const { results: atts } = await db.prepare('SELECT * FROM attachments WHERE message_id = ? ORDER BY created_at, id').bind(row.id).all<AttachmentRow>();
     const attachments: EmailAttachment[] = [];
     for (const a of atts) {
