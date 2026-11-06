@@ -5,8 +5,10 @@ import type { Folder, ThreadAction, ThreadDetail, ThreadSummary } from '@shared/
 import { api } from '../../lib/api';
 import { useHotkeys } from '../../lib/hotkeys';
 import { qk } from '../../lib/queries/keys';
+import { useCategoryTabsOn } from '../../lib/queries/ai';
 import { prefetchThread, useThreads } from '../../lib/queries/mail';
 import { useCompose } from '../compose/ComposeProvider';
+import { useCategoryTab } from './categoryTab';
 import type { ResolvedView } from './folderMeta';
 import { useMailRoute } from './useMailRoute';
 import { useThreadActions } from './useThreadActions';
@@ -20,7 +22,11 @@ export function useMailController(view: ResolvedView | null, folders: Folder[] |
   const navigate = useNavigate();
   const compose = useCompose();
   const qc = useQueryClient();
-  const query = useThreads(mb, view?.listKey ?? '', route.q, !!view);
+  // Inbox tabs (optional AI triage): only the Inbox, and only while an admin has AI on and the user keeps tabs on.
+  const tabsOn = useCategoryTabsOn() && view?.role === 'inbox';
+  const tab = useCategoryTab();
+  const category = tabsOn ? tab : undefined;
+  const query = useThreads(mb, view?.listKey ?? '', route.q, !!view, category);
   const threads = useMemo(() => query.data?.pages.flatMap((p) => p.items) ?? [], [query.data]);
   const [focusIndex, setFocusIndex] = useState(0);
   // The keyboard cursor ring only shows once j/k has been used, and hides again on a pointer open.
@@ -34,7 +40,7 @@ export function useMailController(view: ResolvedView | null, folders: Folder[] |
     setFocusIndex(0);
     setCursorVisible(false);
     anchor.current = null;
-  }, [mb, view?.listKey, route.q]);
+  }, [mb, view?.listKey, route.q, category]);
 
   // Keep the keyboard cursor on the open thread.
   useEffect(() => {
@@ -170,7 +176,7 @@ export function useMailController(view: ResolvedView | null, folders: Folder[] |
     Escape: () => selected.size && setSelected(new Set()),
   });
 
-  return { query, threads, focusIndex, cursorVisible, selected, toggle, selectAll, openThread, act, prefetch, hideCursor };
+  return { query, tabsOn, category, threads, focusIndex, cursorVisible, selected, toggle, selectAll, openThread, act, prefetch, hideCursor };
 }
 
 export type MailController = ReturnType<typeof useMailController>;

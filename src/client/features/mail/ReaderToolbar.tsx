@@ -1,9 +1,10 @@
 import type { ReactNode } from 'react';
-import { Archive, ArrowLeft, ChevronDown, ChevronUp, FolderInput, Forward, Mail, Reply, ReplyAll, ShieldAlert, ShieldCheck, Star, Trash2 } from 'lucide-react';
-import type { Folder, ThreadAction } from '@shared/api';
+import { Archive, ArrowLeft, ChevronDown, ChevronUp, FolderInput, Forward, Mail, Reply, ReplyAll, ShieldAlert, ShieldCheck, Star, Tag, Trash2 } from 'lucide-react';
+import { THREAD_CATEGORIES, type Folder, type ThreadAction, type ThreadCategory } from '@shared/api';
 import { IconButton } from '../../components/Button';
 import { Menu } from '../../components/Menu';
 import { cn } from '../../lib/cn';
+import { CATEGORY_LABELS } from './categoryTab';
 import type { ViewRole } from './folderMeta';
 
 interface Props {
@@ -16,9 +17,22 @@ interface Props {
   onStep?: (delta: number) => void;
   /** Phones: only back, spam and star up here; the rest lives in the bottom ReaderActionBar. */
   mobile?: boolean;
+  /** Inbox tabs (optional AI triage): move this conversation to another tab. */
+  tabs?: { current: ThreadCategory; onMove: (c: ThreadCategory) => void };
 }
 
-export function ReaderToolbar({ role, starred, folders, showBack, onBack, onAction, onStep, mobile }: Props) {
+function TabMenu({ tabs, children }: { tabs: NonNullable<Props['tabs']>; children: (p: Parameters<Parameters<typeof Menu>[0]['trigger']>[0]) => ReactNode }) {
+  return (
+    <Menu
+      label="Move to tab"
+      align="start"
+      items={THREAD_CATEGORIES.map((c) => ({ label: CATEGORY_LABELS[c], disabled: c === tabs.current, hint: c === tabs.current ? 'Current' : undefined, onSelect: () => tabs.onMove(c) }))}
+      trigger={children}
+    />
+  );
+}
+
+export function ReaderToolbar({ role, starred, folders, showBack, onBack, onAction, onStep, mobile, tabs }: Props) {
   const trashLike = role === 'trash' || role === 'spam';
   const movable = folders.filter((f) => f.role === 'inbox' || f.role === 'archive' || !f.role);
   if (mobile) {
@@ -28,6 +42,9 @@ export function ReaderToolbar({ role, starred, folders, showBack, onBack, onActi
           <ArrowLeft size={20} />
         </IconButton>
         <span className="flex-1" />
+        {tabs && (
+          <TabMenu tabs={tabs}>{(p) => <IconButton {...p} label="Move to tab" noTip className="size-11"><Tag size={18} /></IconButton>}</TabMenu>
+        )}
         {role === 'spam' ? (
           <IconButton label="Not spam" noTip onClick={() => onAction('not_spam')} className="size-11"><ShieldCheck size={18} /></IconButton>
         ) : (
@@ -63,6 +80,7 @@ export function ReaderToolbar({ role, starred, folders, showBack, onBack, onActi
         items={movable.length ? movable.map((f) => ({ label: f.name, onSelect: () => onAction('move', f.id) })) : [{ kind: 'heading', label: 'No folders' }]}
         trigger={(p) => <IconButton {...p} label="Move to folder"><FolderInput size={16} /></IconButton>}
       />
+      {tabs && <TabMenu tabs={tabs}>{(p) => <IconButton {...p} label="Move to tab"><Tag size={16} /></IconButton>}</TabMenu>}
       <span className="mx-1.5 h-4 w-px bg-border" aria-hidden="true" />
       <IconButton label="Mark as unread" shortcut="⇧U" onClick={() => onAction('unread')}><Mail size={16} /></IconButton>
       <IconButton label={starred ? 'Unstar' : 'Star'} shortcut="S" onClick={() => onAction(starred ? 'unstar' : 'star')}>

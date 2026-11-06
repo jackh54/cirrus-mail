@@ -9,6 +9,9 @@ export default defineConfig(async () => {
       cloudflareTest({
         main: './src/worker/index.ts',
         wrangler: { configPath: './wrangler.jsonc' },
+        // The AI binding is remote-only; without this the pool tries to log in to Cloudflare to proxy it. Tests that
+        // touch AI inject a fake through the env instead (see test/ai.test.ts).
+        remoteBindings: false,
         miniflare: {
           // The pool bundles its own workerd, which can trail wrangler's. Pin a date it supports.
           compatibilityDate: '2026-08-22',

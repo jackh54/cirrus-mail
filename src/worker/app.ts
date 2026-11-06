@@ -3,6 +3,7 @@ import { errorBody, onError } from './lib/errors';
 import { meters } from './lib/timing';
 import { csrf, requireMailbox } from './middleware/session';
 import { admin } from './routes/admin';
+import { aiAdmin, aiMailbox, aiPublic } from './routes/ai';
 import { auth } from './routes/auth';
 import { blocked } from './routes/blocked';
 import { contacts } from './routes/contacts';
@@ -29,6 +30,7 @@ mailbox.route('/', drafts);
 mailbox.route('/', mailboxSettings);
 mailbox.route('/', filters);
 mailbox.route('/', blocked);
+mailbox.route('/', aiMailbox);
 
 export const app = new Hono<AppEnv>().basePath('/api');
 
@@ -53,6 +55,8 @@ app.route('/files', files);
 app.route('/proxy', proxy);
 app.route('/push', push);
 app.route('/sending', sending);
+app.route('/ai', aiPublic);
+app.route('/admin/ai', aiAdmin);
 app.route('/admin', admin);
 app.route('/mailboxes/:mb', mailbox);
 

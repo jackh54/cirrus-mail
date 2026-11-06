@@ -13,10 +13,13 @@ import { useToast } from '../../components/Toast';
 import { cn } from '../../lib/cn';
 import { errorMessage } from '../../lib/api';
 import { qk } from '../../lib/queries/keys';
+import { useCategoryCounts } from '../../lib/queries/ai';
 import { emptyFolder } from '../../lib/queries/mail';
 import { currentDensity } from '../../lib/theme';
 import { identitiesOf } from '../compose/identities';
 import { BulkBar } from './BulkBar';
+import { CategoryTabs } from './CategoryTabs';
+import { setCategoryTab } from './categoryTab';
 import { VIEW_META, type ResolvedView } from './folderMeta';
 import { SearchBox } from './SearchBox';
 import { SwipeRow, type SwipeAction } from './SwipeRow';
@@ -49,6 +52,7 @@ export function ThreadListPane({ mailbox, view, folders, ctl, onOpenMenu, mobile
   const reducedMotion = useMediaQuery('(prefers-reduced-motion: reduce)');
   const [sheetFor, setSheetFor] = useState<ThreadSummary | null>(null);
   const myEmails = useMemo(() => new Set(identitiesOf(mailbox).map((i) => i.email.toLowerCase())), [mailbox]);
+  const counts = useCategoryCounts(mailbox.id, ctl.tabsOn);
   const { query, threads, focusIndex, cursorVisible, selected, toggle, selectAll, openThread, act, prefetch, hideCursor } = ctl;
   const meta = VIEW_META[view.role];
   const selecting = selected.size > 0;
@@ -164,6 +168,8 @@ export function ThreadListPane({ mailbox, view, folders, ctl, onOpenMenu, mobile
           </IconButton>
         </header>
       )}
+
+      {ctl.tabsOn && <CategoryTabs current={ctl.category ?? 'primary'} counts={counts.data} onSelect={setCategoryTab} />}
 
       {touch && (
         <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-12 z-10 flex h-28 justify-center overflow-hidden">

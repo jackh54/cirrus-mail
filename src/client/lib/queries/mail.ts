@@ -1,6 +1,6 @@
 import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient, type InfiniteData, type QueryClient } from '@tanstack/react-query';
 import type {
-  Contact, Folder, Page, ThreadAction, ThreadActionInput, ThreadDetail, ThreadSummary,
+  Contact, Folder, Page, ThreadAction, ThreadActionInput, ThreadCategory, ThreadDetail, ThreadSummary,
 } from '@shared/api';
 import { api, asList, asPage } from '../api';
 import { qk } from './keys';
@@ -18,9 +18,9 @@ export function useFolders(mb: string | undefined) {
   });
 }
 
-export function useThreads(mb: string, listKey: ListKey, q: string, enabled = true) {
+export function useThreads(mb: string, listKey: ListKey, q: string, enabled = true, category?: ThreadCategory) {
   return useInfiniteQuery({
-    queryKey: qk.threads(mb, listKey, q),
+    queryKey: category ? [...qk.threads(mb, listKey, q), category] : qk.threads(mb, listKey, q),
     enabled: enabled && !!mb && !!listKey,
     // Switching folders keeps the previous list on screen until the next one arrives (no empty flash).
     placeholderData: keepPreviousData,
@@ -30,7 +30,7 @@ export function useThreads(mb: string, listKey: ListKey, q: string, enabled = tr
       asPage(
         await api.get<Page<ThreadSummary> | ThreadSummary[]>(
           `/api/mailboxes/${mb}/threads`,
-          { folder: listKey === 'search' ? undefined : listKey, q: q || undefined, cursor: pageParam, limit: 50 },
+          { folder: listKey === 'search' ? undefined : listKey, q: q || undefined, category, cursor: pageParam, limit: 50 },
           signal,
         ),
       ),
@@ -155,6 +155,7 @@ export function useThreadAction(mb: string) {
     onSettled: (_r, _e, input) => {
       void qc.invalidateQueries({ queryKey: qk.threadsAll(mb) });
       void qc.invalidateQueries({ queryKey: qk.folders(mb) });
+      void qc.invalidateQueries({ queryKey: qk.categories(mb) });
       void qc.invalidateQueries({ queryKey: qk.me });
       if (input.action === 'delete_forever') {
         input.threadIds.forEach((id) => qc.removeQueries({ queryKey: qk.thread(mb, id) }));

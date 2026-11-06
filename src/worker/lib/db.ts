@@ -1,12 +1,12 @@
 // Row types, mappers and shared D1 helpers.
-import type { Address, Attachment, AuthResults, FolderRole, MessageFull, ThreadSummary, User } from '../../shared/api';
+import type { Address, Attachment, AuthResults, FolderRole, MessageFull, ThreadCategory, ThreadSummary, User } from '../../shared/api';
 import { parseJsonAddresses } from './addresses';
 import { signFileUrl } from './sign';
 
 export interface UserRow {
   id: string; email: string; name: string; password_hash: string; role: 'admin' | 'member';
   totp_secret: string | null; totp_pending: string | null; totp_last_step: number; theme: User['theme']; density: User['density'];
-  disabled: number; must_change_password: number; created_at: number; updated_at: number; push_preview: number;
+  disabled: number; must_change_password: number; created_at: number; updated_at: number; push_preview: number; category_tabs: number;
 }
 
 export interface MessageRow {
@@ -29,7 +29,7 @@ export interface AttachmentRow {
 export interface ThreadRow {
   id: string; mailbox_id: string; subject: string; subject_norm: string; snippet: string; participants: string;
   message_count: number; unread_count: number; has_attachments: number; is_starred: number;
-  last_message_at: number; created_at: number;
+  last_message_at: number; created_at: number; category: ThreadCategory | null;
 }
 
 export interface StoredBody { html: string | null; text: string | null }
@@ -48,7 +48,7 @@ export function rowToUser(r: UserRow): User {
   return {
     id: r.id, email: r.email, name: r.name, role: r.role, totpEnabled: !!r.totp_secret,
     theme: r.theme, density: r.density, mustChangePassword: !!r.must_change_password, createdAt: r.created_at,
-    pushPreview: r.push_preview !== 0,
+    pushPreview: r.push_preview !== 0, categoryTabs: r.category_tabs !== 0,
   };
 }
 
@@ -100,7 +100,7 @@ export function threadRowToSummary(t: ThreadRow, folderIds: string[], lastMessag
   return {
     id: t.id, subject: t.subject, snippet: t.snippet, participants, messageCount: t.message_count,
     unreadCount: t.unread_count, hasAttachments: !!t.has_attachments, isStarred: !!t.is_starred,
-    lastMessageAt: lastMessageAt ?? t.last_message_at, folderIds,
+    lastMessageAt: lastMessageAt ?? t.last_message_at, folderIds, category: t.category ?? 'primary',
   };
 }
 

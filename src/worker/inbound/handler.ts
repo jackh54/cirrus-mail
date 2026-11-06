@@ -3,6 +3,7 @@ import PostalMime, { type Email } from 'postal-mime';
 import { LIMITS, type Address } from '../../shared/api';
 import { ulid } from '../../shared/ulid';
 import { dedupeAddresses, domainOf, fromParsed, normalizeEmail } from '../lib/addresses';
+import { categorizeInbound } from '../lib/ai';
 import { sha256Hex } from '../lib/crypto';
 import { addressesForFts, folderIdsByRole, ftsInsertStmts, recomputeThreadStmts } from '../lib/db';
 import { htmlToText, makeSnippet } from '../lib/html';
@@ -255,6 +256,12 @@ export async function processInbound(message: ForwardableEmailMessage, env: Env,
   // Off the delivery path: notifyNewMail never throws and the email handler does not wait for it.
   if (ctx && !spam.isSpam && folderId === roles.inbox && !isRead) {
     ctx.waitUntil(notifyNewMail(env, { mailboxId, mailboxAddress: mbRow.address, threadId, from, subject }, now));
+  }
+
+  // Inbox category (optional AI triage): after the message is stored, off the delivery path. It does nothing unless
+  // an admin has enabled the feature, and never throws.
+  if (ctx && !spam.isSpam && folderId === roles.inbox) {
+    ctx.waitUntil(categorizeInbound(env, { mailboxId, threadId, fromEmail: from.email, fromName: from.name, subject, text, header }, now));
   }
 
   // Filter forwards: must be verified Email Routing destinations; failures are logged, not fatal.

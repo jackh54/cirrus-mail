@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
-import type { Folder, FolderRole, ThreadSummary } from '../../shared/api';
+import { THREAD_CATEGORIES, type Folder, type FolderRole, type ThreadCategory, type ThreadSummary } from '../../shared/api';
 import { ulid } from '../../shared/ulid';
 import {
   attachmentToApi, decodeCursor, deleteMessagesForever, encodeCursor, loadBody, loadMessageFull, messageRowToFull,
@@ -107,7 +107,7 @@ type ListRow = PageRow & { draft?: string | null };
  * `readThreadList` turns their results into the page.
  */
 export function listThreadsStmts(
-  db: D1Database, mb: string, opts: { folder?: string; q?: string; cursor?: string; limit: number }, authz: Authz,
+  db: D1Database, mb: string, opts: { folder?: string; q?: string; cursor?: string; limit: number; category?: ThreadCategory }, authz: Authz,
 ): D1PreparedStatement[] {
   const where: string[] = ['m.mailbox_id = ?'];
   const params: unknown[] = [...authz.params, mb];
@@ -123,6 +123,10 @@ export function listThreadsStmts(
   } else {
     where.push(`m.folder_id = ${INBOX_SQL}`);
     params.push(mb);
+  }
+  if (opts.category) {
+    where.push("m.thread_id IN (SELECT id FROM threads WHERE mailbox_id = ? AND COALESCE(category, 'primary') = ?)");
+    params.push(mb, opts.category);
   }
   if (opts.q) {
     const s = buildSearchSql(parseSearch(opts.q));
@@ -166,7 +170,8 @@ export function readThreadList(results: D1Result[], limit: number): { items: Thr
 mailReads.get('/threads', async (c) => {
   const limit = Math.min(Math.max(Number(c.req.query('limit')) || 50, 1), 100);
   const q = c.req.query('q')?.trim() || undefined;
-  const opts = { folder: c.req.query('folder') || undefined, q, cursor: c.req.query('cursor'), limit };
+  const category = THREAD_CATEGORIES.find((k) => k === c.req.query('category'));
+  const opts = { folder: c.req.query('folder') || undefined, q, cursor: c.req.query('cursor'), limit, category };
   return c.json(readThreadList(await authorizeMailbox(c, (mb, authz) => listThreadsStmts(c.env.DB, mb, opts, authz)), limit));
 });
 

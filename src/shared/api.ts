@@ -36,6 +36,8 @@ export interface User {
   createdAt: Millis;
   /** Push notifications show the sender and subject (true) or only "New mail" and the mailbox address. */
   pushPreview: boolean;
+  /** Show the Primary/Updates/Promotions/Social/Forums tabs on the Inbox (only when an admin has turned AI triage on). */
+  categoryTabs: boolean;
 }
 
 export interface SessionInfo {
@@ -67,7 +69,7 @@ export interface Identity {
 }
 
 export interface MeResponse { user: User; mailboxes: MailboxSummary[] }
-export interface UpdateMeInput { name?: string; theme?: Theme; density?: Density; pushPreview?: boolean }
+export interface UpdateMeInput { name?: string; theme?: Theme; density?: Density; pushPreview?: boolean; categoryTabs?: boolean }
 export interface ChangePasswordInput { current: string; next: string }
 export interface TotpBeginResponse { secret: string; otpauthUrl: string }
 export interface TotpEnableResponse { recoveryCodes: string[] }
@@ -85,6 +87,9 @@ export interface Folder {
   total: number;
 }
 
+export const THREAD_CATEGORIES = ['primary', 'updates', 'promotions', 'social', 'forums'] as const;
+export type ThreadCategory = (typeof THREAD_CATEGORIES)[number];
+
 export interface ThreadSummary {
   id: ID;
   subject: string;
@@ -96,6 +101,8 @@ export interface ThreadSummary {
   isStarred: boolean;
   lastMessageAt: Millis;
   folderIds: ID[];              // folders that contain at least one message of this thread
+  /** Inbox tab the thread belongs to. Always 'primary' while AI triage is off or a thread has not been classified. */
+  category: ThreadCategory;
 }
 
 export type MessageStatus = 'received' | 'draft' | 'scheduled' | 'sending' | 'sent' | 'failed';
@@ -407,6 +414,37 @@ export interface AdminStats {
   /** The admin-set daily limit (see SendingStatus), so the Overview can show sentToday against it. */
   dailySendLimit: number | null;
 }
+
+// ---------- AI triage (optional, off by default) ----------
+
+/** GET /api/ai/status (any signed-in user): whether the Inbox tabs and Summarise exist at all. */
+export interface AiStatus { enabled: boolean }
+
+/** GET /api/mailboxes/:mb/categories: threads with unread mail in the Inbox, per tab. */
+export interface CategoryCounts { unread: Record<ThreadCategory, number> }
+
+/** PUT /api/mailboxes/:mb/threads/:tid/category. `rememberSender` makes the thread's latest sender always land in that tab. */
+export interface SetCategoryInput { category: ThreadCategory; rememberSender?: boolean }
+
+/** GET/POST /api/mailboxes/:mb/threads/:tid/summary. GET returns null when nothing fresh is cached; POST generates (or returns the cache). */
+export interface ThreadSummaryResult {
+  bullets: string[];
+  generatedAt: Millis;
+  cached: boolean;
+}
+export interface ThreadSummaryResponse { summary: ThreadSummaryResult | null }
+
+/** GET/PATCH /api/admin/ai */
+export interface AdminAi {
+  enabled: boolean;
+  dailyBudget: number;          // AI calls per UTC day; classification stops silently and Summarise errors at the cap
+  usedToday: number;
+  /** false when this deploy has no AI binding (the toggle can still be saved, but nothing runs). */
+  available: boolean;
+}
+export interface AdminAiPatch { enabled?: boolean; dailyBudget?: number } // dailyBudget: 0..100,000
+
+export const AI_DEFAULT_DAILY_BUDGET = 500;
 
 // ---------- sending quota ----------
 

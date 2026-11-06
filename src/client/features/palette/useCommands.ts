@@ -1,15 +1,19 @@
 import { createElement, useMemo, type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 import {
-  AtSign, Globe, Inbox, Keyboard, LayoutDashboard, Mail, Moon, Palette, PenLine, Search, Shield, Sun, User, Users,
+  AtSign, Globe, Inbox, Keyboard, LayoutDashboard, Mail, Moon, Palette, PenLine, Search, Shield, Sparkles, Sun, User, Users,
   type LucideIcon,
 } from 'lucide-react';
+import { THREAD_CATEGORIES } from '@shared/api';
+import { useAiEnabled, useCategoryTabsOn } from '../../lib/queries/ai';
 import { useFolders } from '../../lib/queries/mail';
 import { useMeData, useUpdateMe } from '../../lib/queries/me';
 import { getLastMailbox } from '../../lib/storage';
 import { useCompose } from '../compose/ComposeProvider';
+import { CATEGORY_LABELS, setCategoryTab } from '../mail/categoryTab';
 import { SYSTEM_ORDER, VIEW_META } from '../mail/folderMeta';
 import { OPEN_SHORTCUTS_EVENT } from '../mail/ShortcutsOverlay';
+import { SUMMARISE_EVENT } from '../mail/SummaryPanel';
 
 export type Group = 'Search' | 'Actions' | 'Go to' | 'Mailboxes' | 'Settings' | 'Admin';
 
@@ -37,6 +41,9 @@ export function useCommands(query: string): Command[] {
   const mb = mailbox?.id ?? '';
   const folders = useFolders(mb || undefined).data;
   const q = query.trim();
+  const aiOn = useAiEnabled();
+  const tabsOn = useCategoryTabsOn();
+  const threadOpen = /^\/mail\/[^/]+\/[^/]+\/[^/]+/.test(pathname);
 
   const base = useMemo(() => {
     const out: Command[] = [];
@@ -58,6 +65,14 @@ export function useCommands(query: string): Command[] {
         out.push({ id: `go-${f.id}`, group: 'Go to', label: `Go to ${f.name}`, icon: VIEW_META.custom.icon(16), keywords: [f.name, 'folder'], run: () => navigate(`/mail/${mb}/${f.id}`) });
       }
     }
+    if (mb && tabsOn) {
+      for (const c of THREAD_CATEGORIES) {
+        out.push({ id: `tab-${c}`, group: 'Go to', label: `Inbox: ${CATEGORY_LABELS[c]} tab`, icon: icon(Inbox), keywords: ['inbox', 'tab', 'category', CATEGORY_LABELS[c]], run: () => { setCategoryTab(c); navigate(`/mail/${mb}/inbox`); } });
+      }
+    }
+    if (mb && aiOn && threadOpen) {
+      out.push({ id: 'summarise', group: 'Actions', label: 'Summarise conversation', icon: icon(Sparkles), keywords: ['ai', 'summary', 'tldr'], run: () => window.dispatchEvent(new Event(SUMMARISE_EVENT)) });
+    }
     if (mailboxes.length > 1) {
       for (const m of mailboxes) {
         if (m.id === mb) continue;
@@ -75,7 +90,7 @@ export function useCommands(query: string): Command[] {
       }
     }
     return out;
-  }, [mb, folders, mailboxes, user.role, compose, navigate, updatePrefs]);
+  }, [mb, folders, mailboxes, user.role, compose, navigate, updatePrefs, aiOn, tabsOn, threadOpen]);
 
   return useMemo(() => {
     if (!q || !mb) return base;

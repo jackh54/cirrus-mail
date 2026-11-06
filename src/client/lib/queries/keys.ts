@@ -11,6 +11,10 @@ export const qk = {
   blocked: (mb: string) => ['blocked', mb] as const,
   sessions: ['sessions'] as const,
   sending: ['sending'] as const,
+  ai: ['ai'] as const,
+  adminAi: ['admin', 'ai'] as const,
+  categories: (mb: string) => ['categories', mb] as const,
+  summary: (mb: string, tid: string) => ['summary', mb, tid] as const,
   admin: (what: 'users' | 'domains' | 'mailboxes' | 'aliases' | 'stats' | 'settings') => ['admin', what] as const,
   domainCheck: (id: string) => ['admin', 'domain-check', id] as const,
 };
