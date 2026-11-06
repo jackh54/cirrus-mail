@@ -10,6 +10,7 @@ export const qk = {
   mailboxSettings: (mb: string) => ['mailbox-settings', mb] as const,
   filters: (mb: string) => ['filters', mb] as const,
   blocked: (mb: string) => ['blocked', mb] as const,
+  mboxImport: (mb: string) => ['mbox-import', mb] as const,
   sessions: ['sessions'] as const,
   passkeys: ['passkeys'] as const,
   sending: ['sending'] as const,

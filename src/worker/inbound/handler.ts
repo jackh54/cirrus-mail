@@ -26,7 +26,7 @@ function headerGetter(email: Email) {
   return (name: string): string | null => email.headers.find((h) => h.key === name.toLowerCase())?.value ?? null;
 }
 
-function toBytes(content: ArrayBuffer | Uint8Array | string): Uint8Array {
+export function toBytes(content: ArrayBuffer | Uint8Array | string): Uint8Array {
   if (typeof content === 'string') return new TextEncoder().encode(content);
   return content instanceof Uint8Array ? content : new Uint8Array(content);
 }
@@ -53,7 +53,7 @@ function bodyOffset(raw: Uint8Array): number {
  * body. A retry or a second delivery of the same message hashes the same; a different message that only
  * reuses the Message-ID (or an unauthenticated copy of an authenticated one) does not.
  */
-async function contentHash(raw: Uint8Array, fields: unknown[]): Promise<string> {
+export async function contentHash(raw: Uint8Array, fields: unknown[]): Promise<string> {
   const head = new TextEncoder().encode(JSON.stringify(fields) + '\n');
   const body = raw.subarray(bodyOffset(raw));
   const buf = new Uint8Array(head.byteLength + body.byteLength);

@@ -2,6 +2,7 @@
 import { deleteMessagesForever } from './lib/db';
 import { backfillInlineBodies } from './lib/inline-backfill';
 import { utcDay } from './lib/sendcount';
+import { processMboxImports } from './mbox/import';
 import { checkScheduled, claimForSend, mailboxMemberIds, performSend, recordOutcome } from './outbound/send';
 
 const DAY = 24 * 3600 * 1000;
@@ -78,5 +79,11 @@ export async function runCron(env: Env, scheduledTime: number): Promise<void> {
     } catch (e) {
       console.error('cron maintenance error', (e as Error).name);
     }
+  }
+  // Last, so its time budget never delays sends or maintenance.
+  try {
+    await processMboxImports(env);
+  } catch (e) {
+    console.error('cron mbox import error', (e as Error).name);
   }
 }

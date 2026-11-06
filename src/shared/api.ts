@@ -473,6 +473,42 @@ export const SEND_WARN_RATIO = 0.8;
 /** GET/PATCH /api/admin/settings */
 export interface AdminSettings { dailySendLimit: number | null } // PATCH: 1..1,000,000, or null to clear
 
+// ---------- mbox import / export ----------
+
+export const MBOX_LIMITS = {
+  maxFileBytes: 20 * 1024 * 1024 * 1024,
+  partBytes: 16 * 1024 * 1024,
+  /** Exports per user per hour. */
+  exportsPerHour: 5,
+} as const;
+
+export type MboxImportStatus = 'uploading' | 'processing' | 'done' | 'failed' | 'cancelled';
+
+/** GET /api/mailboxes/:mb/import (null when the mailbox has never imported). Counters are persisted by the cron. */
+export interface MboxImport {
+  id: ID;
+  status: MboxImportStatus;
+  filename: string;
+  size: number;
+  partSize: number;
+  /** Part numbers (1-based) already stored in R2, so a reload can resume the upload. */
+  uploadedParts: number[];
+  folderId: ID | null;
+  markRead: boolean;
+  bytesProcessed: number;
+  imported: number;
+  duplicates: number;
+  skipped: number;
+  errors: number;
+  /** The first 20 failure reasons; they never contain message content. */
+  errorSamples: string[];
+  createdAt: Millis;
+  finishedAt: Millis | null;
+}
+
+/** POST /api/mailboxes/:mb/import. Files with X-Gmail-Labels map labels to folders; others go to `folderId` (default Archive). */
+export interface MboxImportStart { filename: string; size: number; folderId?: ID; markRead?: boolean }
+
 // ---------- limits shared by both sides ----------
 
 export const LIMITS = {
