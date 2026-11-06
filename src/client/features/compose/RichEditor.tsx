@@ -71,7 +71,7 @@ function Toolbar({ editor }: { editor: Editor }) {
   };
 
   return (
-    <div role="toolbar" aria-label="Formatting" className="flex flex-wrap items-center gap-0.5 px-2 py-1">
+    <div role="toolbar" aria-label="Formatting" className="flex flex-wrap items-center gap-px px-3 py-1">
       <Tool label="Bold" active={s.bold} onClick={() => editor.chain().focus().toggleBold().run()}><Bold size={15} /></Tool>
       <Tool label="Italic" active={s.italic} onClick={() => editor.chain().focus().toggleItalic().run()}><Italic size={15} /></Tool>
       <Tool label="Underline" active={s.underline} onClick={() => editor.chain().focus().toggleUnderline().run()}><Underline size={15} /></Tool>
@@ -94,13 +94,14 @@ function Tool({ label, active, onClick, children }: { label: string; active?: bo
     <button
       type="button"
       aria-label={label}
-      title={label}
+      data-tip={label}
+      data-tip-side="top"
       aria-pressed={active ?? undefined}
       onMouseDown={(e) => e.preventDefault()}
       onClick={onClick}
       className={cn(
-        'inline-flex size-7 items-center justify-center rounded-md transition-colors duration-150',
-        active ? 'bg-selected text-selected-fg' : 'text-muted hover:bg-hover hover:text-fg',
+        'cm-tip inline-flex size-7 items-center justify-center rounded-md transition-colors duration-100 [&_svg]:stroke-[1.75]',
+        active ? 'bg-hover text-fg' : 'text-faint hover:bg-hover hover:text-fg',
       )}
     >
       {children}
@@ -109,5 +110,5 @@ function Tool({ label, active, onClick, children }: { label: string; active?: bo
 }
 
 function Sep() {
-  return <span className="mx-1 h-4 w-px bg-border" aria-hidden="true" />;
+  return <span className="mx-1 h-3.5 w-px bg-border" aria-hidden="true" />;
 }

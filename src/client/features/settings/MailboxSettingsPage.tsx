@@ -75,7 +75,7 @@ function SettingsForm({ mb }: { mb: string }) {
   }, [q.data, s]);
 
   if (q.isPending || !s) {
-    return q.isError ? <p className="mb-6 text-sm text-danger">{errorMessage(q.error)}</p> : <Skeleton className="mb-6 h-64 rounded-2xl" />;
+    return q.isError ? <p className="mb-6 text-[13px] text-danger">{errorMessage(q.error)}</p> : <Skeleton className="mb-6 h-64 rounded-[10px]" />;
   }
 
   const submit = (label: string) =>
@@ -94,7 +94,7 @@ function SettingsForm({ mb }: { mb: string }) {
           {(id, d) => <Input id={id} aria-describedby={d} value={s.displayName} onChange={(e) => setS({ ...s, displayName: e.target.value })} />}
         </Field>
         <p className="mb-1.5 text-[13px] font-medium">Signature</p>
-        <div className="overflow-hidden rounded-lg border border-border focus-within:border-primary focus-within:ring-3 focus-within:ring-ring/30">
+        <div className="overflow-hidden rounded-md border border-border focus-within:border-primary focus-within:ring-3 focus-within:ring-ring/30">
           <RichEditor
             initialHtml={s.signatureHtml}
             onChange={(html) => setS((cur) => (cur ? { ...cur, signatureHtml: html } : cur))}
@@ -103,7 +103,7 @@ function SettingsForm({ mb }: { mb: string }) {
             className="[&_.cm-prose]:min-h-24 [&_[role=toolbar]]:border-b [&_[role=toolbar]]:border-border"
           />
         </div>
-        <p className="mt-1.5 text-[12.5px] text-muted">Added to new messages, replies and forwards.</p>
+        <p className="mt-1.5 text-[12px] text-muted">Added to new messages, replies and forwards.</p>
       </Section>
 
       <Section
@@ -113,7 +113,7 @@ function SettingsForm({ mb }: { mb: string }) {
       >
         <div className="mb-4 flex items-center gap-3">
           <Switch checked={ar.enabled} onChange={(enabled) => setAr({ enabled })} label="Auto-reply enabled" />
-          <span className="text-sm">{ar.enabled ? 'On' : 'Off'}</span>
+          <span className="text-[13px]">{ar.enabled ? 'On' : 'Off'}</span>
         </div>
         <fieldset disabled={!ar.enabled} className="space-y-4 disabled:opacity-60">
           <div className="grid gap-4 sm:grid-cols-2">

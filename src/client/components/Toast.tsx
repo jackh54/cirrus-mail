@@ -40,7 +40,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       {children}
       <div
         aria-live="polite"
-        className="pointer-events-none fixed inset-x-0 bottom-20 z-[60] flex flex-col items-center gap-2 px-3 md:bottom-5 md:left-5 md:right-auto md:items-start"
+        className="pointer-events-none fixed inset-x-0 bottom-20 z-[60] flex flex-col items-center gap-2 px-3 md:bottom-4 md:left-4 md:right-auto md:items-start md:px-0"
       >
         {items.map((t) => (
           <ToastView key={t.id} item={t} onDismiss={() => dismiss(t.id)} />
@@ -63,16 +63,17 @@ function ToastView({ item, onDismiss }: { item: ToastItem; onDismiss: () => void
   return (
     <div
       role={tone === 'error' ? 'alert' : 'status'}
-      className="pointer-events-auto relative w-full max-w-sm overflow-hidden rounded-xl border border-border bg-elevated shadow-pop animate-rise-in"
+      className="pointer-events-auto relative w-full max-w-[360px] overflow-hidden rounded-[10px] bg-elevated shadow-pop animate-pop-in"
     >
-      <div className="flex items-start gap-3 px-3.5 py-3">
+      <div className="flex min-h-10 items-start gap-2.5 py-2.5 pr-2 pl-3">
         <Icon
-          size={17}
-          className={cn('mt-0.5 shrink-0', tone === 'success' && 'text-success', tone === 'error' && 'text-danger', tone === 'neutral' && 'text-primary')}
+          size={15}
+          strokeWidth={1.75}
+          className={cn('mt-[2.5px] shrink-0', tone === 'success' && 'text-success', tone === 'error' && 'text-danger', tone === 'neutral' && 'text-muted')}
         />
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-medium text-fg">{item.title}</p>
-          {item.description && <p className="mt-0.5 text-[13px] leading-relaxed text-muted">{item.description}</p>}
+          <p className="text-[13px] leading-5 font-medium text-fg">{item.title}</p>
+          {item.description && <p className="text-[12px] leading-4 text-muted">{item.description}</p>}
         </div>
         {item.action && (
           <button
@@ -81,12 +82,12 @@ function ToastView({ item, onDismiss }: { item: ToastItem; onDismiss: () => void
               item.action?.onClick();
               onDismiss();
             }}
-            className="shrink-0 rounded-md px-2 py-1 text-[13px] font-semibold text-primary hover:bg-primary-soft"
+            className="-my-0.5 h-6 shrink-0 rounded-md px-2 text-[13px] font-medium text-selected-fg hover:bg-primary-soft"
           >
             {item.action.label}
           </button>
         )}
-        <button type="button" aria-label="Dismiss" onClick={onDismiss} className="shrink-0 rounded-md p-1 text-faint hover:bg-hover hover:text-fg">
+        <button type="button" aria-label="Dismiss" onClick={onDismiss} className="-my-0.5 inline-flex size-6 shrink-0 items-center justify-center rounded-md text-faint hover:bg-hover hover:text-fg">
           <X size={14} />
         </button>
       </div>

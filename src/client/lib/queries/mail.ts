@@ -1,4 +1,4 @@
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient, type InfiniteData } from '@tanstack/react-query';
+import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient, type InfiniteData, type QueryClient } from '@tanstack/react-query';
 import type {
   Contact, Folder, Page, ThreadAction, ThreadActionInput, ThreadDetail, ThreadSummary,
 } from '@shared/api';
@@ -22,6 +22,8 @@ export function useThreads(mb: string, listKey: ListKey, q: string, enabled = tr
   return useInfiniteQuery({
     queryKey: qk.threads(mb, listKey, q),
     enabled: enabled && !!mb && !!listKey,
+    // Switching folders keeps the previous list on screen until the next one arrives (no empty flash).
+    placeholderData: keepPreviousData,
     initialPageParam: null as string | null,
     getNextPageParam: (last: Page<ThreadSummary>) => last.nextCursor,
     queryFn: async ({ pageParam, signal }) =>
@@ -35,11 +37,29 @@ export function useThreads(mb: string, listKey: ListKey, q: string, enabled = tr
   });
 }
 
+/** Thread detail stays fresh for 30 s, so a prefetched thread opens straight from the cache. */
+const THREAD_STALE_MS = 30_000;
+
+function fetchThread(mb: string, tid: string, signal?: AbortSignal): Promise<ThreadDetail> {
+  return api.get<ThreadDetail>(`/api/mailboxes/${mb}/threads/${tid}`, undefined, signal);
+}
+
 export function useThread(mb: string, tid: string | undefined) {
   return useQuery({
     queryKey: qk.thread(mb, tid ?? ''),
     enabled: !!tid,
-    queryFn: ({ signal }) => api.get<ThreadDetail>(`/api/mailboxes/${mb}/threads/${tid}`, undefined, signal),
+    staleTime: THREAD_STALE_MS,
+    queryFn: ({ signal }) => fetchThread(mb, tid ?? '', signal),
+  });
+}
+
+/** Warm a thread's detail (row hover intent, j/k, neighbours of the open thread). No-op while fresh. */
+export function prefetchThread(qc: QueryClient, mb: string, tid: string): void {
+  if (!mb || !tid) return;
+  void qc.prefetchQuery({
+    queryKey: qk.thread(mb, tid),
+    staleTime: THREAD_STALE_MS,
+    queryFn: ({ signal }) => fetchThread(mb, tid, signal),
   });
 }
 

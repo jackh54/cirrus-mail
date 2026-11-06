@@ -85,8 +85,8 @@ export function RecipientInput({ label, value, onChange, autoFocus, trailing }: 
   };
 
   return (
-    <div className="relative flex min-h-10 items-start gap-2 border-b border-border px-4 py-1.5">
-      <label htmlFor={`${listId}-input`} className="w-10 shrink-0 pt-1.5 text-[13px] text-muted">
+    <div className="relative flex min-h-9 items-start gap-2 border-b border-border px-4 py-1">
+      <label htmlFor={`${listId}-input`} className="w-9 shrink-0 pt-1.5 text-[13px] text-faint">
         {label}
       </label>
       <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
@@ -97,7 +97,7 @@ export function RecipientInput({ label, value, onChange, autoFocus, trailing }: 
               key={`${a.email}-${i}`}
               title={formatAddress(a)}
               className={cn(
-                'inline-flex max-w-full items-center gap-1 rounded-md py-0.5 pr-1 pl-2 text-[13px]',
+                'inline-flex h-6 max-w-full items-center gap-0.5 rounded-[4px] pr-0.5 pl-1.5 text-[13px]',
                 valid ? 'bg-surface-2 text-fg' : 'bg-danger-soft text-danger ring-1 ring-danger/40',
               )}
             >
@@ -106,7 +106,7 @@ export function RecipientInput({ label, value, onChange, autoFocus, trailing }: 
                 type="button"
                 aria-label={`Remove ${a.email}`}
                 onClick={() => onChange(value.filter((_, j) => j !== i))}
-                className="rounded p-0.5 text-faint hover:bg-hover hover:text-fg"
+                className="inline-flex size-4 items-center justify-center rounded-[3px] text-faint hover:bg-hover hover:text-fg"
               >
                 <X size={12} />
               </button>
@@ -135,7 +135,7 @@ export function RecipientInput({ label, value, onChange, autoFocus, trailing }: 
           aria-autocomplete="list"
           aria-activedescendant={showList ? `${listId}-${active}` : undefined}
           autoComplete="off"
-          className="h-7 min-w-24 flex-1 bg-transparent text-sm outline-none placeholder:text-faint"
+          className="h-7 min-w-24 flex-1 bg-transparent text-[13px] outline-none placeholder:text-faint"
         />
       </div>
       {trailing}
@@ -143,7 +143,7 @@ export function RecipientInput({ label, value, onChange, autoFocus, trailing }: 
         <ul
           id={listId}
           role="listbox"
-          className="absolute top-full left-14 z-20 mt-1 w-72 max-w-[calc(100%-4rem)] overflow-hidden rounded-xl border border-border bg-elevated p-1 shadow-pop animate-fade-in"
+          className="absolute top-full left-14 z-20 mt-1 w-72 max-w-[calc(100%-4rem)] overflow-hidden rounded-[10px] bg-elevated p-1 shadow-pop animate-pop-in"
         >
           {suggestions.map((c, i) => (
             <li
@@ -156,10 +156,10 @@ export function RecipientInput({ label, value, onChange, autoFocus, trailing }: 
                 pick(c);
               }}
               onMouseEnter={() => setActive(i)}
-              className={cn('cursor-pointer rounded-lg px-2.5 py-1.5', i === active && 'bg-hover')}
+              className={cn('cursor-pointer rounded-md px-2 py-1', i === active && 'bg-hover')}
             >
-              <div className="truncate text-[13.5px] text-fg">{c.name || c.email}</div>
-              {c.name && <div className="truncate text-xs text-muted">{c.email}</div>}
+              <div className="truncate text-[13px] leading-5 text-fg">{c.name || c.email}</div>
+              {c.name && <div className="truncate text-[12px] leading-4 text-muted">{c.email}</div>}
             </li>
           ))}
         </ul>

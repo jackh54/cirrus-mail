@@ -6,7 +6,7 @@ import { linkify, splitQuotes } from '../../lib/text';
 export function TextBody({ text }: { text: string }) {
   const blocks = splitQuotes(text);
   return (
-    <div className="text-[14px] leading-relaxed break-words whitespace-pre-wrap text-fg">
+    <div className="text-[14.5px] leading-[1.6] break-words whitespace-pre-wrap text-fg">
       {blocks.map((b, i) => (b.kind === 'text' ? <Linked key={i} text={b.lines.join('\n')} /> : <Quote key={i} lines={b.lines} />))}
     </div>
   );
@@ -19,7 +19,7 @@ function Linked({ text }: { text: string }) {
         t.kind === 'text' ? (
           <span key={i}>{t.value}</span>
         ) : (
-          <a key={i} href={t.href} target="_blank" rel="noopener noreferrer" className="text-primary underline decoration-primary/40 underline-offset-2 hover:decoration-primary">
+          <a key={i} href={t.href} target="_blank" rel="noopener noreferrer" className="text-selected-fg underline decoration-current/30 underline-offset-2 hover:decoration-current">
             {t.value}
           </a>
         ),
@@ -38,7 +38,7 @@ function Quote({ lines }: { lines: string[] }) {
         aria-label={open ? 'Hide quoted text' : 'Show quoted text'}
         title={open ? 'Hide quoted text' : 'Show quoted text'}
         onClick={() => setOpen((o) => !o)}
-        className="inline-flex h-4 items-center rounded bg-surface-2 px-1.5 text-muted hover:bg-hover hover:text-fg"
+        className="inline-flex h-4 items-center rounded-[4px] bg-surface-2 px-1.5 text-muted hover:bg-hover hover:text-fg"
       >
         <MoreHorizontal size={14} />
       </button>

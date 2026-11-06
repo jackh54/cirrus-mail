@@ -10,7 +10,7 @@ import { cn } from '../../lib/cn';
 import { errorMessage } from '../../lib/api';
 import { isValidEmail } from '../../lib/format';
 import { useMeData } from '../../lib/queries/me';
-import { identitiesOf } from './prefill';
+import { identitiesOf } from './identities';
 import { useCompose } from './ComposeProvider';
 import { useAutosave, type SaveStatus } from './useAutosave';
 import { useAttachments } from './useAttachments';
@@ -116,26 +116,26 @@ export function ComposeSheet({ initial }: { initial: ComposeDraft }) {
       }}
       onDrop={onDrop}
       className={cn(
-        'fixed z-50 flex flex-col overflow-hidden bg-elevated shadow-pop animate-rise-in',
-        'inset-0 md:inset-auto md:right-5 md:bottom-0 md:rounded-t-2xl md:border md:border-b-0 md:border-border',
-        mode === 'normal' && 'md:h-[min(620px,calc(100dvh-80px))] md:w-[560px]',
-        mode === 'max' && 'md:top-[6vh] md:right-[8vw] md:bottom-[6vh] md:left-[8vw] md:rounded-2xl md:border-b',
-        mode === 'min' && 'max-md:inset-auto max-md:right-3 max-md:bottom-3 max-md:left-3 max-md:rounded-xl md:w-80',
+        'fixed z-50 flex flex-col overflow-hidden bg-elevated shadow-pop animate-pop-in',
+        'inset-0 md:inset-auto md:right-4 md:bottom-0 md:rounded-t-[10px]',
+        mode === 'normal' && 'md:h-[min(600px,calc(100dvh-72px))] md:w-[560px]',
+        mode === 'max' && 'md:top-[6vh] md:right-[8vw] md:bottom-[6vh] md:left-[8vw] md:rounded-[10px]',
+        mode === 'min' && 'max-md:inset-auto max-md:right-3 max-md:bottom-3 max-md:left-3 max-md:rounded-[10px] md:w-80',
       )}
     >
       <header
-        className="flex h-11 shrink-0 cursor-default items-center gap-2 border-b border-border bg-surface-2 pr-1.5 pl-4"
+        className="flex h-10 shrink-0 cursor-default items-center gap-1 border-b border-border pr-2 pl-4"
         onDoubleClick={() => setMode((m) => (m === 'min' ? 'normal' : 'min'))}
       >
-        <h2 className="min-w-0 flex-1 truncate text-[13.5px] font-semibold">{title}</h2>
+        <h2 className="min-w-0 flex-1 truncate text-[13px] font-medium">{title}</h2>
         <SaveIndicator status={autosave.status} />
-        <IconButton size="sm" label={mode === 'min' ? 'Restore' : 'Minimise'} onClick={() => setMode((m) => (m === 'min' ? 'normal' : 'min'))}>
-          <Minus size={15} />
+        <IconButton label={mode === 'min' ? 'Restore' : 'Minimise'} onClick={() => setMode((m) => (m === 'min' ? 'normal' : 'min'))}>
+          <Minus size={16} />
         </IconButton>
-        <IconButton size="sm" label={mode === 'max' ? 'Exit full size' : 'Full size'} className="max-md:hidden" onClick={() => setMode((m) => (m === 'max' ? 'normal' : 'max'))}>
+        <IconButton label={mode === 'max' ? 'Exit full size' : 'Full size'} className="max-md:hidden" onClick={() => setMode((m) => (m === 'max' ? 'normal' : 'max'))}>
           {mode === 'max' ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
         </IconButton>
-        <IconButton size="sm" label="Save and close" onClick={close}>
+        <IconButton label="Save and close" tipAlign="end" onClick={close}>
           <X size={16} />
         </IconButton>
       </header>
@@ -156,14 +156,14 @@ export function ComposeSheet({ initial }: { initial: ComposeDraft }) {
             onDismissUpload={files.dismissUpload}
           />
           {error && (
-            <p role="alert" className="mx-4 mb-2 rounded-lg bg-danger-soft px-3 py-2 text-[13px] text-danger">
+            <p role="alert" className="mx-4 mb-2 rounded-md bg-danger-soft px-3 py-2 text-[13px] text-danger">
               {error}
             </p>
           )}
-          <footer className="flex shrink-0 items-center gap-1 border-t border-border px-3 py-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))]">
+          <footer className="flex shrink-0 items-center gap-1 px-3 pt-1 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
             <SendButton onSend={(at) => void send(at)} busy={sending} disabled={files.busy} />
-            <IconButton label="Attach files" className="ml-1" onClick={() => fileInput.current?.click()}>
-              <Paperclip size={17} />
+            <IconButton label="Attach files" tipSide="top" className="ml-1" onClick={() => fileInput.current?.click()}>
+              <Paperclip size={16} />
             </IconButton>
             <input
               ref={fileInput}
@@ -176,7 +176,7 @@ export function ComposeSheet({ initial }: { initial: ComposeDraft }) {
               }}
             />
             <span className="flex-1" />
-            <IconButton label="Discard draft" onClick={() => void discard()}>
+            <IconButton label="Discard draft" tipSide="top" tipAlign="end" onClick={() => void discard()}>
               <Trash2 size={16} />
             </IconButton>
           </footer>
@@ -184,7 +184,7 @@ export function ComposeSheet({ initial }: { initial: ComposeDraft }) {
       )}
 
       {dragging && (
-        <div className="pointer-events-none absolute inset-2 top-12 flex items-center justify-center rounded-xl border-2 border-dashed border-primary bg-primary-soft/90 text-sm font-medium text-primary">
+        <div className="pointer-events-none absolute inset-2 top-12 flex items-center justify-center rounded-md border border-dashed border-primary bg-elevated/95 text-[13px] font-medium text-selected-fg">
           Drop files to attach
         </div>
       )}
@@ -195,7 +195,7 @@ export function ComposeSheet({ initial }: { initial: ComposeDraft }) {
 function SaveIndicator({ status }: { status: SaveStatus }) {
   if (status === 'idle') return null;
   return (
-    <span className="flex items-center gap-1 text-xs text-faint" aria-live="polite">
+    <span className="mr-1 flex items-center gap-1 text-[12px] text-faint" aria-live="polite">
       {status === 'saving' && <><Spinner size={11} /> Saving</>}
       {status === 'saved' && <><Check size={12} /> Saved</>}
       {status === 'error' && <span className="flex items-center gap-1 text-danger"><CloudOff size={12} /> Not saved</span>}

@@ -14,23 +14,22 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 const variants: Record<Variant, string> = {
-  primary: 'bg-primary text-primary-fg hover:bg-primary-hover shadow-sm',
-  secondary: 'bg-surface text-fg border border-border hover:bg-hover hover:border-border-strong',
-  ghost: 'text-fg hover:bg-hover',
+  primary: 'bg-primary-fill text-primary-fg hover:bg-primary-fill-hover',
+  secondary: 'bg-bg text-fg border border-border-strong hover:bg-hover',
+  ghost: 'text-muted hover:bg-hover hover:text-fg',
   subtle: 'bg-surface-2 text-fg hover:bg-hover',
-  danger: 'bg-danger text-white hover:opacity-90 shadow-sm',
+  danger: 'bg-danger text-white hover:opacity-90',
 };
 
 const sizes: Record<Size, string> = {
-  sm: 'h-7 px-2.5 text-[13px] gap-1.5 rounded-md',
-  md: 'h-9 px-3.5 text-sm gap-2 rounded-lg',
-  lg: 'h-11 px-5 text-[15px] gap-2 rounded-xl',
+  sm: 'h-7 px-2.5 text-[13px] gap-1.5',
+  md: 'h-8 px-3 text-[13px] gap-1.5',
+  lg: 'h-9 px-4 text-[13px] gap-2',
 };
 
 const base =
-  'inline-flex shrink-0 items-center justify-center font-medium whitespace-nowrap select-none ' +
-  'transition-[background-color,border-color,color,opacity,transform] duration-150 ease-out active:scale-[0.98] ' +
-  'disabled:opacity-55 disabled:active:scale-100';
+  'inline-flex shrink-0 items-center justify-center rounded-md font-medium whitespace-nowrap select-none ' +
+  'transition-colors duration-100 ease-out disabled:opacity-50 [&_svg]:shrink-0';
 
 export function buttonClass(variant: Variant = 'secondary', size: Size = 'md', className?: string): string {
   return cn(base, variants[variant], sizes[size], className);
@@ -68,13 +67,25 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
 
 interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   label: string;
+  /** Shown in the tooltip after the label, e.g. "E" gives "Archive  E". */
+  shortcut?: string;
+  /** `sm` is the 28px default; `md` (32px) is for touch targets such as the mobile header. */
   size?: 'sm' | 'md';
   active?: boolean;
+  tipSide?: 'top' | 'bottom';
+  tipAlign?: 'start' | 'center' | 'end';
+  /** Skip the tooltip (e.g. inside menus or when a visible label already exists). */
+  noTip?: boolean;
 }
 
-/** Square icon-only button. `label` becomes aria-label and the tooltip. */
+/** Tooltip text for an action and its shortcut, used by IconButton and other .cm-tip elements. */
+export function tipText(label: string, shortcut?: string): string {
+  return shortcut ? `${label}  ${shortcut}` : label;
+}
+
+/** Square icon-only button: 28px, radius 6, hover token. `label` becomes aria-label and the tooltip. */
 export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(function IconButton(
-  { label, size = 'md', active, className, children, type = 'button', ...rest },
+  { label, shortcut, size = 'sm', active, tipSide, tipAlign, noTip, className, children, type = 'button', ...rest },
   ref,
 ) {
   return (
@@ -82,12 +93,16 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
       ref={ref}
       type={type}
       aria-label={label}
-      title={label}
+      aria-keyshortcuts={shortcut}
+      data-tip={noTip ? undefined : tipText(label, shortcut)}
+      data-tip-side={tipSide}
+      data-tip-align={tipAlign === 'center' ? undefined : tipAlign}
       className={cn(
-        'inline-flex shrink-0 items-center justify-center rounded-lg text-muted transition-colors duration-150 ease-out',
-        'hover:bg-hover hover:text-fg disabled:opacity-40 disabled:hover:bg-transparent',
+        'inline-flex shrink-0 items-center justify-center rounded-md text-muted transition-colors duration-100 ease-out',
+        'hover:bg-hover hover:text-fg disabled:opacity-40 disabled:hover:bg-transparent [&_svg]:stroke-[1.75]',
+        !noTip && 'cm-tip',
         active && 'text-primary',
-        size === 'sm' ? 'size-7' : 'size-9',
+        size === 'sm' ? 'size-7' : 'size-8',
         className,
       )}
       {...rest}

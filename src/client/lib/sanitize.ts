@@ -8,6 +8,8 @@ import createDOMPurify from 'dompurify';
  *    relative same-origin URLs (signed cid: attachment links) are made absolute.
  * 3. The result is wrapped in a srcdoc document with a strict CSP meta. It is rendered in a
  *    sandbox without allow-scripts/allow-same-origin, so even a sanitizer bypass cannot run code.
+ * 4. We classify the mail as "designed" (its own backgrounds, colours or fixed-width layout) or
+ *    "simple", so dark mode can render simple mail as native text and leave designed mail alone.
  */
 
 const purify = createDOMPurify(window);
@@ -52,8 +54,20 @@ function isDangerousUrl(v: string): boolean {
   return s.startsWith('javascript:') || s.startsWith('vbscript:') || (s.startsWith('data:') && !s.startsWith('data:image/'));
 }
 
+/**
+ * - `original`: the sender's rendering on white paper (always used in the light theme).
+ * - `dark`: simple mail restyled with the app's dark tokens on a transparent background.
+ * - `invert`: designed mail forced dark by inverting it, with media re-inverted.
+ */
+export type RenderMode = 'original' | 'dark' | 'invert';
+
 export interface PreparedEmail {
-  srcdoc: string;
+  /** Sanitised body wrapper HTML. */
+  bodyHtml: string;
+  /** The email's own <style> rules (from <head>). */
+  emailCss: string;
+  /** True when the email brings its own backgrounds, colours or fixed-width layout. */
+  designed: boolean;
   /** Remote image URLs found (normalised to https: for protocol-relative ones). */
   remoteUrls: string[];
   /** True when some remote content was blocked in this rendering. */
@@ -130,6 +144,8 @@ export function prepareEmail(rawHtml: string, signed: Record<string, string> | n
   // Head <style>s move into our document; body attributes move onto a wrapper div.
   const headStyles = Array.from(root.querySelectorAll('head style')).map((s) => s.textContent ?? '');
   const body = root.querySelector('body');
+  // Classify before the body's children move into the (detached) wrapper.
+  const designed = isDesigned(root, headStyles, body);
   const wrapper = doc.createElement('div');
   wrapper.className = 'cirrus-mail-body';
   if (body) {
@@ -139,29 +155,112 @@ export function prepareEmail(rawHtml: string, signed: Record<string, string> | n
     while (body.firstChild) wrapper.appendChild(body.firstChild);
   }
 
-  return { srcdoc: buildSrcdoc(headStyles.join('\n'), wrapper.outerHTML), remoteUrls: [...remote], blocked };
+  return { bodyHtml: wrapper.outerHTML, emailCss: headStyles.join('\n'), designed, remoteUrls: [...remote], blocked };
+}
+
+/** Near-black greys count as "default" text colour; anything else is a deliberate colour. */
+function isDefaultColor(value: string): boolean {
+  const v = value.trim().toLowerCase().replace(/\s*!important$/, '');
+  if (['', 'inherit', 'initial', 'unset', 'currentcolor', 'black', 'windowtext', 'auto'].includes(v)) return true;
+  let rgb: number[] | null = null;
+  const hex = /^#([0-9a-f]{3}|[0-9a-f]{6})$/.exec(v);
+  if (hex) {
+    const h = hex[1].length === 3 ? [...hex[1]].map((c) => c + c).join('') : hex[1];
+    rgb = [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16));
+  } else {
+    const m = /^rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)/.exec(v);
+    if (m) rgb = [m[1], m[2], m[3]].map(Number);
+  }
+  if (!rgb) return false;
+  return Math.max(...rgb) <= 0x55 && Math.max(...rgb) - Math.min(...rgb) <= 0x10;
+}
+
+const BG_DECL = /(^|;|\s)background(-color|-image)?\s*:\s*([^;]+)/i;
+const LAYOUT_TAGS = new Set(['body', 'table', 'td', 'th', 'div', 'center', 'tr', 'tbody']);
+const STYLE_BG_RULE = /(^|[},\s])(body|table|td|th|div|center|\.[\w-]+|#[\w-]+)[^{}]*\{[^}]*background(-color|-image)?\s*:\s*(?!\s*(transparent|none|inherit|initial)\b)/i;
+
+function pxWidth(el: Element): number {
+  const attr = el.getAttribute('width');
+  if (attr && /^\d+(px)?$/i.test(attr.trim())) return parseInt(attr, 10);
+  const m = /(^|;|\s)width\s*:\s*(\d+)px/i.exec(el.getAttribute('style') ?? '');
+  return m ? parseInt(m[2], 10) : 0;
+}
+
+/**
+ * "Designed" mail: any bgcolor; a background on a layout element (inline or in <style>); explicit
+ * non-default text colours on more than three elements; images wider than ~300px; or fixed-width
+ * table layouts. Everything else (plain HTML from Gmail, Apple Mail, replies with bold text) is simple.
+ */
+function isDesigned(root: HTMLElement, headStyles: string[], body: Element | null): boolean {
+  if (root.querySelector('[bgcolor]')) return true;
+  if (body?.hasAttribute('bgcolor') || body?.hasAttribute('background')) return true;
+  const css = [...headStyles, ...Array.from(root.querySelectorAll('style'), (s) => s.textContent ?? '')].join('\n');
+  if (STYLE_BG_RULE.test(css)) return true;
+
+  let colored = 0;
+  for (const el of Array.from(root.querySelectorAll('*'))) {
+    const tag = el.tagName.toLowerCase();
+    const style = el.getAttribute('style') ?? '';
+    if (LAYOUT_TAGS.has(tag)) {
+      const bg = BG_DECL.exec(style);
+      if (bg && !/^(transparent|none|inherit|initial|unset)\b/i.test(bg[3].trim())) return true;
+      if (el.hasAttribute('background')) return true;
+    }
+    if (tag === 'img' && pxWidth(el) > 300) return true;
+    if (tag === 'table' && pxWidth(el) >= 300) return true;
+    const font = tag === 'font' ? el.getAttribute('color') : null;
+    const color = /(^|;|\s)color\s*:\s*([^;]+)/i.exec(style)?.[2] ?? font;
+    if (color && !isDefaultColor(color) && ++colored > 3) return true;
+  }
+  return false;
 }
 
 const BASE_CSS = `
 html{background:#fff;color-scheme:light}
-body{margin:0;padding:20px 22px;font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:#1b2133;overflow-wrap:break-word;word-break:break-word}
+body{margin:0;padding:20px 22px;font:14.5px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:#15171c;overflow-wrap:break-word;word-break:break-word}
 img{max-width:100%;height:auto}
-img[data-cirrus-blocked]{background:#e9ecf3}
+img[data-cirrus-blocked]{background:#f3f4f6}
 pre{white-space:pre-wrap}
-a{color:#3a52eb}
-blockquote{margin:0 0 0 .4em;padding-left:.9em;border-left:2px solid #d4d8e4;color:#4a5165}
+a{color:#1e4fc2}
+blockquote{margin:0 0 0 .4em;padding-left:.9em;border-left:2px solid #d6d8dd;color:#5f6470}
 `;
 
-function buildSrcdoc(emailCss: string, bodyHtml: string): string {
+/**
+ * Simple mail in the dark theme reads like app text: transparent page, the app's dark tokens, and
+ * any stray inline colours neutralised. Comes after the email's CSS so it wins.
+ */
+const DARK_CSS = `
+html{background:transparent;color-scheme:dark}
+body{color:#ecedef;-webkit-font-smoothing:antialiased}
+body *{color:inherit!important;background-color:transparent!important;border-color:#33353c!important}
+body a,body a *{color:#8eb1ff!important}
+body blockquote{border-left:2px solid #33353c!important;color:#9a9ea8!important}
+body img[data-cirrus-blocked]{background:#1b1c20!important}
+`;
+
+/**
+ * Designed mail forced dark: invert the page and turn hues back, then re-invert media so photos and
+ * logos keep their real colours. The page itself stays transparent (dark scheme), so it shows the app's
+ * background; body text keeps its explicit colour from BASE_CSS and inverts to light.
+ */
+const INVERT_CSS = `
+html{background:transparent;color-scheme:dark;filter:invert(1) hue-rotate(180deg)}
+img:not(picture img):not([data-cirrus-blocked]),picture,video,svg,[background],[style*="background-image"]{filter:invert(1) hue-rotate(180deg)}
+`;
+
+/** Build the iframe document for a rendering mode. Layout is identical across modes, so heights match. */
+export function emailSrcdoc(p: PreparedEmail, mode: RenderMode): string {
   const csp = `default-src 'none'; img-src data: ${location.origin}; style-src 'unsafe-inline'; font-src data:`;
+  const modeCss = mode === 'dark' ? DARK_CSS : mode === 'invert' ? INVERT_CSS : '';
   return (
     '<!doctype html><html><head><meta charset="utf-8">' +
     `<meta http-equiv="Content-Security-Policy" content="${csp}">` +
     '<meta name="viewport" content="width=device-width,initial-scale=1">' +
     '<base target="_blank">' +
     `<style>${BASE_CSS}</style>` +
-    `<style>${emailCss.replace(/<\/style/gi, '')}</style>` +
-    `</head><body>${bodyHtml}</body></html>`
+    `<style>${p.emailCss.replace(/<\/style/gi, '')}</style>` +
+    (modeCss ? `<style>${modeCss}</style>` : '') +
+    `</head><body>${p.bodyHtml}</body></html>`
   );
 }
 

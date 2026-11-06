@@ -51,7 +51,7 @@ function PasswordSection() {
         title="Password"
         footer={<Button type="submit" variant="primary" loading={change.isPending} disabled={!f.current || !f.next}>Change password</Button>}
       >
-        {error && <p role="alert" className="mb-4 rounded-lg bg-danger-soft px-3 py-2 text-[13px] text-danger">{error}</p>}
+        {error && <p role="alert" className="mb-4 rounded-md bg-danger-soft px-3 py-2 text-[13px] text-danger">{error}</p>}
         <div className="grid gap-4 sm:grid-cols-3">
           <Field label="Current password">
             {(id) => <Input id={id} type="password" autoComplete="current-password" value={f.current} onChange={(e) => setF({ ...f, current: e.target.value })} />}
@@ -87,22 +87,22 @@ function SessionsSection() {
       {sessions.isPending ? (
         <div className="space-y-3"><Skeleton className="h-10" /><Skeleton className="h-10" /></div>
       ) : sessions.isError ? (
-        <p className="text-sm text-danger">{errorMessage(sessions.error)}</p>
+        <p className="text-[13px] text-danger">{errorMessage(sessions.error)}</p>
       ) : (
         <ul className="divide-y divide-border">
           {sessions.data.map((s) => {
             const d = deviceLabel(s.userAgent);
             return (
               <li key={s.id} className="flex items-center gap-3 py-3 first:pt-0 last:pb-0">
-                <span className="flex size-9 items-center justify-center rounded-lg bg-surface-2 text-muted">
+                <span className="flex size-8 items-center justify-center rounded-md bg-surface-2 text-muted [&_svg]:stroke-[1.75]">
                   {d.mobile ? <Smartphone size={16} /> : <Laptop size={16} />}
                 </span>
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium">
+                  <p className="text-[13px] font-medium">
                     {d.name}
-                    {s.current && <span className="ml-2 rounded-full bg-success-soft px-2 py-0.5 text-[11px] font-semibold text-success">This device</span>}
+                    {s.current && <span className="ml-2 text-[12px] font-normal text-success">This device</span>}
                   </p>
-                  <p className="text-[12.5px] text-muted">Active {relativeAgo(s.lastSeenAt)} · signed in {relativeAgo(s.createdAt)}</p>
+                  <p className="text-[12px] text-muted">Active {relativeAgo(s.lastSeenAt)}, signed in {relativeAgo(s.createdAt)}</p>
                 </div>
                 {!s.current && (
                   <Button

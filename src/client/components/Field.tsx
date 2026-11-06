@@ -2,19 +2,19 @@ import { forwardRef, useId, type InputHTMLAttributes, type ReactNode, type Selec
 import { cn } from '../lib/cn';
 
 export const inputClass =
-  'w-full rounded-lg border border-border bg-surface px-3 text-sm text-fg placeholder:text-faint transition-[border-color,box-shadow] duration-150 ease-out ' +
-  'hover:border-border-strong focus:border-primary focus:outline-none focus:ring-3 focus:ring-ring/40 disabled:opacity-60 ' +
+  'w-full rounded-md border border-border-strong bg-bg px-2.5 text-[13px] text-fg placeholder:text-faint transition-[border-color,box-shadow] duration-100 ease-out ' +
+  'focus:border-primary focus:outline-none focus:shadow-[0_0_0_3px_rgb(43_99_232/0.16)] disabled:opacity-60 ' +
   'aria-invalid:border-danger';
 
 export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(function Input({ className, ...rest }, ref) {
-  return <input ref={ref} className={cn(inputClass, 'h-9', className)} {...rest} />;
+  return <input ref={ref} className={cn(inputClass, 'h-8', className)} {...rest} />;
 });
 
 export const Textarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<HTMLTextAreaElement>>(function Textarea(
   { className, ...rest },
   ref,
 ) {
-  return <textarea ref={ref} className={cn(inputClass, 'min-h-24 py-2 leading-relaxed', className)} {...rest} />;
+  return <textarea ref={ref} className={cn(inputClass, 'min-h-24 py-1.5 leading-5', className)} {...rest} />;
 });
 
 export const Select = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSelectElement>>(function Select(
@@ -22,7 +22,7 @@ export const Select = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSel
   ref,
 ) {
   return (
-    <select ref={ref} className={cn(inputClass, 'h-9 pr-8', className)} {...rest}>
+    <select ref={ref} className={cn(inputClass, 'h-8 pr-8', className)} {...rest}>
       {children}
     </select>
   );
@@ -42,14 +42,14 @@ export function Field({
   const descId = `${id}-desc`;
   return (
     <div className={cn('space-y-1.5', className)}>
-      <label htmlFor={id} className="block text-[13px] font-medium text-fg">
+      <label htmlFor={id} className="block text-[13px] leading-5 font-medium text-fg">
         {label}
       </label>
       {children(id, hint || error ? descId : undefined)}
       {error ? (
-        <p id={descId} className="text-[12.5px] text-danger">{error}</p>
+        <p id={descId} className="text-[12px] leading-4 text-danger">{error}</p>
       ) : hint ? (
-        <p id={descId} className="text-[12.5px] text-muted">{hint}</p>
+        <p id={descId} className="text-[12px] leading-4 text-muted">{hint}</p>
       ) : null}
     </div>
   );
@@ -67,14 +67,14 @@ export function Switch({
       disabled={disabled}
       onClick={() => onChange(!checked)}
       className={cn(
-        'relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors duration-150 ease-out disabled:opacity-50',
+        'relative inline-flex h-[18px] w-8 shrink-0 items-center rounded-full transition-colors duration-100 ease-out disabled:opacity-50',
         checked ? 'bg-primary' : 'bg-border-strong',
       )}
     >
       <span
         className={cn(
-          'inline-block size-4 rounded-full bg-white shadow transition-transform duration-150 ease-out',
-          checked ? 'translate-x-4.5' : 'translate-x-0.5',
+          'inline-block size-3.5 rounded-full bg-white shadow-sm transition-transform duration-100 ease-out',
+          checked ? 'translate-x-4' : 'translate-x-0.5',
         )}
       />
     </button>

@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { Link, Navigate } from 'react-router';
-import { ArrowRight, AtSign, CheckCircle2, Globe, Inbox, Route as RouteIcon } from 'lucide-react';
+import { AtSign, CheckCircle2, Globe, Inbox, Route as RouteIcon } from 'lucide-react';
 import { Button, LinkButton } from '../../components/Button';
 import { Field, Input } from '../../components/Field';
 import { FullScreenSpinner } from '../../components/Spinner';
@@ -65,7 +65,7 @@ export function SetupPage() {
             )}
           </Field>
         </div>
-        <Button type="submit" variant="primary" size="lg" className="w-full" loading={setup.isPending}>
+        <Button type="submit" variant="primary" size="lg" className="mt-2 w-full" loading={setup.isPending}>
           Create admin account
         </Button>
       </form>
@@ -107,22 +107,22 @@ const STEPS = [
 function NextSteps() {
   return (
     <AuthLayout title="You're in" subtitle="Four steps and your domain is receiving mail." wide>
-      <div className="mb-5 flex items-center gap-2 rounded-lg bg-success-soft px-3 py-2 text-[13px] text-success">
-        <CheckCircle2 size={16} /> Admin account created and signed in.
+      <div className="mb-4 flex items-center gap-2 text-[13px] text-success">
+        <CheckCircle2 size={16} strokeWidth={1.75} /> Admin account created and signed in.
       </div>
-      <ol className="space-y-3">
+      <ol className="border-t border-border">
         {STEPS.map((s, i) => (
-          <li key={s.title} className="flex gap-3 rounded-xl border border-border p-3.5">
-            <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary-soft text-primary">
-              <s.icon size={16} />
+          <li key={s.title} className="flex gap-3 border-b border-border py-3.5">
+            <span className="tnum flex size-6 shrink-0 items-center justify-center rounded-md bg-surface-2 text-[12px] font-medium text-muted">
+              {i + 1}
             </span>
             <div className="min-w-0 flex-1">
-              <p className="text-sm font-semibold">
-                <span className="text-faint">{i + 1}.</span> {s.title}
+              <p className="flex items-center gap-1.5 text-[13px] font-medium">
+                <s.icon size={14} strokeWidth={1.75} className="text-faint" /> {s.title}
               </p>
-              <p className="mt-0.5 text-[13px] leading-relaxed text-muted">{s.body}</p>
-              <Link to={s.to} className="mt-1.5 inline-flex items-center gap-1 text-[13px] font-medium text-primary hover:underline">
-                {s.cta} <ArrowRight size={13} />
+              <p className="mt-0.5 text-[13px] text-muted">{s.body}</p>
+              <Link to={s.to} className="mt-1 inline-flex text-[13px] font-medium text-selected-fg hover:underline">
+                {s.cta}
               </Link>
             </div>
           </li>

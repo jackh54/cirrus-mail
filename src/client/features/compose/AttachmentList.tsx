@@ -23,10 +23,10 @@ export function AttachmentList({
   return (
     <ul className="flex flex-wrap gap-2 px-4 pb-2" aria-label="Attachments">
       {attachments.map((a) => (
-        <li key={a.id} className="flex max-w-60 items-center gap-2 rounded-lg border border-border bg-surface-2 py-1.5 pr-1 pl-2 text-[13px]">
+        <li key={a.id} className="flex max-w-60 items-center gap-2 rounded-md border border-border h-8 pr-1 pl-2 text-[13px]">
           <FileTypeIcon mime={a.mimeType} size={15} />
           <span className="min-w-0 flex-1 truncate">{a.filename}</span>
-          <span className="shrink-0 text-xs text-faint">{formatBytes(a.size)}</span>
+          <span className="tnum shrink-0 text-[12px] text-faint">{formatBytes(a.size)}</span>
           <button type="button" aria-label={`Remove ${a.filename}`} onClick={() => onRemove(a)} className="rounded p-0.5 text-faint hover:bg-hover hover:text-fg">
             <X size={13} />
           </button>
@@ -35,11 +35,11 @@ export function AttachmentList({
       {uploads.map((u) => (
         <li
           key={u.id}
-          className={`relative flex max-w-60 items-center gap-2 overflow-hidden rounded-lg border py-1.5 pr-1 pl-2 text-[13px] ${u.error ? 'border-danger/40 bg-danger-soft text-danger' : 'border-border bg-surface-2'}`}
+          className={`relative flex max-w-60 items-center gap-2 overflow-hidden rounded-md border h-8 pr-1 pl-2 text-[13px] ${u.error ? 'border-danger/40 bg-danger-soft text-danger' : 'border-border'}`}
         >
           <Paperclip size={14} className="shrink-0" />
           <span className="min-w-0 flex-1 truncate">{u.error ? `${u.name}: ${u.error}` : u.name}</span>
-          {!u.error && <span className="shrink-0 text-xs text-faint tabular-nums">{Math.round(u.progress * 100)}%</span>}
+          {!u.error && <span className="tnum shrink-0 text-[12px] text-faint">{Math.round(u.progress * 100)}%</span>}
           {u.error && (
             <button type="button" aria-label="Dismiss" onClick={() => onDismissUpload(u.id)} className="rounded p-0.5 hover:bg-hover">
               <X size={13} />

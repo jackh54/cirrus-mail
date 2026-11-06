@@ -104,13 +104,13 @@ export function Menu({ trigger, items, align = 'end', label, width = 220 }: Menu
             aria-label={label}
             onKeyDown={onKeyDown}
             style={{ top: pos?.top ?? -9999, left: pos?.left ?? -9999, width }}
-            className="fixed z-[70] max-h-[60vh] overflow-y-auto rounded-xl border border-border bg-elevated p-1 shadow-pop animate-fade-in"
+            className="fixed z-[70] max-h-[60vh] overflow-y-auto rounded-[10px] bg-elevated p-1 shadow-pop animate-pop-in"
           >
             {items.map((it, i) => {
               if (it.kind === 'separator') return <div key={i} role="separator" className="my-1 h-px bg-border" />;
               if (it.kind === 'heading')
                 return (
-                  <div key={i} className="px-2.5 pt-2 pb-1 text-[11px] font-semibold tracking-wide text-faint uppercase">
+                  <div key={i} className="px-2 pt-1.5 pb-1 text-[12px] font-medium text-faint">
                     {it.label}
                   </div>
                 );
@@ -125,14 +125,14 @@ export function Menu({ trigger, items, align = 'end', label, width = 220 }: Menu
                     it.onSelect();
                   }}
                   className={cn(
-                    'flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[13.5px] outline-none',
-                    'hover:bg-hover focus-visible:bg-hover disabled:opacity-40',
+                    'flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[13px] outline-none',
+                    'hover:bg-hover focus-visible:bg-hover focus-visible:outline-none disabled:opacity-40',
                     it.danger ? 'text-danger' : 'text-fg',
                   )}
                 >
-                  {it.icon && <span className="shrink-0 text-muted [&>svg]:size-4">{it.icon}</span>}
+                  {it.icon && <span className="shrink-0 text-muted [&>svg]:size-4 [&>svg]:stroke-[1.75]">{it.icon}</span>}
                   <span className="min-w-0 flex-1 truncate">{it.label}</span>
-                  {it.hint && <span className="text-xs text-faint">{it.hint}</span>}
+                  {it.hint && <span className="tnum text-[12px] text-faint">{it.hint}</span>}
                 </button>
               );
             })}

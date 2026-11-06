@@ -9,24 +9,24 @@ function row(label: string, v?: string) {
 /** Shield showing SPF/DKIM/DMARC; warns when DMARC fails. */
 export function AuthBadge({ auth }: { auth: AuthResults | null }) {
   if (!auth) return null;
-  const summary = [row('SPF', auth.spf), row('DKIM', auth.dkim), row('DMARC', auth.dmarc)].join(' · ');
+  const summary = [row('SPF', auth.spf), row('DKIM', auth.dkim), row('DMARC', auth.dmarc)].join(', ');
   if (auth.dmarc === 'fail') {
     return (
       <Tooltip label="Sender authentication failed" content={<><strong className="font-semibold">DMARC failed.</strong> This sender may be forged. Be careful with links and attachments.<br /><span className="opacity-70">{summary}</span></>}>
-        <ShieldAlert size={15} className="text-warning" />
+        <ShieldAlert size={14} strokeWidth={1.75} className="text-warning" />
       </Tooltip>
     );
   }
   if (auth.dmarc === 'pass' || (auth.spf === 'pass' && auth.dkim === 'pass')) {
     return (
       <Tooltip label="Sender verified" content={<>Verified sender<br /><span className="opacity-70">{summary}</span></>}>
-        <ShieldCheck size={15} className="text-success" />
+        <ShieldCheck size={14} strokeWidth={1.75} className="text-success" />
       </Tooltip>
     );
   }
   return (
     <Tooltip label="Sender not verified" content={<>Sender could not be verified<br /><span className="opacity-70">{summary}</span></>}>
-      <ShieldQuestion size={15} className="text-faint" />
+      <ShieldQuestion size={14} strokeWidth={1.75} className="text-faint" />
     </Tooltip>
   );
 }

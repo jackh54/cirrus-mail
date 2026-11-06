@@ -9,6 +9,7 @@ import { useMe } from '../../lib/queries/me';
 import { applyPrefs } from '../../lib/theme';
 import { ComposeProvider } from '../compose/ComposeProvider';
 import { ShortcutsOverlay } from '../mail/ShortcutsOverlay';
+import { PaletteHost } from '../palette/PaletteHost';
 
 /** Everything behind login. Loads /api/me once; a 401 is redirected to /login by the API layer. */
 export function AppShell() {
@@ -37,10 +38,10 @@ export function AppShell() {
     <ComposeProvider>
       <div className="flex h-full flex-col">
         {user?.mustChangePassword && (
-          <div className="flex items-center justify-center gap-2 bg-warning-soft px-4 py-2 text-[13px] text-warning">
+          <div className="flex h-9 items-center justify-center gap-2 border-b border-border bg-warning-soft px-4 text-[13px] text-warning">
             <KeyRound size={14} />
             <span>You signed in with a temporary password.</span>
-            <Link to="/settings/security" className="font-semibold underline underline-offset-2">Choose a new one</Link>
+            <Link to="/settings/security" className="font-medium underline underline-offset-2">Choose a new one</Link>
           </div>
         )}
         <div className="min-h-0 flex-1">
@@ -48,6 +49,7 @@ export function AppShell() {
         </div>
       </div>
       <ShortcutsOverlay />
+      <PaletteHost />
     </ComposeProvider>
   );
 }

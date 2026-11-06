@@ -45,29 +45,29 @@ export function AliasesPage() {
             {mailboxes.data?.map((m) => <option key={m.id} value={m.id}>{m.address}</option>)}
           </Select>
           <label className="flex items-center gap-2 text-[13px]">
-            <input type="checkbox" checked={canSend} onChange={(e) => setCanSend(e.target.checked)} className="size-4 accent-[var(--c-primary)]" />
+            <input type="checkbox" checked={canSend} onChange={(e) => setCanSend(e.target.checked)} className="size-4" />
             Can send as
           </label>
           <Button type="submit" variant="primary" icon={<Plus size={15} />} loading={create.isPending} disabled={!isValidEmail(address) || !target}>Add</Button>
         </form>
       </Section>
       {aliases.isPending ? (
-        <Skeleton className="h-32 rounded-2xl" />
+        <Skeleton className="h-32 rounded-[10px]" />
       ) : aliases.isError ? (
-        <p className="text-sm text-danger">{errorMessage(aliases.error)}</p>
+        <p className="text-[13px] text-danger">{errorMessage(aliases.error)}</p>
       ) : !aliases.data.length ? (
-        <div className="rounded-2xl border border-dashed border-border-strong">
+        <div className="rounded-[10px] border border-dashed border-border-strong">
           <EmptyState icon={<AtSign size={24} />} title="No aliases" body="Aliases like hello@ or billing@ can land in someone's mailbox without a separate login." />
         </div>
       ) : (
         <Table head={['Alias', 'Delivers to', 'Sending', 'Created', '']}>
           {aliases.data.map((a) => (
             <tr key={a.id}>
-              <td className="px-4 py-3 font-medium">{a.address}</td>
-              <td className="px-4 py-3 text-muted">{a.mailboxAddress}</td>
-              <td className="px-4 py-3">{a.canSend ? <Pill tone="success">Can send</Pill> : <Pill>Receive only</Pill>}</td>
-              <td className="px-4 py-3 text-muted">{relativeAgo(a.createdAt)}</td>
-              <td className="px-2 py-3">
+              <td className="font-medium">{a.address}</td>
+              <td className="text-muted">{a.mailboxAddress}</td>
+              <td>{a.canSend ? <Pill tone="success">Can send</Pill> : <Pill>Receive only</Pill>}</td>
+              <td className="text-muted">{relativeAgo(a.createdAt)}</td>
+              <td>
                 <IconButton
                   label={`Delete ${a.address}`}
                   size="sm"

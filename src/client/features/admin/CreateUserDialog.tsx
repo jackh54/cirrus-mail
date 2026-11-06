@@ -46,7 +46,7 @@ export function CreateUserDialog({ onClose }: { onClose: () => void }) {
       footer={<><Button variant="ghost" onClick={onClose}>Cancel</Button><Button variant="primary" disabled={!valid} loading={create.isPending} onClick={submit}>Add user</Button></>}
     >
       <div className="space-y-4">
-        {error && <p role="alert" className="rounded-lg bg-danger-soft px-3 py-2 text-[13px] text-danger">{error}</p>}
+        {error && <p role="alert" className="rounded-md bg-danger-soft px-3 py-2 text-[13px] text-danger">{error}</p>}
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Name">{(id) => <Input id={id} autoFocus value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} />}</Field>
           <Field label="Sign-in email">{(id) => <Input id={id} type="email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} />}</Field>
@@ -64,10 +64,10 @@ export function CreateUserDialog({ onClose }: { onClose: () => void }) {
             {(id, d) => <Input id={id} aria-describedby={d} className="font-mono" value={f.tempPassword} onChange={(e) => setF({ ...f, tempPassword: e.target.value })} />}
           </Field>
         </div>
-        <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" checked={withMailbox} onChange={(e) => setWithMailbox(e.target.checked)} className="size-4 accent-[var(--c-primary)]" disabled={!domains.data?.length} />
+        <label className="flex items-center gap-2 text-[13px]">
+          <input type="checkbox" checked={withMailbox} onChange={(e) => setWithMailbox(e.target.checked)} className="size-4" disabled={!domains.data?.length} />
           Also create a mailbox for them
-          {!domains.data?.length && <span className="text-xs text-faint">(add a domain first)</span>}
+          {!domains.data?.length && <span className="text-[12px] text-faint">(add a domain first)</span>}
         </label>
         {withMailbox && (
           <div className="flex items-end gap-2">

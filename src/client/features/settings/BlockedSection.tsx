@@ -31,11 +31,11 @@ export function BlockedSection({ mb }: { mb: string }) {
         <Button type="submit" loading={add.isPending} disabled={!pattern.trim()} icon={<Ban size={14} />}>Block</Button>
       </form>
       {blocked.data && blocked.data.length > 0 ? (
-        <ul className="divide-y divide-border rounded-lg border border-border">
+        <ul className="divide-y divide-border rounded-md border border-border">
           {blocked.data.map((b) => (
             <li key={b.id} className="flex items-center gap-3 px-3 py-2">
               <span className="min-w-0 flex-1 truncate font-mono text-[13px]">{b.pattern}</span>
-              <span className="text-xs text-faint">{relativeAgo(b.createdAt)}</span>
+              <span className="text-[12px] text-faint">{relativeAgo(b.createdAt)}</span>
               <IconButton label={`Unblock ${b.pattern}`} size="sm" onClick={() => remove.mutate(b.id)}>
                 <X size={14} />
               </IconButton>

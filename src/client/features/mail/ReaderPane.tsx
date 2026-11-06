@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { useQueryClient } from '@tanstack/react-query';
-import { MailX } from 'lucide-react';
+import { Forward, MailX, Reply, ReplyAll } from 'lucide-react';
 import type { Folder, MailboxSummary, MessageFull, ThreadAction } from '@shared/api';
+import { Button, tipText } from '../../components/Button';
 import { EmptyState } from '../../components/EmptyState';
 import { Skeleton } from '../../components/Skeleton';
 import { useToast } from '../../components/Toast';
@@ -12,7 +13,7 @@ import { qk } from '../../lib/queries/keys';
 import { useThread } from '../../lib/queries/mail';
 import { useCompose } from '../compose/ComposeProvider';
 import { draftApi } from '../compose/draftApi';
-import { identitiesOf } from '../compose/prefill';
+import { identitiesOf } from '../compose/identities';
 import type { ResolvedView } from './folderMeta';
 import { MessageCard } from './MessageCard';
 import { ReaderToolbar } from './ReaderToolbar';
@@ -117,15 +118,14 @@ export function ReaderPane({ mailbox, threadId, view, folders, ctl, showBack }: 
         ) : isError ? (
           <EmptyState icon={<MailX size={24} />} title="Couldn't open this conversation" body={errorMessage(error)} />
         ) : (
-          <div className="mx-auto max-w-4xl px-3 py-5 sm:px-6">
-            <h1 className="mb-4 px-1 text-xl font-semibold tracking-tight text-balance text-fg">{data.thread.subject || '(no subject)'}</h1>
-            <div className="space-y-2">
+          <div className="mx-auto max-w-[800px] px-4 pt-6 pb-16 sm:px-8">
+            <h1 className="mb-4 text-[18px] leading-7 font-semibold tracking-[-0.01em] text-balance text-fg">{data.thread.subject || '(no subject)'}</h1>
+            <div className="divide-y divide-border border-y border-border">
               {messages.map((m) => (
                 <MessageCard
                   key={m.id}
                   message={m}
                   expanded={expanded.has(m.id)}
-                  isLast={m.id === latest?.id}
                   starred={data.thread.isStarred}
                   mailboxId={mb}
                   folders={folders}
@@ -148,6 +148,7 @@ export function ReaderPane({ mailbox, threadId, view, folders, ctl, showBack }: 
                 />
               ))}
             </div>
+            {latest && <ReplyBar onReply={(mode) => reply(mode)} />}
           </div>
         )}
       </div>
@@ -155,22 +156,48 @@ export function ReaderPane({ mailbox, threadId, view, folders, ctl, showBack }: 
   );
 }
 
+/** Quiet reply actions at the end of the conversation. */
+function ReplyBar({ onReply }: { onReply: (mode: 'reply' | 'reply_all' | 'forward') => void }) {
+  const items = [
+    { mode: 'reply', label: 'Reply', key: 'R', icon: <Reply size={15} strokeWidth={1.75} /> },
+    { mode: 'reply_all', label: 'Reply all', key: 'A', icon: <ReplyAll size={15} strokeWidth={1.75} /> },
+    { mode: 'forward', label: 'Forward', key: 'F', icon: <Forward size={15} strokeWidth={1.75} /> },
+  ] as const;
+  return (
+    <div className="mt-5 flex flex-wrap gap-2">
+      {items.map((it) => (
+        <Button
+          key={it.mode}
+          variant="ghost"
+          icon={it.icon}
+          onClick={() => onReply(it.mode)}
+          aria-keyshortcuts={it.key}
+          data-tip={tipText(it.label, it.key)}
+          data-tip-side="top"
+          className="cm-tip border border-border"
+        >
+          {it.label}
+        </Button>
+      ))}
+    </div>
+  );
+}
+
 function ReaderSkeleton() {
   return (
-    <div className="mx-auto max-w-4xl space-y-4 px-6 py-6">
-      <Skeleton className="h-6 w-2/3" />
-      <div className="space-y-3 rounded-xl border border-border bg-surface p-5">
-        <div className="flex gap-3">
-          <Skeleton className="size-9 rounded-full" />
-          <div className="flex-1 space-y-2">
-            <Skeleton className="h-3.5 w-1/3" />
-            <Skeleton className="h-3 w-1/4" />
-          </div>
+    <div className="mx-auto max-w-[800px] px-4 pt-6 sm:px-8" aria-hidden="true">
+      <Skeleton className="mb-6 h-5 w-2/3" />
+      <div className="flex items-center gap-3 border-t border-border pt-4">
+        <Skeleton className="size-8 rounded-full" />
+        <div className="flex-1 space-y-2">
+          <Skeleton className="h-3 w-1/3" />
+          <Skeleton className="h-3 w-1/4" />
         </div>
+      </div>
+      <div className="mt-5 space-y-2.5">
         <Skeleton className="h-3 w-full" />
         <Skeleton className="h-3 w-11/12" />
         <Skeleton className="h-3 w-4/5" />
-        <Skeleton className="h-40 w-full" />
       </div>
     </div>
   );

@@ -39,20 +39,20 @@ export function DomainsPage() {
   return (
     <>
       <PageTitle title="Domains" description="Domains this instance receives mail for. Each must be on your Cloudflare account." />
-      <form onSubmit={add} className="mb-6 flex gap-2">
+      <form onSubmit={add} className="mb-6 flex max-w-md gap-2">
         <Input aria-label="Domain name" value={name} onChange={(e) => setName(e.target.value)} placeholder="example.com" />
-        <Button type="submit" variant="primary" icon={<Plus size={15} />} loading={create.isPending} disabled={!name.trim()}>Add domain</Button>
+        <Button type="submit" variant="primary" icon={<Plus size={15} strokeWidth={1.75} />} loading={create.isPending} disabled={!name.trim()}>Add domain</Button>
       </form>
       {domains.isPending ? (
-        <Skeleton className="h-32 rounded-2xl" />
+        <Skeleton className="h-16 rounded-[10px]" />
       ) : domains.isError ? (
-        <p className="text-sm text-danger">{errorMessage(domains.error)}</p>
+        <p className="text-[13px] text-danger">{errorMessage(domains.error)}</p>
       ) : domains.data.length === 0 ? (
-        <div className="mb-6 rounded-2xl border border-dashed border-border-strong">
+        <div className="mb-8 rounded-[10px] border border-dashed border-border-strong">
           <EmptyState icon={<Globe size={24} />} title="No domains yet" body="Add the domain you want to receive mail on, then follow the setup guide below." />
         </div>
       ) : (
-        <ul className="mb-8 space-y-3">
+        <ul className="mb-10 divide-y divide-border overflow-hidden rounded-[10px] border border-border">
           {domains.data.map((d) => <DomainCard key={d.id} domain={d} mailboxes={(mailboxes.data ?? []).filter((m) => m.domainId === d.id)} />)}
         </ul>
       )}
@@ -68,18 +68,18 @@ function DomainCard({ domain, mailboxes }: { domain: Domain; mailboxes: AdminMai
   const [checking, setChecking] = useState(false);
 
   return (
-    <li className="overflow-hidden rounded-2xl border border-border bg-surface">
-      <div className="flex flex-wrap items-center gap-3 px-4 py-3.5">
-        <span className="flex size-9 items-center justify-center rounded-lg bg-primary-soft text-primary"><Globe size={17} /></span>
+    <li>
+      <div className="flex flex-wrap items-center gap-3 px-4 py-3">
+        <Globe size={16} strokeWidth={1.75} className="shrink-0 text-faint" />
         <div className="min-w-0 flex-1">
-          <p className="truncate font-semibold">{domain.name}</p>
-          <p className="text-[12.5px] text-muted">{domain.mailboxCount} mailbox{domain.mailboxCount === 1 ? '' : 'es'}</p>
+          <p className="truncate text-[13px] font-medium">{domain.name}</p>
+          <p className="tnum text-[12px] text-muted">{domain.mailboxCount} mailbox{domain.mailboxCount === 1 ? '' : 'es'}</p>
         </div>
-        <label className="flex items-center gap-2 text-[13px] text-muted">
+        <label className="flex items-center gap-2 text-[12px] whitespace-nowrap text-muted">
           Catch-all
           <Select
             value={domain.catchAllMailboxId ?? ''}
-            className="h-8 w-52"
+            className="h-7 w-52"
             onChange={(e) =>
               update.mutate(
                 { id: domain.id, catchAllMailboxId: e.target.value || null },
@@ -91,7 +91,7 @@ function DomainCard({ domain, mailboxes }: { domain: Domain; mailboxes: AdminMai
             {mailboxes.map((m) => <option key={m.id} value={m.id}>{m.address}</option>)}
           </Select>
         </label>
-        <Button size="sm" icon={<Stethoscope size={14} />} onClick={() => setChecking((c) => !c)} aria-expanded={checking}>
+        <Button size="sm" variant="secondary" icon={<Stethoscope size={14} strokeWidth={1.75} />} onClick={() => setChecking((c) => !c)} aria-expanded={checking}>
           {checking ? 'Hide DNS check' : 'Check DNS'}
         </Button>
         <IconButton

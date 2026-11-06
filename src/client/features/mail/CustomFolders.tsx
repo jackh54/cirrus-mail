@@ -38,13 +38,13 @@ export function CustomFolders({ mailboxId, folders, onNavigate }: { mailboxId: s
 
   return (
     <div className="mt-5">
-      <div className="mb-1 flex items-center justify-between pr-0.5 pl-2.5">
-        <h3 className="text-[11px] font-semibold tracking-wide text-faint uppercase">Folders</h3>
-        <IconButton label="New folder" size="sm" onClick={() => setAdding(true)}>
+      <div className="flex h-7 items-center justify-between pl-2">
+        <h3 className="text-[12px] font-medium text-faint">Folders</h3>
+        <IconButton label="New folder" tipAlign="end" onClick={() => setAdding(true)} className="size-6">
           <Plus size={14} />
         </IconButton>
       </div>
-      <ul className="space-y-0.5">
+      <ul className="space-y-px">
         {sorted.map((f) =>
           editing === f.id ? (
             <li key={f.id}>
@@ -57,13 +57,13 @@ export function CustomFolders({ mailboxId, folders, onNavigate }: { mailboxId: s
           ) : (
             <li key={f.id} className="group/f relative">
               <NavLink to={`/mail/${mailboxId}/${f.id}`} onClick={onNavigate} className={({ isActive }) => railLinkClass(isActive)}>
-                <FolderIcon size={16} />
+                <FolderIcon />
                 <span className="truncate pr-6">{f.name}</span>
                 <span className="group-hover/f:invisible group-focus-within/f:invisible ml-auto">
                   <Badge n={f.unread} />
                 </span>
               </NavLink>
-              <div className="absolute top-0.5 right-0.5 opacity-0 transition-opacity group-hover/f:opacity-100 group-focus-within/f:opacity-100">
+              <div className="absolute top-0.5 right-0.5 opacity-0 group-hover/f:opacity-100 group-focus-within/f:opacity-100">
                 <Menu
                   label={`${f.name} options`}
                   width={180}
@@ -72,7 +72,7 @@ export function CustomFolders({ mailboxId, folders, onNavigate }: { mailboxId: s
                     { label: 'Delete', icon: <Trash2 />, danger: true, onSelect: () => void del(f) },
                   ]}
                   trigger={(p) => (
-                    <IconButton {...p} size="sm" label={`${f.name} options`}>
+                    <IconButton {...p} noTip label={`${f.name} options`} className="size-6">
                       <MoreHorizontal size={14} />
                     </IconButton>
                   )}
@@ -90,7 +90,7 @@ export function CustomFolders({ mailboxId, folders, onNavigate }: { mailboxId: s
             />
           </li>
         )}
-        {!sorted.length && !adding && <li className="px-2.5 py-1 text-xs text-faint">No folders yet</li>}
+        {!sorted.length && !adding && <li className="flex h-7 items-center px-2 text-[12px] text-faint">No folders yet</li>}
       </ul>
     </div>
   );
@@ -119,7 +119,7 @@ function NameInput({ initial, onSubmit, onCancel }: { initial: string; onSubmit:
             onCancel();
           }
         }}
-        className="h-8 w-full rounded-lg border border-primary bg-surface px-2 text-[13.5px] outline-none ring-3 ring-ring/30"
+        className="h-7 w-full rounded-md border border-primary bg-bg px-2 text-[13px] outline-none"
       />
     </form>
   );

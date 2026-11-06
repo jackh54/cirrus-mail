@@ -26,16 +26,16 @@ export function DailyChart({ data }: { data: Day[] }) {
   const ticks = [0, max / 2, max];
   const label = (s: string) => new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'short' }).format(new Date(`${s}T12:00:00`));
 
-  if (!days.length) return <p className="text-sm text-faint">No data yet.</p>;
+  if (!days.length) return <p className="text-[13px] text-faint">No data yet.</p>;
 
   return (
     <div>
-      <div className="mb-3 flex items-center gap-4 text-xs text-muted">
-        <span className="flex items-center gap-1.5"><span className="size-2.5 rounded-sm bg-primary" /> Sent</span>
-        <span className="flex items-center gap-1.5"><span className="size-2.5 rounded-sm bg-accent" /> Received</span>
+      <div className="mb-3 flex items-center gap-4 text-[12px] text-muted">
+        <span className="flex items-center gap-1.5"><span className="size-2 rounded-[2px] bg-primary" /> Sent</span>
+        <span className="flex items-center gap-1.5"><span className="size-2 rounded-[2px] bg-faint/50" /> Received</span>
         {hover !== null && days[hover] && (
-          <span className="ml-auto text-fg tabular-nums">
-            {label(days[hover].day)}: {days[hover].sent} sent · {days[hover].received} received
+          <span className="tnum ml-auto text-fg">
+            {label(days[hover].day)}: {days[hover].sent} sent, {days[hover].received} received
           </span>
         )}
       </div>
@@ -51,10 +51,10 @@ export function DailyChart({ data }: { data: Day[] }) {
           return (
             <g key={d.day} onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)}>
               <rect x={PAD.l + i * slot} y={PAD.t} width={slot} height={ih} fill={hover === i ? 'var(--c-hover)' : 'transparent'} />
-              <rect x={x - bw - 1} y={y(d.sent)} width={bw} height={Math.max(0, PAD.t + ih - y(d.sent))} rx={2.5} fill="var(--c-primary)">
+              <rect x={x - bw - 1} y={y(d.sent)} width={bw} height={Math.max(0, PAD.t + ih - y(d.sent))} rx={2} fill="var(--c-primary)">
                 <title>{`${label(d.day)}: ${d.sent} sent`}</title>
               </rect>
-              <rect x={x + 1} y={y(d.received)} width={bw} height={Math.max(0, PAD.t + ih - y(d.received))} rx={2.5} fill="var(--c-accent)">
+              <rect x={x + 1} y={y(d.received)} width={bw} height={Math.max(0, PAD.t + ih - y(d.received))} rx={2} fill="var(--c-faint)" fillOpacity={0.45}>
                 <title>{`${label(d.day)}: ${d.received} received`}</title>
               </rect>
               {(i % 2 === 0 || days.length <= 7) && (

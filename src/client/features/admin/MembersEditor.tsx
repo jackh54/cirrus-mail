@@ -9,14 +9,14 @@ export function MembersEditor({ users, value, onChange }: { users: AdminUser[]; 
   const available = users.filter((u) => !value.some((m) => m.userId === u.id) && !u.disabled);
   return (
     <div>
-      <ul className="mb-2 divide-y divide-border rounded-lg border border-border">
+      <ul className="mb-2 divide-y divide-border rounded-md border border-border">
         {value.map((m) => {
           const u = users.find((x) => x.id === m.userId);
           return (
             <li key={m.userId} className="flex items-center gap-2 px-3 py-2">
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm">{u?.name ?? 'Unknown user'}</p>
-                <p className="truncate text-xs text-muted">{u?.email}</p>
+                <p className="truncate text-[13px]">{u?.name ?? 'Unknown user'}</p>
+                <p className="truncate text-[12px] text-muted">{u?.email}</p>
               </div>
               <Select
                 aria-label={`Role for ${u?.name ?? 'user'}`}

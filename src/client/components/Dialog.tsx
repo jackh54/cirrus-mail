@@ -69,23 +69,23 @@ function DialogInner({ onClose, title, description, children, footer, width = 48
         if (e.target === ref.current) onCloseRef.current();
       }}
     >
-      <div className="flex items-start justify-between gap-4 px-5 pt-5 pb-1">
-        <div className="min-w-0">
-          <h2 id={titleId} className={bare ? 'sr-only' : 'text-[16px] font-semibold tracking-tight'}>
+      <div className="flex items-start justify-between gap-4 px-5 pt-4 pb-1">
+        <div className="min-w-0 pt-0.5">
+          <h2 id={titleId} className={bare ? 'sr-only' : 'text-[15px] leading-6 font-semibold tracking-[-0.01em]'}>
             {title}
           </h2>
           {description && (
-            <div id={descId} className="mt-1 text-sm leading-relaxed text-muted">
+            <div id={descId} className="mt-1 text-[13px] leading-5 text-muted">
               {description}
             </div>
           )}
         </div>
-        <IconButton label="Close" size="sm" onClick={() => onCloseRef.current()} className="-mr-1.5 -mt-1">
+        <IconButton label="Close" shortcut="Esc" tipAlign="end" onClick={() => onCloseRef.current()} className="-mr-2">
           <X size={16} />
         </IconButton>
       </div>
       {children && <div data-dialog-body className="px-5 py-4">{children}</div>}
-      {footer && <div className="flex justify-end gap-2 border-t border-border px-5 py-3.5">{footer}</div>}
+      {footer && <div className="flex justify-end gap-2 border-t border-border px-5 py-3">{footer}</div>}
     </dialog>
   );
 }

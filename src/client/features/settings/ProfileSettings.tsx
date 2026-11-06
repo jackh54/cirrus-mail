@@ -41,7 +41,7 @@ export function ProfileSettings() {
         <div className="mb-5 flex items-center gap-3">
           <Avatar address={{ email: user.email, name }} size={48} />
           <div>
-            <p className="text-sm font-medium">{name || user.email}</p>
+            <p className="text-[13px] font-medium">{name || user.email}</p>
             <p className="text-[13px] text-muted">{user.role === 'admin' ? 'Administrator' : 'Member'}</p>
           </div>
         </div>

@@ -1,11 +1,10 @@
 import type { Address, Identity, MailboxSummary, MessageFull } from '@shared/api';
 import { escapeHtml, formatAddress, longDate } from '../../lib/format';
 import { sanitizeBasic, sanitizeForQuote } from '../../lib/sanitize';
+import { identitiesOf } from './identities';
 import type { ComposeDraft } from './types';
 
-export function identitiesOf(mb: MailboxSummary): Identity[] {
-  return mb.identities.length ? mb.identities : [{ email: mb.address, name: mb.displayName, isAlias: false }];
-}
+export { identitiesOf };
 
 function newKey(): string {
   return `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;

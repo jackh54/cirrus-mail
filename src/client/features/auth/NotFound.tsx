@@ -1,4 +1,3 @@
-import { useRouteError } from 'react-router';
 import { Compass, TriangleAlert } from 'lucide-react';
 import { EmptyState } from '../../components/EmptyState';
 import { Button, LinkButton } from '../../components/Button';
@@ -14,8 +13,7 @@ export function NotFound() {
   );
 }
 
-export function RouteError() {
-  const err = useRouteError();
+export function RouteError({ error: err }: { error: unknown }) {
   const message = err instanceof Error ? err.message : 'An unexpected error occurred.';
   return (
     <div className="flex h-full items-center justify-center">

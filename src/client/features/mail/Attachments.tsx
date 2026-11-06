@@ -19,10 +19,10 @@ export function Attachments({ items }: { items: Attachment[] }) {
         {visible.map((a) => {
           const isImage = a.mimeType.startsWith('image/');
           return (
-            <li key={a.id} className="group flex max-w-72 items-center overflow-hidden rounded-lg border border-border bg-surface transition-colors hover:border-border-strong">
+            <li key={a.id} className="group flex h-11 max-w-72 items-center overflow-hidden rounded-md border border-border hover:bg-hover">
               {isImage ? (
                 <button type="button" onClick={() => setPreview(a)} className="flex min-w-0 flex-1 items-center gap-2 py-2 pl-2.5 text-left" aria-label={`Preview ${a.filename}`}>
-                  <img src={inlineUrl(a.url)} alt="" className="size-8 shrink-0 rounded object-cover" loading="lazy" />
+                  <img src={inlineUrl(a.url)} alt="" className="size-7 shrink-0 rounded-[4px] object-cover" loading="lazy" />
                   <Label a={a} />
                 </button>
               ) : (
@@ -31,8 +31,8 @@ export function Attachments({ items }: { items: Attachment[] }) {
                   <Label a={a} />
                 </a>
               )}
-              <a href={a.url} download={a.filename} aria-label={`Download ${a.filename}`} title="Download" className="mx-1 rounded-md p-1.5 text-faint hover:bg-hover hover:text-fg">
-                <Download size={15} />
+              <a href={a.url} download={a.filename} aria-label={`Download ${a.filename}`} title="Download" className="mx-1 inline-flex size-7 items-center justify-center rounded-md text-faint hover:bg-black/5 hover:text-fg dark:hover:bg-white/8">
+                <Download size={16} strokeWidth={1.75} />
               </a>
             </li>
           );
@@ -42,8 +42,8 @@ export function Attachments({ items }: { items: Attachment[] }) {
         {preview && (
           <div className="flex flex-col items-center gap-3">
             <img src={inlineUrl(preview.url)} alt={preview.filename} className="max-h-[72vh] max-w-full rounded-lg object-contain" />
-            <a href={preview.url} download={preview.filename} className="inline-flex items-center gap-1.5 text-sm font-medium text-primary hover:underline">
-              <Download size={14} /> Download · {formatBytes(preview.size)}
+            <a href={preview.url} download={preview.filename} className="inline-flex items-center gap-1.5 text-[13px] font-medium text-selected-fg hover:underline">
+              <Download size={14} strokeWidth={1.75} /> Download ({formatBytes(preview.size)})
             </a>
           </div>
         )}
@@ -55,8 +55,8 @@ export function Attachments({ items }: { items: Attachment[] }) {
 function Label({ a }: { a: Attachment }) {
   return (
     <span className="min-w-0 pr-1">
-      <span className="block truncate text-[13px] text-fg">{a.filename}</span>
-      <span className="block text-[11.5px] text-faint">{formatBytes(a.size)}</span>
+      <span className="block truncate text-[13px] leading-4 text-fg">{a.filename}</span>
+      <span className="tnum block text-[12px] leading-4 text-faint">{formatBytes(a.size)}</span>
     </span>
   );
 }

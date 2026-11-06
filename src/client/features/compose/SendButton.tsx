@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { CalendarClock, ChevronDown, Send } from 'lucide-react';
-import { Button } from '../../components/Button';
+import { Button, tipText } from '../../components/Button';
 import { Dialog } from '../../components/Dialog';
 import { Field, Input } from '../../components/Field';
 import { Menu, type MenuItem } from '../../components/Menu';
 import { longDate } from '../../lib/format';
+import { MOD_KEY } from '../palette/events';
 
 function at(base: Date, days: number, hour: number): number {
   const d = new Date(base.getFullYear(), base.getMonth(), base.getDate() + days, hour, 0, 0, 0);
@@ -47,12 +48,14 @@ export function SendButton({ onSend, disabled, busy }: { onSend: (sendAt?: numbe
     <div className="inline-flex">
       <Button
         variant="primary"
-        className="rounded-r-none pr-3"
-        icon={<Send size={15} />}
+        className="cm-tip rounded-r-none pr-3"
+        data-tip={tipText('Send', `${MOD_KEY}Enter`)}
+        data-tip-side="top"
+        data-tip-align="start"
+        icon={<Send size={14} strokeWidth={1.75} />}
         onClick={() => onSend()}
         disabled={disabled}
         loading={busy}
-        title="Send (Ctrl+Enter)"
       >
         Send
       </Button>
@@ -62,8 +65,8 @@ export function SendButton({ onSend, disabled, busy }: { onSend: (sendAt?: numbe
         width={240}
         items={items}
         trigger={(p) => (
-          <Button {...p} variant="primary" className="rounded-l-none border-l border-white/25 px-2" disabled={disabled} aria-label="Send later">
-            <ChevronDown size={15} />
+          <Button {...p} variant="primary" className="rounded-l-none border-l border-white/20 px-1.5" disabled={disabled} aria-label="Send later">
+            <ChevronDown size={14} strokeWidth={1.75} />
           </Button>
         )}
       />

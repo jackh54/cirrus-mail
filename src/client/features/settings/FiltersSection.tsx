@@ -34,13 +34,13 @@ export function FiltersSection({ mb }: { mb: string }) {
       footer={<Button icon={<Plus size={14} />} onClick={() => setEditing('new')}>New filter</Button>}
     >
       {list.length ? (
-        <ul className="divide-y divide-border rounded-lg border border-border">
+        <ul className="divide-y divide-border rounded-md border border-border">
           {list.map((f) => (
             <li key={f.id} className="flex items-center gap-3 px-3 py-2.5">
               <Switch checked={f.enabled} label={`${f.name} enabled`} onChange={(enabled) => update.mutate({ ...f, enabled }, { onError })} />
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium">{f.name}</p>
-                <p className="truncate text-[12.5px] text-muted">{describeFilter(f, folders.data ?? [])}</p>
+                <p className="truncate text-[13px] font-medium">{f.name}</p>
+                <p className="truncate text-[12px] text-muted">{describeFilter(f, folders.data ?? [])}</p>
               </div>
               <IconButton label={`Edit ${f.name}`} size="sm" onClick={() => setEditing(f)}><Pencil size={14} /></IconButton>
               <IconButton

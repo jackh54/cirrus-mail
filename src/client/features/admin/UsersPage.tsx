@@ -31,32 +31,32 @@ export function UsersPage() {
     <>
       <PageTitle title="Users" description="People who can sign in. Give them mailboxes on the Mailboxes page." action={<Button variant="primary" icon={<Plus size={15} />} onClick={() => setCreating(true)}>Add user</Button>} />
       {users.isPending ? (
-        <Skeleton className="h-48 rounded-2xl" />
+        <Skeleton className="h-48 rounded-[10px]" />
       ) : users.isError ? (
-        <p className="text-sm text-danger">{errorMessage(users.error)}</p>
+        <p className="text-[13px] text-danger">{errorMessage(users.error)}</p>
       ) : (
         <Table head={['User', 'Role', 'Mailboxes', 'Created', '']}>
           {users.data.map((u) => (
             <tr key={u.id} className={u.disabled ? 'opacity-60' : undefined}>
-              <td className="px-4 py-3">
+              <td>
                 <div className="flex items-center gap-3">
-                  <Avatar address={{ email: u.email, name: u.name }} size={30} />
+                  <Avatar address={{ email: u.email, name: u.name }} size={28} />
                   <div className="min-w-0">
-                    <p className="truncate font-medium">{u.name} {u.id === me.id && <span className="text-xs font-normal text-faint">(you)</span>}</p>
-                    <p className="truncate text-[12.5px] text-muted">{u.email}</p>
+                    <p className="truncate leading-5 font-medium">{u.name} {u.id === me.id && <span className="text-[12px] font-normal text-faint">(you)</span>}</p>
+                    <p className="truncate text-[12px] leading-4 text-muted">{u.email}</p>
                   </div>
                 </div>
               </td>
-              <td className="px-4 py-3">
+              <td>
                 <div className="flex flex-wrap gap-1">
                   <Pill tone={u.role === 'admin' ? 'primary' : 'neutral'}>{u.role === 'admin' ? 'Admin' : 'Member'}</Pill>
                   {u.disabled && <Pill tone="danger">Disabled</Pill>}
                   {u.totpEnabled && <Pill tone="success">2FA</Pill>}
                 </div>
               </td>
-              <td className="px-4 py-3 tabular-nums">{u.mailboxCount}</td>
-              <td className="px-4 py-3 text-muted">{relativeAgo(u.createdAt)}</td>
-              <td className="px-2 py-3">
+              <td className="tabular-nums">{u.mailboxCount}</td>
+              <td className="text-muted">{relativeAgo(u.createdAt)}</td>
+              <td>
                 <Menu
                   label={`Actions for ${u.name}`}
                   items={[

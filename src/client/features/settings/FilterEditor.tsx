@@ -34,7 +34,7 @@ export function describeFilter(f: Filter, folders: Folder[]): string {
   const acts = f.actions
     .map((a) => (a.type === 'move_to' ? `move to ${folders.find((x) => x.id === a.folderId)?.name ?? 'folder'}` : a.type === 'forward_to' ? `forward to ${a.email}` : ACTIONS.find((x) => x.v === a.type)?.label.toLowerCase()))
     .join(', ');
-  return `If ${cond || '…'} → ${acts || '…'}`;
+  return `If ${cond || '…'}, then ${acts || '…'}`;
 }
 
 function makeAction(type: ActionType, folders: Folder[]): FilterAction {
@@ -120,7 +120,7 @@ export function FilterEditor({ initial, folders, saving, onSave, onCancel }: Pro
                     </Select>
                     <div className="min-w-40 flex-1">
                       <Input aria-label="Value" aria-invalid={!!errors[i]} value={c.value} className={c.op === 'regex' ? 'font-mono' : undefined} onChange={(e) => setCond(i, { value: e.target.value })} />
-                      {errors[i] && <p className="mt-1 text-xs text-danger">{errors[i]}</p>}
+                      {errors[i] && <p className="mt-1 text-[12px] text-danger">{errors[i]}</p>}
                     </div>
                   </>
                 )}

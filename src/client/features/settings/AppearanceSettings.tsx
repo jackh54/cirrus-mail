@@ -13,8 +13,8 @@ function Choice<T extends string>({ name, value, current, onChange, icon, label 
   return (
     <label
       className={cn(
-        'flex cursor-pointer flex-col items-center gap-2 rounded-xl border p-4 text-sm transition-colors duration-150 has-[:focus-visible]:ring-3 has-[:focus-visible]:ring-ring/40',
-        checked ? 'border-primary bg-primary-soft text-selected-fg' : 'border-border hover:border-border-strong hover:bg-hover',
+        'flex h-16 cursor-pointer flex-col items-center justify-center gap-1.5 rounded-md border text-[13px] transition-colors duration-100 has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-ring [&_svg]:size-4 [&_svg]:stroke-[1.75]',
+        checked ? 'border-primary text-fg shadow-[inset_0_0_0_1px_var(--c-primary)]' : 'border-border text-muted hover:bg-hover hover:text-fg',
       )}
     >
       <input type="radio" name={name} value={value} checked={checked} onChange={() => onChange(value)} className="sr-only" />
@@ -66,7 +66,7 @@ function NotificationsSection() {
   return (
     <Section title="Desktop notifications" description="Get a notification for new mail while Cirrus Mail is open in a tab but not in focus.">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="flex items-center gap-2 text-sm">
+        <p className="flex items-center gap-2 text-[13px]">
           {permission === 'granted' ? <Bell size={16} className="text-success" /> : <BellOff size={16} className="text-faint" />}
           {permission === 'granted' && 'Notifications are on for this browser.'}
           {permission === 'denied' && 'Blocked. Allow notifications for this site in your browser settings.'}

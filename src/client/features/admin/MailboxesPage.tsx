@@ -25,28 +25,28 @@ export function MailboxesPage() {
     <>
       <PageTitle title="Mailboxes" description="Each mailbox is an address with its own folders. Several members make it a shared mailbox." action={<Button variant="primary" icon={<Plus size={15} />} onClick={() => setEditing('new')}>New mailbox</Button>} />
       {mailboxes.isPending ? (
-        <Skeleton className="h-48 rounded-2xl" />
+        <Skeleton className="h-48 rounded-[10px]" />
       ) : mailboxes.isError ? (
-        <p className="text-sm text-danger">{errorMessage(mailboxes.error)}</p>
+        <p className="text-[13px] text-danger">{errorMessage(mailboxes.error)}</p>
       ) : !mailboxes.data.length ? (
-        <div className="rounded-2xl border border-dashed border-border-strong">
+        <div className="rounded-[10px] border border-dashed border-border-strong">
           <EmptyState icon={<Inbox size={24} />} title="No mailboxes yet" body="Create one for yourself first, then for the rest of your team." />
         </div>
       ) : (
         <Table head={['Address', 'Members', 'Messages', '']}>
           {mailboxes.data.map((m) => (
             <tr key={m.id}>
-              <td className="px-4 py-3">
-                <p className="font-medium">{m.address}</p>
-                <p className="text-[12.5px] text-muted">{m.displayName}</p>
+              <td>
+                <p className="leading-5 font-medium">{m.address}</p>
+                <p className="text-[12px] leading-4 text-muted">{m.displayName}</p>
               </td>
-              <td className="px-4 py-3">
+              <td>
                 <span className="flex items-center gap-1.5 text-muted" title={m.members.map((x) => `${x.name} (${x.role})`).join(', ')}>
                   <Users size={14} /> {m.members.map((x) => x.name.split(' ')[0]).join(', ') || 'None'}
                 </span>
               </td>
-              <td className="px-4 py-3 tabular-nums">{m.messageCount.toLocaleString()}</td>
-              <td className="px-2 py-3">
+              <td className="tabular-nums">{m.messageCount.toLocaleString()}</td>
+              <td>
                 <div className="flex justify-end">
                   <IconButton label={`Edit ${m.address}`} size="sm" onClick={() => setEditing(m)}><Pencil size={14} /></IconButton>
                   <IconButton
@@ -104,10 +104,10 @@ function MailboxDialog({ mailbox, onClose }: { mailbox: AdminMailbox | null; onC
       footer={<><Button variant="ghost" onClick={onClose}>Cancel</Button><Button variant="primary" disabled={!valid} loading={create.isPending || update.isPending} onClick={save}>{mailbox ? 'Save' : 'Create mailbox'}</Button></>}
     >
       <div className="space-y-4">
-        {error && <p role="alert" className="rounded-lg bg-danger-soft px-3 py-2 text-[13px] text-danger">{error}</p>}
+        {error && <p role="alert" className="rounded-md bg-danger-soft px-3 py-2 text-[13px] text-danger">{error}</p>}
         {!mailbox && (
           domains.data?.length === 0 ? (
-            <p className="rounded-lg bg-warning-soft px-3 py-2 text-[13px] text-warning">Add a domain first.</p>
+            <p className="rounded-md bg-warning-soft px-3 py-2 text-[13px] text-warning">Add a domain first.</p>
           ) : (
             <div className="flex items-end gap-2">
               <Field label="Address" className="flex-1">{(id) => <Input id={id} autoFocus value={localPart} placeholder="hello" onChange={(e) => setLocalPart(e.target.value)} />}</Field>

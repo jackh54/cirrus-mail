@@ -15,8 +15,8 @@ export function SearchBox({ mailboxId, q }: { mailboxId: string; q: string }) {
   };
 
   return (
-    <form role="search" onSubmit={submit} className="group relative flex-1">
-      <Search size={15} className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-faint" />
+    <form role="search" onSubmit={submit} className="group relative w-40 shrink-0 focus-within:w-56 sm:w-48">
+      <Search size={14} strokeWidth={1.75} className="pointer-events-none absolute top-1/2 left-2 -translate-y-1/2 text-faint" />
       <label htmlFor="cirrus-search" className="sr-only">Search mail</label>
       <input
         id="cirrus-search"
@@ -31,17 +31,17 @@ export function SearchBox({ mailboxId, q }: { mailboxId: string; q: string }) {
         }}
         placeholder="Search mail"
         autoComplete="off"
-        className="h-8 w-full rounded-lg border border-transparent bg-surface-2 pr-14 pl-8 text-[13.5px] text-fg placeholder:text-faint transition-[border-color,background-color,box-shadow] duration-150 focus:border-primary focus:bg-surface focus:outline-none focus:ring-3 focus:ring-ring/30 [&::-webkit-search-cancel-button]:hidden"
+        className="h-7 w-full rounded-md border border-transparent bg-surface-2 pr-8 pl-7 text-[13px] text-fg placeholder:text-faint focus:border-primary focus:bg-bg focus:outline-none [&::-webkit-search-cancel-button]:hidden"
       />
-      <span className="absolute top-1/2 right-2 flex -translate-y-1/2 items-center gap-1">
+      <span className="absolute top-1/2 right-1.5 flex -translate-y-1/2 items-center gap-1">
         {q ? (
           <button
             type="button"
             aria-label="Clear search"
             onClick={() => navigate(`/mail/${mailboxId}/inbox`)}
-            className="rounded p-0.5 text-faint hover:bg-hover hover:text-fg"
+            className="inline-flex size-5 items-center justify-center rounded text-faint hover:bg-hover hover:text-fg"
           >
-            <X size={14} />
+            <X size={13} />
           </button>
         ) : (
           <span className="max-md:hidden group-focus-within:hidden"><Kbd>/</Kbd></span>

@@ -18,11 +18,11 @@ const SENDING = [
 
 function Steps({ items }: { items: string[] }) {
   return (
-    <ol className="space-y-2.5">
+    <ol className="space-y-3">
       {items.map((s, i) => (
-        <li key={i} className="flex gap-3 text-[13.5px] leading-relaxed">
-          <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary-soft text-xs font-semibold text-primary">{i + 1}</span>
-          <span className="pt-0.5">{s}</span>
+        <li key={i} className="flex gap-3 text-[13px] leading-5">
+          <span className="tnum flex size-5 shrink-0 items-center justify-center rounded-[4px] bg-surface-2 text-[11px] font-medium text-muted">{i + 1}</span>
+          <span>{s}</span>
         </li>
       ))}
     </ol>
@@ -32,12 +32,12 @@ function Steps({ items }: { items: string[] }) {
 export function SetupGuide() {
   return (
     <div id="guide" className="scroll-mt-6">
-      <Section title="Receive mail: Email Routing catch-all → Worker" description="Inbound mail is free and unlimited. The catch-all only works on apex domains (example.com, not mail.example.com).">
+      <Section title="Receive mail with an Email Routing catch-all" description="Inbound mail is free and unlimited. The catch-all only works on apex domains (example.com, not mail.example.com).">
         <Steps items={ROUTING} />
       </Section>
-      <Section title="Send mail: Email Sending onboarding" description="Outbound mail needs Workers Paid. 3,000 emails a month are included.">
+      <Section title="Send mail with Email Sending" description="Outbound mail needs Workers Paid. 3,000 emails a month are included.">
         <Steps items={SENDING} />
-        <a href="https://developers.cloudflare.com/email-routing/" target="_blank" rel="noopener noreferrer" className="mt-4 inline-flex items-center gap-1.5 text-[13px] font-medium text-primary hover:underline">
+        <a href="https://developers.cloudflare.com/email-routing/" target="_blank" rel="noopener noreferrer" className="mt-4 inline-flex items-center gap-1.5 text-[13px] font-medium text-selected-fg hover:underline">
           Cloudflare Email docs <ExternalLink size={13} />
         </a>
       </Section>

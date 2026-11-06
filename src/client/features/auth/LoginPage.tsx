@@ -56,7 +56,7 @@ export function LoginPage() {
 
   return (
     <AuthLayout
-      title={step === 'password' ? 'Sign in to Cirrus Mail' : 'Two-factor authentication'}
+      title={step === 'password' ? 'Sign in to Cirrus' : 'Two-factor authentication'}
       subtitle={step === 'totp' ? 'Enter the 6-digit code from your authenticator app, or a recovery code.' : undefined}
     >
       <form onSubmit={submit} className="space-y-4" noValidate>
@@ -83,14 +83,14 @@ export function LoginPage() {
                 inputMode="numeric"
                 autoComplete="one-time-code"
                 placeholder="123 456"
-                className="text-center font-mono text-lg tracking-[0.3em]"
+                className="tnum h-10 text-center text-[17px] tracking-[0.2em]"
                 value={totp}
                 onChange={(e) => setTotp(e.target.value)}
               />
             )}
           </Field>
         )}
-        <Button type="submit" variant="primary" size="lg" className="w-full" loading={login.isPending} icon={step === 'totp' ? <KeyRound size={16} /> : undefined}>
+        <Button type="submit" variant="primary" size="lg" className="mt-1 w-full" loading={login.isPending} icon={step === 'totp' ? <KeyRound size={15} /> : undefined}>
           {step === 'password' ? 'Sign in' : 'Verify'}
         </Button>
         {step === 'totp' && (
@@ -101,9 +101,9 @@ export function LoginPage() {
               setTotp('');
               setError(null);
             }}
-            className="mx-auto flex items-center gap-1.5 text-[13px] text-muted hover:text-fg"
+            className="mx-auto flex h-7 items-center gap-1.5 rounded-md px-2 text-[13px] text-muted hover:bg-hover hover:text-fg"
           >
-            <ArrowLeft size={14} /> Use a different account
+            <ArrowLeft size={14} strokeWidth={1.75} /> Use a different account
           </button>
         )}
       </form>

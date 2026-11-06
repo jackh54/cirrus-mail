@@ -1,11 +1,10 @@
-import { useEffect, useRef, type ReactNode, type RefObject } from 'react';
-import { useVirtualizer } from '@tanstack/react-virtual';
+import { lazy, Suspense, useEffect, useRef, type ReactNode, type RefObject } from 'react';
 import type { ThreadSummary } from '@shared/api';
-import { currentDensity } from '../../lib/theme';
 
 const VIRTUALIZE_OVER = 100;
+const VirtualRows = lazy(() => import('./VirtualRows').then((m) => ({ default: m.VirtualRows })));
 
-interface Props {
+export interface RowsProps {
   threads: ThreadSummary[];
   scrollRef: RefObject<HTMLDivElement | null>;
   focusIndex: number;
@@ -15,48 +14,26 @@ interface Props {
 }
 
 /** Plain rendering for short lists, windowed rendering above 100 rows; infinite scroll either way. */
-export function ThreadRows(props: Props) {
+export function ThreadRows(props: RowsProps) {
   return (
     <>
-      {props.threads.length > VIRTUALIZE_OVER ? <VirtualRows {...props} /> : <PlainRows {...props} />}
+      {props.threads.length > VIRTUALIZE_OVER ? (
+        <Suspense fallback={<PlainRows {...props} threads={props.threads.slice(0, VIRTUALIZE_OVER)} />}>
+          <VirtualRows {...props} />
+        </Suspense>
+      ) : (
+        <PlainRows {...props} />
+      )}
       <LoadMoreSentinel scrollRef={props.scrollRef} enabled={props.hasMore} onVisible={props.loadMore} />
     </>
   );
 }
 
-function PlainRows({ threads, renderRow, focusIndex, scrollRef }: Props) {
+function PlainRows({ threads, renderRow, focusIndex, scrollRef }: RowsProps) {
   useEffect(() => {
     scrollRef.current?.querySelector(`[data-index="${focusIndex}"]`)?.scrollIntoView({ block: 'nearest' });
   }, [focusIndex, scrollRef]);
   return <div role="list">{threads.map((t, i) => <div key={t.id} role="presentation">{renderRow(t, i)}</div>)}</div>;
-}
-
-function VirtualRows({ threads, renderRow, focusIndex, scrollRef }: Props) {
-  const v = useVirtualizer({
-    count: threads.length,
-    getScrollElement: () => scrollRef.current,
-    estimateSize: () => (currentDensity() === 'compact' ? 50 : 78),
-    overscan: 10,
-    getItemKey: (i) => threads[i]?.id ?? i,
-  });
-  useEffect(() => {
-    if (focusIndex >= 0) v.scrollToIndex(focusIndex, { align: 'auto' });
-  }, [focusIndex, v]);
-  return (
-    <div role="list" style={{ height: v.getTotalSize(), position: 'relative' }}>
-      {v.getVirtualItems().map((item) => (
-        <div
-          key={item.key}
-          role="presentation"
-          data-index={item.index}
-          ref={v.measureElement}
-          style={{ position: 'absolute', top: 0, left: 0, right: 0, transform: `translateY(${item.start}px)` }}
-        >
-          {renderRow(threads[item.index], item.index)}
-        </div>
-      ))}
-    </div>
-  );
 }
 
 function LoadMoreSentinel({ scrollRef, enabled, onVisible }: { scrollRef: RefObject<HTMLDivElement | null>; enabled: boolean; onVisible: () => void }) {

@@ -1,27 +1,40 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ImageOff } from 'lucide-react';
 import type { ProxySignInput, ProxySignResponse } from '@shared/api';
 import { Button } from '../../components/Button';
 import { useToast } from '../../components/Toast';
 import { api, errorMessage } from '../../lib/api';
-import { prepareEmail } from '../../lib/sanitize';
+import { cn } from '../../lib/cn';
+import { emailSrcdoc, prepareEmail, type RenderMode } from '../../lib/sanitize';
+import { useDarkTheme } from '../../lib/theme';
+import { setDesigned, useRenderPref, wantsDark } from './renderPrefs';
 
 const SANDBOX = 'allow-popups allow-popups-to-escape-sandbox';
 
 /**
- * Renders sanitised email HTML in a script-less, origin-less sandboxed iframe on a white card.
+ * Renders sanitised email HTML in a script-less, origin-less sandboxed iframe on borderless white paper.
  *
  * Sizing: the visible iframe has no allow-same-origin, so its document cannot be read. We render
  * the identical srcdoc a second time in a hidden, 1 px tall iframe with sandbox="allow-same-origin"
  * and no allow-scripts. Nothing can execute there (sanitised, CSP meta, no script permission), but
  * the parent can read its scrollHeight. We re-measure when its images load and when the container
  * width changes (ResizeObserver on our own container, not on the email document).
+ *
+ * Dark theme: simple mail renders as native text (mode `dark`), designed mail keeps its light paper
+ * (`original`) unless the header toggle forces `invert`. Both iframes get the same document, and every
+ * mode keeps the same padding and layout, so toggling never changes the height.
  */
-export function HtmlBody({ html }: { html: string }) {
+export function HtmlBody({ html, messageId }: { html: string; messageId: string }) {
   const [signed, setSigned] = useState<Record<string, string> | null>(null);
   const [loadingImages, setLoadingImages] = useState(false);
   const [height, setHeight] = useState(160);
   const prepared = useMemo(() => prepareEmail(html, signed), [html, signed]);
+  const dark = useDarkTheme();
+  const pref = useRenderPref(messageId);
+  const mode: RenderMode = !dark || !wantsDark(pref, prepared.designed) ? 'original' : prepared.designed ? 'invert' : 'dark';
+  const srcdoc = useMemo(() => emailSrcdoc(prepared, mode), [prepared, mode]);
+  // Publish before paint so the header's toggle appears in the same frame as the body.
+  useLayoutEffect(() => setDesigned(messageId, prepared.designed), [messageId, prepared.designed]);
   const container = useRef<HTMLDivElement>(null);
   const measureFrame = useRef<HTMLIFrameElement>(null);
   const { toast } = useToast();
@@ -83,19 +96,28 @@ export function HtmlBody({ html }: { html: string }) {
   return (
     <div>
       {prepared.blocked && !signed && (
-        <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-border bg-surface-2 px-3 py-2 text-[13px] text-muted">
-          <ImageOff size={15} className="shrink-0" />
+        <div className="mb-3 flex min-h-9 flex-wrap items-center gap-x-3 gap-y-1 rounded-md bg-surface-2 px-3 py-1 text-[12px] text-muted sm:mb-6">
+          <ImageOff size={14} strokeWidth={1.75} className="shrink-0" />
           <span className="min-w-0 flex-1">Remote images are hidden so the sender can't track when you read this.</span>
-          <Button size="sm" variant="secondary" loading={loadingImages} onClick={() => void loadImages()}>
+          <Button size="sm" variant="ghost" loading={loadingImages} onClick={() => void loadImages()} className="text-fg">
             Load images
           </Button>
         </div>
       )}
-      <div ref={container} className="relative overflow-hidden rounded-xl bg-white ring-1 ring-black/5 dark:ring-white/10">
+      {/* Same box in every mode (the iframe's 22px padding is pulled into the margin), so nothing shifts. */}
+      <div
+        ref={container}
+        className={cn(
+          'relative overflow-hidden rounded-[8px] sm:-mx-[22px] sm:-mt-3',
+          mode === 'original' && 'bg-white',
+          // Designed mail on dark: a quiet inset edge and slightly lowered brightness so the paper sits in the page.
+          mode === 'original' && dark && 'after:pointer-events-none after:absolute after:inset-0 after:rounded-[8px] after:shadow-[inset_0_0_0_1px_rgb(0_0_0/0.08),inset_0_1px_4px_rgb(0_0_0/0.18)] [&>iframe:first-child]:brightness-[0.94]',
+        )}
+      >
         <iframe
           title="Message content"
           sandbox={SANDBOX}
-          srcDoc={prepared.srcdoc}
+          srcDoc={srcdoc}
           referrerPolicy="no-referrer"
           className="block w-full border-0"
           style={{ height }}
@@ -107,7 +129,7 @@ export function HtmlBody({ html }: { html: string }) {
           tabIndex={-1}
           inert
           sandbox="allow-same-origin"
-          srcDoc={prepared.srcdoc}
+          srcDoc={srcdoc}
           onLoad={onMeasureLoad}
           className="pointer-events-none invisible absolute top-0 left-0 w-full border-0"
           style={{ height: 1 }}

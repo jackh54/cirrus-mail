@@ -7,7 +7,6 @@ import { api, errorMessage } from '../../lib/api';
 import { longDate } from '../../lib/format';
 import { qk } from '../../lib/queries/keys';
 import { useMeData } from '../../lib/queries/me';
-import { buildNew, buildReply, fromExistingDraft } from './prefill';
 import { draftApi } from './draftApi';
 import type { ComposeDraft } from './types';
 
@@ -30,9 +29,13 @@ const Ctx = createContext<ComposeApi | null>(null);
 // The editor (TipTap/ProseMirror) is the heaviest dependency; load it on first compose.
 const ComposeSheet = lazy(() => import('./ComposeSheet').then((m) => ({ default: m.ComposeSheet })));
 
-/** Warm the compose chunk once the app is idle so the first open is instant. */
+// Prefill (quoting, signatures) needs DOMPurify, so it loads with compose rather than with the app.
+const loadPrefill = () => import('./prefill');
+
+/** Warm the compose chunks once the app is idle so the first open is instant. */
 function prefetchCompose() {
   void import('./ComposeSheet');
+  void loadPrefill();
 }
 
 export function ComposeProvider({ children }: { children: ReactNode }) {
@@ -63,11 +66,11 @@ export function ComposeProvider({ children }: { children: ReactNode }) {
       const mb = mailboxes.find((m) => m.id === init.mailboxId) ?? mailboxes[0];
       if (!mb) return;
       if (init.mode === 'draft') {
-        setCurrent(fromExistingDraft(init.draft, mb.id));
+        void loadPrefill().then((p) => setCurrent(p.fromExistingDraft(init.draft, mb.id)));
         return;
       }
-      void signatureFor(mb.id).then((sig) => {
-        setCurrent(init.mode === 'new' ? buildNew(mb, sig, init.to) : buildReply(mb, sig, init.parent, init.mode));
+      void Promise.all([loadPrefill(), signatureFor(mb.id)]).then(([p, sig]) => {
+        setCurrent(init.mode === 'new' ? p.buildNew(mb, sig, init.to) : p.buildReply(mb, sig, init.parent, init.mode));
       });
     },
     [mailboxes, signatureFor],

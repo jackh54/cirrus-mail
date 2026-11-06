@@ -73,7 +73,7 @@ export function TotpSection() {
         )
       }
     >
-      <p className="flex items-center gap-2 text-sm">
+      <p className="flex items-center gap-2 text-[13px]">
         <ShieldCheck size={16} className={user.totpEnabled ? 'text-success' : 'text-faint'} />
         {user.totpEnabled ? 'On. You will be asked for a code each time you sign in.' : 'Off.'}
       </p>
@@ -83,8 +83,8 @@ export function TotpSection() {
       >
         {setup && (
           <div className="space-y-4">
-            <p className="text-sm text-muted">1. Scan this code with your authenticator app.</p>
-            <div className="flex flex-col items-center gap-3 rounded-xl bg-surface-2 p-4 sm:flex-row sm:items-start">
+            <p className="text-[13px] text-muted">1. Scan this code with your authenticator app.</p>
+            <div className="flex flex-col items-center gap-3 rounded-[10px] bg-surface-2 p-4 sm:flex-row sm:items-start">
               <QrCode value={setup.otpauthUrl} label="QR code for your authenticator app" />
               <div className="min-w-0 space-y-2 text-center sm:text-left">
                 <p className="text-[13px] text-muted">Can't scan? Enter this key manually:</p>
@@ -109,7 +109,7 @@ export function TotpSection() {
       >
         {codes && (
           <>
-            <ul className="grid grid-cols-2 gap-2 rounded-xl bg-surface-2 p-4 font-mono text-sm">
+            <ul className="grid grid-cols-2 gap-2 rounded-[10px] bg-surface-2 p-4 font-mono text-[13px]">
               {codes.map((c) => <li key={c}>{c}</li>)}
             </ul>
             <div className="mt-3 flex gap-1">

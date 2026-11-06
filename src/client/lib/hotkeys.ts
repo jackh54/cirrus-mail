@@ -40,7 +40,9 @@ export function useHotkeys(map: HotkeyMap, enabled = true): void {
   }, [enabled]);
 }
 
+/** `Mod` renders as ⌘ on Apple platforms and Ctrl elsewhere. */
 export const SHORTCUTS: { keys: string[]; label: string }[] = [
+  { keys: ['Mod+K'], label: 'Command menu' },
   { keys: ['c'], label: 'Compose' },
   { keys: ['/'], label: 'Search' },
   { keys: ['j', 'k'], label: 'Next / previous conversation' },

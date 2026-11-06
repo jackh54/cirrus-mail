@@ -10,7 +10,7 @@ export function QrCode({ value, size = 184, label }: { value: string; size?: num
   return (
     <svg width={size} height={size} viewBox={`0 0 ${dim} ${dim}`} role="img" aria-label={label} shapeRendering="crispEdges" className="rounded-lg">
       <rect width={dim} height={dim} fill="#fff" />
-      <path d={d} fill="#0E1424" />
+      <path d={d} fill="#15171C" />
     </svg>
   );
 }

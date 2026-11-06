@@ -5,7 +5,7 @@ import type { Folder, ThreadAction, ThreadDetail, ThreadSummary } from '@shared/
 import { api } from '../../lib/api';
 import { useHotkeys } from '../../lib/hotkeys';
 import { qk } from '../../lib/queries/keys';
-import { useThreads } from '../../lib/queries/mail';
+import { prefetchThread, useThreads } from '../../lib/queries/mail';
 import { useCompose } from '../compose/ComposeProvider';
 import type { ResolvedView } from './folderMeta';
 import { useMailRoute } from './useMailRoute';
@@ -23,6 +23,8 @@ export function useMailController(view: ResolvedView | null, folders: Folder[] |
   const query = useThreads(mb, view?.listKey ?? '', route.q, !!view);
   const threads = useMemo(() => query.data?.pages.flatMap((p) => p.items) ?? [], [query.data]);
   const [focusIndex, setFocusIndex] = useState(0);
+  // The keyboard cursor ring only shows once j/k has been used, and hides again on a pointer open.
+  const [cursorVisible, setCursorVisible] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const anchor = useRef<number | null>(null);
   const runAction = useThreadActions(mb, view?.listKey ?? null, folders);
@@ -30,6 +32,7 @@ export function useMailController(view: ResolvedView | null, folders: Folder[] |
   useEffect(() => {
     setSelected(new Set());
     setFocusIndex(0);
+    setCursorVisible(false);
     anchor.current = null;
   }, [mb, view?.listKey, route.q]);
 
@@ -39,6 +42,19 @@ export function useMailController(view: ResolvedView | null, folders: Folder[] |
     const i = threads.findIndex((t) => t.id === threadId);
     if (i >= 0) setFocusIndex(i);
   }, [threadId, threads]);
+
+  // With a thread open, warm its neighbours so j/k and the reader's arrows open from cache.
+  useEffect(() => {
+    if (!threadId) return;
+    const i = threads.findIndex((t) => t.id === threadId);
+    if (i < 0) return;
+    const ids = [threads[i + 1]?.id, threads[i - 1]?.id].filter((x): x is string => !!x);
+    const timer = setTimeout(() => ids.forEach((id) => prefetchThread(qc, mb, id)), 150);
+    return () => clearTimeout(timer);
+  }, [threadId, threads, qc, mb]);
+
+  const prefetch = useCallback((id: string) => prefetchThread(qc, mb, id), [qc, mb]);
+  const hideCursor = useCallback(() => setCursorVisible(false), []);
 
   const openThread = useCallback(
     async (t: ThreadSummary, i: number) => {
@@ -124,8 +140,12 @@ export function useMailController(view: ResolvedView | null, folders: Folder[] |
       const n = threads[Math.max(0, Math.min(threads.length - 1, (i < 0 ? focusIndex : i) + delta))];
       if (n && n.id !== threadId) navigate(route.threadUrl(n.id), { replace: true });
     } else {
-      setFocusIndex((i) => Math.max(0, Math.min(threads.length - 1, i + delta)));
-      if (focusIndex + delta >= threads.length - 5 && query.hasNextPage && !query.isFetchingNextPage) void query.fetchNextPage();
+      const next = cursorVisible ? Math.max(0, Math.min(threads.length - 1, focusIndex + delta)) : focusIndex;
+      setCursorVisible(true);
+      setFocusIndex(next);
+      const t = threads[next];
+      if (t) prefetch(t.id);
+      if (next >= threads.length - 5 && query.hasNextPage && !query.isFetchingNextPage) void query.fetchNextPage();
     }
   };
 
@@ -150,7 +170,7 @@ export function useMailController(view: ResolvedView | null, folders: Folder[] |
     Escape: () => selected.size && setSelected(new Set()),
   });
 
-  return { query, threads, focusIndex, selected, toggle, selectAll, openThread, act };
+  return { query, threads, focusIndex, cursorVisible, selected, toggle, selectAll, openThread, act, prefetch, hideCursor };
 }
 
 export type MailController = ReturnType<typeof useMailController>;
