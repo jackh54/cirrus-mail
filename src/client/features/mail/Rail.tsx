@@ -13,6 +13,7 @@ import { MOD_KEY, OPEN_PALETTE_EVENT } from '../palette/events';
 import { CustomFolders } from './CustomFolders';
 import { SYSTEM_ORDER, VIEW_META } from './folderMeta';
 import { OPEN_SHORTCUTS_EVENT } from './ShortcutsOverlay';
+import { RailLabels } from './RailLabels';
 import { Badge, railLinkClass } from './railStyles';
 
 interface Props {
@@ -80,6 +81,7 @@ export function Rail({ mailbox, folders, onNavigate }: Props) {
               ))}
         </ul>
         {folders && <CustomFolders mailboxId={mailbox.id} folders={folders.filter((f) => !f.role)} onNavigate={onNavigate} />}
+        {folders && <RailLabels mailboxId={mailbox.id} onNavigate={onNavigate} />}
       </div>
       <RailFooter onNavigate={onNavigate} />
     </nav>

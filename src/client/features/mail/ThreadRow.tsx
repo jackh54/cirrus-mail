@@ -5,6 +5,7 @@ import { IconButton } from '../../components/Button';
 import { cn } from '../../lib/cn';
 import { displayName, longDate, smartTime } from '../../lib/format';
 import { snoozeLabel } from '../../lib/snooze';
+import { RowLabels } from './labelMeta';
 
 /** ThreadSummary may carry `sendAt` for Scheduled items (not in the v0.1 contract yet). */
 type Row = ThreadSummary & { sendAt?: number | null };
@@ -79,15 +80,18 @@ export const ThreadRow = memo(function ThreadRow({
       <Clock size={12} strokeWidth={1.75} className="shrink-0" /> {t.sendAt ? `Scheduled for ${longDate(t.sendAt)}` : 'Scheduled'}
     </span>
   ) : (
-    <span className="min-w-0 truncate">
-      {t.snoozedUntil && (
-        <span className="mr-1.5 inline-flex items-center gap-1 text-selected-fg" title={longDate(t.snoozedUntil)}>
-          <AlarmClock size={12} strokeWidth={1.75} className="shrink-0" /> until {snoozeLabel(t.snoozedUntil)}
-        </span>
-      )}
-      <span className={cn('text-fg', unread && 'font-medium')}>{subject}</span>
-      {t.snippet && <span className="text-muted"> — {t.snippet}</span>}
-    </span>
+    <>
+      {t.labels.length > 0 && <RowLabels ids={t.labels} className="mr-1.5 self-center" />}
+      <span className="min-w-0 truncate">
+        {t.snoozedUntil && (
+          <span className="mr-1.5 inline-flex items-center gap-1 text-selected-fg" title={longDate(t.snoozedUntil)}>
+            <AlarmClock size={12} strokeWidth={1.75} className="shrink-0" /> until {snoozeLabel(t.snoozedUntil)}
+          </span>
+        )}
+        <span className={cn('text-fg', unread && 'font-medium')}>{subject}</span>
+        {t.snippet && <span className="text-muted"> — {t.snippet}</span>}
+      </span>
+    </>
   );
 
   return (
@@ -164,13 +168,14 @@ export const ThreadRow = memo(function ThreadRow({
             <div className="mt-0.5 flex text-[14px] leading-5">{line2}</div>
           ) : (
             <>
-              <div className={cn('mt-0.5 truncate text-[14px] leading-5 text-fg', unread && 'font-medium')}>
+              <div className={cn('mt-0.5 flex items-center gap-1.5 text-[14px] leading-5 text-fg', unread && 'font-medium')}>
+                {t.labels.length > 0 && <RowLabels ids={t.labels} />}
                 {t.snoozedUntil && (
-                  <span className="mr-1.5 inline-flex items-center gap-1 font-normal text-selected-fg">
+                  <span className="inline-flex shrink-0 items-center gap-1 font-normal text-selected-fg">
                     <AlarmClock size={13} strokeWidth={1.75} className="shrink-0" /> until {snoozeLabel(t.snoozedUntil)}
                   </span>
                 )}
-                {subject}
+                <span className="min-w-0 truncate">{subject}</span>
               </div>
               {t.snippet && <div className="truncate text-[14px] leading-5 text-muted compact:hidden">{t.snippet}</div>}
             </>

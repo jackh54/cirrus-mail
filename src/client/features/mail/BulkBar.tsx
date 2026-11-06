@@ -1,4 +1,4 @@
-import { AlarmClock, Archive, FolderInput, Mail, MailOpen, ShieldAlert, ShieldCheck, Star, StarOff, Trash2, X } from 'lucide-react';
+import { AlarmClock, Archive, FolderInput, Mail, MailOpen, ShieldAlert, ShieldCheck, Star, StarOff, Tag, Trash2, X } from 'lucide-react';
 import type { Folder, ThreadAction } from '@shared/api';
 import { IconButton } from '../../components/Button';
 import { Menu } from '../../components/Menu';
@@ -12,9 +12,10 @@ interface Props {
   onAction: (a: ThreadAction, folderId?: string) => void;
   onSelectAll: (on: boolean) => void;
   onSnooze: () => void;
+  onLabel: () => void;
 }
 
-export function BulkBar({ count, total, role, folders, onAction, onSelectAll, onSnooze }: Props) {
+export function BulkBar({ count, total, role, folders, onAction, onSelectAll, onSnooze, onLabel }: Props) {
   const trashLike = role === 'trash' || role === 'spam';
   const movable = folders.filter((f) => f.role === 'inbox' || f.role === 'archive' || !f.role);
   return (
@@ -44,6 +45,7 @@ export function BulkBar({ count, total, role, folders, onAction, onSelectAll, on
       <IconButton label="Mark as unread" shortcut="⇧U" onClick={() => onAction('unread')}><Mail size={16} /></IconButton>
       <IconButton label="Star" onClick={() => onAction('star')}><Star size={16} /></IconButton>
       <IconButton label="Remove star" className="max-sm:hidden" onClick={() => onAction('unstar')}><StarOff size={16} /></IconButton>
+      <IconButton label="Label as" shortcut="L" onClick={onLabel}><Tag size={16} /></IconButton>
       <Menu
         label="Move to folder"
         items={movable.length ? movable.map((f) => ({ label: f.name, onSelect: () => onAction('move', f.id) })) : [{ kind: 'heading', label: 'No folders' }]}

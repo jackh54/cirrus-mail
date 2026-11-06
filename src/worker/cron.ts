@@ -1,5 +1,6 @@
 // scheduled(): every minute send due scheduled messages; at minute 0 purge and prune.
 import { deleteMessagesForever } from './lib/db';
+import { backfillInlineBodies } from './lib/inline-backfill';
 import { utcDay } from './lib/sendcount';
 import { wakeDueSnoozed } from './snooze';
 import { checkScheduled, claimForSend, mailboxMemberIds, performSend, recordOutcome } from './outbound/send';
@@ -71,6 +72,11 @@ export async function runCron(env: Env, scheduledTime: number): Promise<void> {
     await wakeDueSnoozed(env);
   } catch (e) {
     console.error('cron snooze error', (e as Error).name);
+  }
+  try {
+    await backfillInlineBodies(env);
+  } catch (e) {
+    console.error('cron inline backfill error', (e as Error).name);
   }
   if (new Date(scheduledTime).getUTCMinutes() === 0) {
     try {

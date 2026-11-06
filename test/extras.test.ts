@@ -166,6 +166,24 @@ describe('snooze', () => {
     expect(woke).toBe(3);
   });
 
+  it('lists Snoozed by wake time, soonest first, with pagination', async () => {
+    const t = await setup();
+    const a = await deliver(t.address, { subject: 'A' });
+    const b = await deliver(t.address, { subject: 'B' });
+    const c = await deliver(t.address, { subject: 'C' });
+    const now = Date.now();
+    await act(t, { threadIds: [a.threadId], action: 'snooze', until: now + 5 * HOUR });
+    await act(t, { threadIds: [b.threadId], action: 'snooze', until: now + 1 * HOUR });
+    await act(t, { threadIds: [c.threadId], action: 'snooze', until: now + 3 * HOUR });
+    const list = await inboxList(t, 'snoozed');
+    expect(list.map((x) => x.id)).toEqual([b.threadId, c.threadId, a.threadId]);
+    expect(list.every((x) => x.lastMessageAt > 0 && x.lastMessageAt <= Date.now())).toBe(true);
+    const p1 = await (await call(`${t.base}/threads?folder=snoozed&limit=2`, { cookie: t.user.cookie })).json<Page<ThreadSummary>>();
+    expect(p1.items.map((x) => x.id)).toEqual([b.threadId, c.threadId]);
+    const p2 = await (await call(`${t.base}/threads?folder=snoozed&limit=2&cursor=${p1.nextCursor}`, { cookie: t.user.cookie })).json<Page<ThreadSummary>>();
+    expect(p2.items.map((x) => x.id)).toEqual([a.threadId]);
+  });
+
   it('cannot snooze another mailbox’s thread', async () => {
     const t = await setup();
     const a = await deliver(t.address);

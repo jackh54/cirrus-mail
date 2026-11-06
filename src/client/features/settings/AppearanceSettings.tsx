@@ -1,10 +1,12 @@
 import type { ReactNode } from 'react';
 import { Monitor, Moon, Rows3, Rows4, Sun } from 'lucide-react';
 import type { Density, Theme } from '@shared/api';
+import { Switch } from '../../components/Field';
 import { PageTitle, Section } from '../../components/PageShell';
 import { useToast } from '../../components/Toast';
 import { cn } from '../../lib/cn';
 import { errorMessage } from '../../lib/api';
+import { useAiEnabled } from '../../lib/queries/ai';
 import { useMeData, useUpdateMe } from '../../lib/queries/me';
 
 function Choice<T extends string>({ name, value, current, onChange, icon, label }: { name: string; value: T; current: T; onChange: (v: T) => void; icon: ReactNode; label: string }) {
@@ -30,6 +32,7 @@ export function AppearanceSettings() {
   const onError = (e: unknown) => toast({ tone: 'error', title: 'Not saved', description: errorMessage(e) });
   const setTheme = (theme: Theme) => update.mutate({ theme }, { onError });
   const setDensity = (density: Density) => update.mutate({ density }, { onError });
+  const aiOn = useAiEnabled();
 
   return (
     <>
@@ -49,6 +52,17 @@ export function AppearanceSettings() {
           <Choice name="density" value="compact" current={user.density} onChange={setDensity} icon={<Rows4 size={20} />} label="Compact" />
         </fieldset>
       </Section>
+      {aiOn && (
+        <Section title="Inbox tabs">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <p className="text-[13px] font-medium">Sort the Inbox into tabs</p>
+              <p className="text-[12px] text-muted">Primary, Updates, Promotions, Social and Forums. Turn this off to see every conversation in one list.</p>
+            </div>
+            <Switch checked={user.categoryTabs} label="Sort the Inbox into tabs" onChange={(categoryTabs) => update.mutate({ categoryTabs }, { onError })} />
+          </div>
+        </Section>
+      )}
     </>
   );
 }

@@ -29,6 +29,10 @@
     { "name": "EMAIL" }
   ],
 
+  // Optional AI triage (inbox categories, thread summaries). Off until an admin turns it on in Admin > Overview;
+  // message text then goes to Workers AI on this account and is billed by Cloudflare per use.
+  "ai": { "binding": "AI" },
+
   // Scheduled sends + hourly cleanup.
   "triggers": { "crons": ["* * * * *"] },
 

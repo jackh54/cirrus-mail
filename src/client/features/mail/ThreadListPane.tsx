@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { useLatest } from '../../lib/useLatest';
 import { useQueryClient } from '@tanstack/react-query';
-import { AlarmClock, Archive, BellOff, Bell, CheckSquare, Mail, MailOpen, Menu as MenuIcon, RefreshCw, Star, Trash, Trash2 } from 'lucide-react';
+import { AlarmClock, Archive, Bell, BellOff, CheckSquare, Mail, MailOpen, Menu as MenuIcon, RefreshCw, Star, Tag, Trash, Trash2 } from 'lucide-react';
 import type { Folder, MailboxSummary, ThreadAction, ThreadSummary } from '@shared/api';
 import { ActionSheet, type SheetAction } from '../../components/ActionSheet';
 import { Button, IconButton } from '../../components/Button';
@@ -13,11 +13,15 @@ import { useToast } from '../../components/Toast';
 import { cn } from '../../lib/cn';
 import { errorMessage } from '../../lib/api';
 import { qk } from '../../lib/queries/keys';
+import { useCategoryCounts } from '../../lib/queries/ai';
 import { emptyFolder } from '../../lib/queries/mail';
 import { currentDensity } from '../../lib/theme';
 import { identitiesOf } from '../compose/identities';
 import { BulkBar } from './BulkBar';
+import { CategoryTabs } from './CategoryTabs';
+import { setCategoryTab } from './categoryTab';
 import { VIEW_META, type ResolvedView } from './folderMeta';
+import { LabelDot } from './labelMeta';
 import { SearchBox } from './SearchBox';
 import { SwipeRow, type SwipeAction } from './SwipeRow';
 import { rowHeight, ThreadRow } from './ThreadRow';
@@ -49,6 +53,7 @@ export function ThreadListPane({ mailbox, view, folders, ctl, onOpenMenu, mobile
   const reducedMotion = useMediaQuery('(prefers-reduced-motion: reduce)');
   const [sheetFor, setSheetFor] = useState<ThreadSummary | null>(null);
   const myEmails = useMemo(() => new Set(identitiesOf(mailbox).map((i) => i.email.toLowerCase())), [mailbox]);
+  const counts = useCategoryCounts(mailbox.id, ctl.tabsOn);
   const { query, threads, focusIndex, cursorVisible, selected, toggle, selectAll, openThread, act, prefetch, hideCursor } = ctl;
   const meta = VIEW_META[view.role];
   const selecting = selected.size > 0;
@@ -131,6 +136,7 @@ export function ThreadListPane({ mailbox, view, folders, ctl, onOpenMenu, mobile
           folders={folders}
           onSelectAll={selectAll}
           onSnooze={() => ctl.openSnooze([...selected])}
+          onLabel={() => ctl.openLabels([...selected])}
           onAction={(a, folderId) => void act(a, [...selected], folderId)}
         />
       ) : (
@@ -154,6 +160,7 @@ export function ThreadListPane({ mailbox, view, folders, ctl, onOpenMenu, mobile
           <h1 className={cn('min-w-0 shrink truncate text-[14px] font-semibold tracking-[-0.01em]', onOpenMenu && 'pl-4')}>
             {view.role === 'search' ? <>Results for “{q}”</> : view.label}
           </h1>
+          {view.tag && <LabelDot color={view.tag.color} className="shrink-0" />}
           {view.folder && view.folder.unread > 0 && <span className="tnum shrink-0 text-[12px] text-faint">{view.folder.unread}</span>}
           <span className="flex-1" />
           {(view.role === 'trash' || view.role === 'spam') && view.folder && threads.length > 0 && (
@@ -165,6 +172,8 @@ export function ThreadListPane({ mailbox, view, folders, ctl, onOpenMenu, mobile
           </IconButton>
         </header>
       )}
+
+      {ctl.tabsOn && <CategoryTabs current={ctl.category ?? 'primary'} counts={counts.data} onSelect={setCategoryTab} />}
 
       {touch && (
         <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-12 z-10 flex h-28 justify-center overflow-hidden">
@@ -215,14 +224,14 @@ export function ThreadListPane({ mailbox, view, folders, ctl, onOpenMenu, mobile
           open
           title={sheetFor.subject || '(no subject)'}
           onClose={() => setSheetFor(null)}
-          actions={sheetActions(sheetFor, view.role, (a) => void act(a, [sheetFor.id]), () => toggle(sheetFor.id, threads.indexOf(sheetFor), false), () => ctl.openSnooze([sheetFor.id]))}
+          actions={sheetActions(sheetFor, view.role, (a) => void act(a, [sheetFor.id]), () => toggle(sheetFor.id, threads.indexOf(sheetFor), false), () => ctl.openSnooze([sheetFor.id]), () => ctl.openLabels([sheetFor.id]))}
         />
       )}
     </section>
   );
 }
 
-function sheetActions(t: ThreadSummary, role: ResolvedView['role'], run: (a: ThreadAction) => void, select: () => void, snooze: () => void): SheetAction[] {
+function sheetActions(t: ThreadSummary, role: ResolvedView['role'], run: (a: ThreadAction) => void, select: () => void, snooze: () => void, label: () => void): SheetAction[] {
   const unread = t.unreadCount > 0;
   const trashLike = role === 'trash' || role === 'spam';
   return [
@@ -238,6 +247,7 @@ function sheetActions(t: ThreadSummary, role: ResolvedView['role'], run: (a: Thr
     t.muted
       ? { label: 'Unmute', icon: <Bell />, onSelect: () => run('unmute') }
       : { label: 'Mute', icon: <BellOff />, onSelect: () => run('mute') },
+    { label: 'Label as…', icon: <Tag />, onSelect: label },
     { label: 'Select', icon: <CheckSquare />, onSelect: select },
   ];
 }

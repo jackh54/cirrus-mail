@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { Forward, MailX, Reply, ReplyAll } from 'lucide-react';
-import type { Folder, MailboxSummary, MessageFull, ThreadAction } from '@shared/api';
+import type { Folder, MailboxSummary, MessageFull, ThreadAction, ThreadCategory } from '@shared/api';
 import { Button, tipText } from '../../components/Button';
 import { EmptyState } from '../../components/EmptyState';
 import { committed, EDGE_PX, settle, trackHorizontalDrag } from '../../components/gestures';
@@ -12,13 +12,19 @@ import { api, errorMessage } from '../../lib/api';
 import { cn } from '../../lib/cn';
 import { useHotkeys } from '../../lib/hotkeys';
 import { qk } from '../../lib/queries/keys';
+import { useAiEnabled, useCategoryTabsOn, useSetCategory } from '../../lib/queries/ai';
 import { useThread } from '../../lib/queries/mail';
 import { useCompose } from '../compose/ComposeProvider';
 import { draftApi } from '../compose/draftApi';
 import { identitiesOf } from '../compose/identities';
 import type { ResolvedView } from './folderMeta';
+import { CATEGORY_LABELS } from './categoryTab';
+import { ReaderLabels } from './labelMeta';
 import { MessageCard } from './MessageCard';
 import { ReaderActionBar, ReaderToolbar } from './ReaderToolbar';
+import { SummaryPanel, SUMMARISE_EVENT } from './SummaryPanel';
+import { UNSUBSCRIBE_EVENT } from '../palette/events';
+import { UnsubscribeDialog } from './UnsubscribeDialog';
 import type { MailController } from './useMailController';
 import { useMailRoute } from './useMailRoute';
 
@@ -56,6 +62,43 @@ export function ReaderPane({ mailbox, threadId, view, folders, ctl, showBack, mo
   const latest: MessageFull | undefined = sent[sent.length - 1];
   // "Unsubscribe" is offered on the latest message that carries a way to do it.
   const unsubscribeId = [...messages].reverse().find((m) => m.unsubscribe)?.id;
+  // The palette's "Unsubscribe" opens the same confirmation as the header link.
+  const [unsubOpen, setUnsubOpen] = useState(false);
+  const unsubRef = useRef<string | undefined>(undefined);
+  unsubRef.current = unsubscribeId;
+  useEffect(() => {
+    const on = () => {
+      if (unsubRef.current) setUnsubOpen(true);
+      else toast({ title: 'No unsubscribe option', description: 'None of these messages offers a verified way to unsubscribe.' });
+    };
+    window.addEventListener(UNSUBSCRIBE_EVENT, on);
+    return () => window.removeEventListener(UNSUBSCRIBE_EVENT, on);
+  }, [toast]);
+
+  // Optional AI triage: a summary for long conversations, and moving a conversation between Inbox tabs.
+  const aiOn = useAiEnabled();
+  const tabsOn = useCategoryTabsOn();
+  const setCategory = useSetCategory(mb);
+  const [summaryAsked, setSummaryAsked] = useState(false);
+  useEffect(() => {
+    const ask = () => setSummaryAsked(true);
+    window.addEventListener(SUMMARISE_EVENT, ask);
+    return () => window.removeEventListener(SUMMARISE_EVENT, ask);
+  }, []);
+  const longThread = sent.length >= 3 || sent.some((m) => (m.text?.length ?? 0) > 2500);
+  const moveToTab = (category: ThreadCategory, rememberSender = false) =>
+    setCategory.mutate(
+      { threadId, category, rememberSender },
+      {
+        onSuccess: () =>
+          toast(
+            rememberSender
+              ? { tone: 'success', title: `Mail from this sender will go to ${CATEGORY_LABELS[category]}` }
+              : { tone: 'success', title: `Moved to ${CATEGORY_LABELS[category]}`, action: { label: 'Always for this sender', onClick: () => moveToTab(category, true) } },
+          ),
+        onError: (e) => toast({ tone: 'error', title: "Couldn't move", description: errorMessage(e) }),
+      },
+    );
 
   // Latest message and unread ones start expanded.
   useEffect(() => {
@@ -145,7 +188,9 @@ export function ReaderPane({ mailbox, threadId, view, folders, ctl, showBack, mo
         onAction={act}
         onSnooze={() => ctl.openSnooze([threadId])}
         onStep={ctl.threads.length > 1 ? step : undefined}
+        onLabels={() => ctl.openLabels([threadId])}
         mobile={mobile}
+        tabs={tabsOn && view?.role === 'inbox' && data ? { current: data.thread.category, onMove: moveToTab } : undefined}
       />
       <div ref={scroller} tabIndex={-1} className={cn('min-h-0 flex-1 overflow-y-auto outline-none', mobile && 'overscroll-contain')}>
         {isPending ? (
@@ -155,6 +200,8 @@ export function ReaderPane({ mailbox, threadId, view, folders, ctl, showBack, mo
         ) : (
           <div className={cn('mx-auto max-w-[800px] px-4 sm:px-8', mobile ? 'pt-4 pb-8' : 'pt-6 pb-16')}>
             <h1 className={cn('text-[18px] leading-7 font-semibold tracking-[-0.01em] text-balance text-fg', mobile ? 'mb-2 break-words' : 'mb-4')}>{data.thread.subject || '(no subject)'}</h1>
+            <ReaderLabels ids={data.thread.labels} />
+            {aiOn && (longThread || summaryAsked) && <SummaryPanel mailboxId={mb} threadId={threadId} autostart={summaryAsked} />}
             <div className="divide-y divide-border border-y border-border">
               {messages.map((m) => (
                 <MessageCard
@@ -191,7 +238,10 @@ export function ReaderPane({ mailbox, threadId, view, folders, ctl, showBack, mo
           </div>
         )}
       </div>
-      {mobile && <ReaderActionBar role={view?.role} folders={folders} onAction={act} onReply={(mode) => reply(mode)} onSnooze={() => ctl.openSnooze([threadId])} canReply={!!latest} />}
+      {unsubOpen && unsubscribeId && (
+        <UnsubscribeDialog mailboxId={mb} message={messages.find((m) => m.id === unsubscribeId)!} onClose={() => setUnsubOpen(false)} />
+      )}
+      {mobile && <ReaderActionBar role={view?.role} folders={folders} onAction={act} onReply={(mode) => reply(mode)} onSnooze={() => ctl.openSnooze([threadId])} onLabels={() => ctl.openLabels([threadId])} canReply={!!latest} />}
     </section>
   );
 }

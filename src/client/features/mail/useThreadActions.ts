@@ -4,7 +4,7 @@ import { useConfirm } from '../../components/Confirm';
 import { useToast } from '../../components/Toast';
 import { errorMessage } from '../../lib/api';
 import { longDate, pluralize } from '../../lib/format';
-import { useThreadAction } from '../../lib/queries/mail';
+import { isLabelKey, useThreadAction } from '../../lib/queries/mail';
 
 const DONE: Partial<Record<ThreadAction, string>> = {
   archive: 'Archived',
@@ -42,7 +42,7 @@ export function useThreadActions(mb: string, listKey: string | null, folders: Fo
         });
         if (!ok) return false;
       }
-      const canUndo = UNDOABLE.includes(action) && !!listKey && listKey !== 'starred' && listKey !== 'snoozed' && listKey !== 'search';
+      const canUndo = UNDOABLE.includes(action) && !!listKey && listKey !== 'starred' && listKey !== 'snoozed' && listKey !== 'search' && !isLabelKey(listKey);
       const reverse = REVERSE[action];
       const targetName = action === 'move' ? folders?.find((f) => f.id === folderId)?.name : undefined;
       mutation.mutate(

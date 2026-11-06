@@ -1,8 +1,9 @@
 import type { ReactNode } from 'react';
-import { AlarmClock, Archive, Clock, FileText, Folder as FolderIcon, Inbox, Search, Send, ShieldAlert, Star, Trash2 } from 'lucide-react';
-import type { Folder, FolderRole } from '@shared/api';
+import { AlarmClock, Archive, Clock, FileText, Folder as FolderIcon, Inbox, Search, Send, ShieldAlert, Star, Tag, Trash2 } from 'lucide-react';
+import type { Folder, FolderRole, Label } from '@shared/api';
+import { LABEL_KEY } from '../../lib/queries/mail';
 
-export type ViewRole = FolderRole | 'starred' | 'snoozed' | 'search' | 'custom';
+export type ViewRole = FolderRole | 'starred' | 'snoozed' | 'search' | 'custom' | 'label';
 
 interface Meta {
   label: string;
@@ -21,7 +22,8 @@ export const VIEW_META: Record<ViewRole, Meta> = {
   archive: { label: 'Archive', icon: (s) => <Archive size={s} />, emptyTitle: 'Archive is empty', emptyBody: 'Press e to archive a conversation: out of the inbox, never deleted.' },
   spam: { label: 'Spam', icon: (s) => <ShieldAlert size={s} />, emptyTitle: 'No spam', emptyBody: 'Suspicious mail is filtered here and removed after 30 days.' },
   trash: { label: 'Trash', icon: (s) => <Trash2 size={s} />, emptyTitle: 'Trash is empty', emptyBody: 'Deleted conversations stay here for 30 days before they are gone for good.' },
-  search: { label: 'Search', icon: (s) => <Search size={s} />, emptyTitle: 'No results', emptyBody: 'Try fewer words, or operators like from:, subject:, has:attachment or is:unread.' },
+  search: { label: 'Search', icon: (s) => <Search size={s} />, emptyTitle: 'No results', emptyBody: 'Try fewer words, or operators like from:, subject:, label:, has:attachment or is:unread.' },
+  label: { label: 'Label', icon: (s) => <Tag size={s} />, emptyTitle: 'Nothing with this label', emptyBody: 'Press l on a conversation to add the label, or apply it automatically with a filter.' },
   custom: { label: 'Folder', icon: (s) => <FolderIcon size={s} />, emptyTitle: 'This folder is empty', emptyBody: 'Move conversations here from the reader, or route mail here with a filter.' },
 };
 
@@ -37,11 +39,17 @@ export interface ResolvedView {
   listKey: string;
   role: ViewRole;
   folder: Folder | null;
+  /** Set for a label view (URL segment `label:<id>`). */
+  tag?: Label;
   label: string;
 }
 
 /** The URL segment may be a folder id, a role name ("inbox"), `starred` or `search`. */
-export function resolveView(folders: Folder[] | undefined, segment: string): ResolvedView | null {
+export function resolveView(folders: Folder[] | undefined, segment: string, labels?: Label[]): ResolvedView | null {
+  if (segment.startsWith(LABEL_KEY)) {
+    const tag = labels?.find((l) => l.id === segment.slice(LABEL_KEY.length));
+    return tag ? { listKey: segment, role: 'label', folder: null, tag, label: tag.name } : null;
+  }
   if (segment === 'starred') return { listKey: 'starred', role: 'starred', folder: null, label: 'Starred' };
   if (segment === 'snoozed') return { listKey: 'snoozed', role: 'snoozed', folder: null, label: 'Snoozed' };
   if (segment === 'search') return { listKey: 'search', role: 'search', folder: null, label: 'Search' };

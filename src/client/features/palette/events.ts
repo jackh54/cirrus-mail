@@ -4,6 +4,7 @@ export const OPEN_PALETTE_EVENT = 'cirrus:palette';
 /** Dispatched by palette commands; the mail controller owns the targets (selection, open or focused thread). */
 export const SNOOZE_EVENT = 'cirrus:snooze';
 export const MUTE_EVENT = 'cirrus:mute';
+export const UNSUBSCRIBE_EVENT = 'cirrus:unsubscribe';
 
 export const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 

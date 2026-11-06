@@ -53,6 +53,7 @@ export const SHORTCUTS: { keys: string[]; label: string }[] = [
   { keys: ['s'], label: 'Star / unstar' },
   { keys: ['b'], label: 'Snooze' },
   { keys: ['m'], label: 'Mute / unmute conversation' },
+  { keys: ['l'], label: 'Label as…' },
   { keys: ['r'], label: 'Reply' },
   { keys: ['a'], label: 'Reply all' },
   { keys: ['f'], label: 'Forward' },

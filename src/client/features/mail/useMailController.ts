@@ -5,9 +5,12 @@ import type { Folder, ThreadAction, ThreadDetail, ThreadSummary } from '@shared/
 import { api } from '../../lib/api';
 import { useHotkeys } from '../../lib/hotkeys';
 import { qk } from '../../lib/queries/keys';
+import { useCategoryTabsOn } from '../../lib/queries/ai';
 import { prefetchThread, useThreads } from '../../lib/queries/mail';
+import { OPEN_LABEL_PICKER_EVENT } from './labelMeta';
 import { useCompose } from '../compose/ComposeProvider';
 import { MUTE_EVENT, SNOOZE_EVENT } from '../palette/events';
+import { useCategoryTab } from './categoryTab';
 import type { ResolvedView } from './folderMeta';
 import { useMailRoute } from './useMailRoute';
 import { useThreadActions } from './useThreadActions';
@@ -22,7 +25,11 @@ export function useMailController(view: ResolvedView | null, folders: Folder[] |
   const navigate = useNavigate();
   const compose = useCompose();
   const qc = useQueryClient();
-  const query = useThreads(mb, view?.listKey ?? '', route.q, !!view);
+  // Inbox tabs (optional AI triage): only the Inbox, and only while an admin has AI on and the user keeps tabs on.
+  const tabsOn = useCategoryTabsOn() && view?.role === 'inbox';
+  const tab = useCategoryTab();
+  const category = tabsOn ? tab : undefined;
+  const query = useThreads(mb, view?.listKey ?? '', route.q, !!view, category);
   const threads = useMemo(() => query.data?.pages.flatMap((p) => p.items) ?? [], [query.data]);
   const [focusIndex, setFocusIndex] = useState(0);
   // The keyboard cursor ring only shows once j/k has been used, and hides again on a pointer open.
@@ -31,13 +38,16 @@ export function useMailController(view: ResolvedView | null, folders: Folder[] |
   const [snoozeIds, setSnoozeIds] = useState<string[] | null>(null);
   const anchor = useRef<number | null>(null);
   const runAction = useThreadActions(mb, view?.listKey ?? null, folders);
+  // Threads the label picker is open for (null = closed).
+  const [labelTargets, setLabelTargets] = useState<string[] | null>(null);
 
   useEffect(() => {
     setSelected(new Set());
     setFocusIndex(0);
     setCursorVisible(false);
+    setLabelTargets(null);
     anchor.current = null;
-  }, [mb, view?.listKey, route.q]);
+  }, [mb, view?.listKey, route.q, category]);
 
   // Keep the keyboard cursor on the open thread.
   useEffect(() => {
@@ -166,6 +176,28 @@ export function useMailController(view: ResolvedView | null, folders: Folder[] |
       window.removeEventListener(MUTE_EVENT, mute);
     };
   }, []);
+  const openLabels = useCallback(
+    (ids?: string[]) => {
+      const list = ids ?? targets();
+      if (list.length) setLabelTargets(list);
+    },
+    [targets],
+  );
+  const closeLabels = useCallback(() => setLabelTargets(null), []);
+  // The palette (and anything else) opens the picker through a window event.
+  useEffect(() => {
+    const on = () => openLabels();
+    window.addEventListener(OPEN_LABEL_PICKER_EVENT, on);
+    return () => window.removeEventListener(OPEN_LABEL_PICKER_EVENT, on);
+  }, [openLabels]);
+  // What the client knows about the targets, so the picker can show which labels they carry.
+  const labelThreads = useMemo(
+    () => (labelTargets ?? []).flatMap((id) => {
+      const t = threads.find((x) => x.id === id) ?? qc.getQueryData<ThreadDetail>(qk.thread(mb, id))?.thread;
+      return t ? [t] : [];
+    }),
+    [labelTargets, threads, qc, mb],
+  );
 
   const step = (delta: number) => {
     if (!threads.length) return;
@@ -201,12 +233,16 @@ export function useMailController(view: ResolvedView | null, folders: Folder[] |
     s: starToggle,
     b: () => openSnooze(),
     m: muteToggle,
+    l: () => openLabels(),
     I: () => void act('read'),
     U: () => void act('unread'),
     Escape: () => selected.size && setSelected(new Set()),
   });
 
-  return { query, threads, focusIndex, cursorVisible, selected, toggle, selectAll, openThread, act, prefetch, hideCursor, snoozeIds, openSnooze, closeSnooze };
+  return {
+    query, tabsOn, category, threads, focusIndex, cursorVisible, selected, toggle, selectAll, openThread, act, prefetch, hideCursor,
+    labelTargets, labelThreads, snoozeIds, openSnooze, closeSnooze, openLabels, closeLabels,
+  };
 }
 
 export type MailController = ReturnType<typeof useMailController>;

@@ -27,6 +27,8 @@ export function usePolling(mb: string) {
           since.current = Math.max(since.current, ...res.latest.map((t) => t.lastMessageAt));
           void qc.invalidateQueries({ queryKey: qk.threadsAll(mb) });
           void qc.invalidateQueries({ queryKey: qk.folders(mb) });
+          void qc.invalidateQueries({ queryKey: qk.categories(mb) });
+          void qc.invalidateQueries({ queryKey: qk.labels(mb) });
           void qc.invalidateQueries({ queryKey: qk.me });
           notify(res);
         }
