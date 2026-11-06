@@ -1,0 +1,10 @@
+{
+  // Landing page only: static assets, no Worker code.
+  // Deploy from this folder with `npx wrangler deploy --config wrangler.jsonc`.
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "cirrus-mail-site",
+  "compatibility_date": "2026-11-01",
+  "assets": {
+    "directory": "."
+  }
+}

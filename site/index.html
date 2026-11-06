@@ -1,0 +1,430 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Cirrus Mail: your own email suite, on your own Cloudflare</title>
+  <meta name="description" content="Cirrus Mail is an open-source email suite that runs entirely on your own Cloudflare account: Email Routing in, Email Sending out, D1 and R2 storage, and a fast web client.">
+  <meta name="theme-color" content="#0E1424" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#F7F8FC" media="(prefers-color-scheme: light)">
+  <meta property="og:title" content="Cirrus Mail">
+  <meta property="og:description" content="Your own email suite, on your own Cloudflare. Open source, MIT.">
+  <meta property="og:type" content="website">
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="assets/fonts.css">
+  <link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<!-- Icon sprite: drawn for this page, 24px grid, stroke icons. -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <linearGradient id="mk" x1="6" y1="55" x2="57" y2="8" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#4F6BFF"/><stop offset=".55" stop-color="#4A9BEF"/><stop offset="1" stop-color="#38D6C4"/>
+    </linearGradient>
+    <symbol id="i-mark" viewBox="0 0 64 64">
+      <g fill="none" stroke="url(#mk)" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M38 22H15a9 9 0 0 0-9 9v15a9 9 0 0 0 9 9h34a9 9 0 0 0 9-9V33"/>
+        <path d="M11 27c6 6.5 13 11 21 11s14-5 19-11c3.5-4 6-8 6-12.5a6 6 0 0 0-12 0 3.2 3.2 0 0 0 5.4 2.3"/>
+      </g>
+    </symbol>
+    <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M3 13h4.5l1.5 3h6l1.5-3H21"/><path d="M5.5 5h13L21 13v5.5a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5V13z"/></symbol>
+    <symbol id="i-star" viewBox="0 0 24 24"><path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"/></symbol>
+    <symbol id="i-send" viewBox="0 0 24 24"><path d="M21 3L10.5 13.5"/><path d="M21 3l-6.5 18-4-7.5L3 9.5z"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></symbol>
+    <symbol id="i-archive" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="4.5" rx="1.2"/><path d="M5 8.5V18a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8.5"/><path d="M10 12.5h4"/></symbol>
+    <symbol id="i-spam" viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 4.8-3.4 8-8 9-4.6-1-8-4.2-8-9V6z"/><path d="M9.5 9.5l5 5M14.5 9.5l-5 5"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16"/><path d="M9.5 7V4.5h5V7"/><path d="M6 7l1 13h10l1-13"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></symbol>
+    <symbol id="i-clip" viewBox="0 0 24 24"><path d="M20 11.5l-8.2 8.2a5 5 0 0 1-7.1-7.1l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8"/></symbol>
+    <symbol id="i-pen" viewBox="0 0 24 24"><path d="M4 20h4L19.5 8.5l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></symbol>
+    <symbol id="i-reply" viewBox="0 0 24 24"><path d="M9.5 7.5L4.5 12l5 4.5"/><path d="M4.5 12H14a6 6 0 0 1 6 6v1"/></symbol>
+    <symbol id="i-replyall" viewBox="0 0 24 24"><path d="M11 7.5L6 12l5 4.5"/><path d="M7 7.5L2 12l5 4.5"/><path d="M6 12h8a6 6 0 0 1 6 6v1"/></symbol>
+    <symbol id="i-forward" viewBox="0 0 24 24"><path d="M14.5 7.5l5 4.5-5 4.5"/><path d="M19.5 12H10a6 6 0 0 0-6 6v1"/></symbol>
+    <symbol id="i-threads" viewBox="0 0 24 24"><path d="M4 4h10a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H9l-4 3.5V14H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"/><path d="M19 8h1a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-1v3l-3.5-3H12"/></symbol>
+    <symbol id="i-filter" viewBox="0 0 24 24"><path d="M3.5 5h17l-6.5 7.5V19l-4 2v-8.5z"/></symbol>
+    <symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8"/><path d="M18 14.2a6.5 6.5 0 0 1 3.5 5.8"/></symbol>
+    <symbol id="i-at" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M16 8v5a2.5 2.5 0 0 0 5 0v-1a9 9 0 1 0-3.5 7.1"/></symbol>
+    <symbol id="i-phone" viewBox="0 0 24 24"><rect x="6.5" y="2.5" width="11" height="19" rx="2.5"/><path d="M11 18.5h2"/></symbol>
+    <symbol id="i-keyboard" viewBox="0 0 24 24"><rect x="2.5" y="6" width="19" height="12" rx="2"/><path d="M6.5 10h.01M10 10h.01M14 10h.01M17.5 10h.01M7.5 14h9"/></symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></symbol>
+    <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="M10.8 12.2L20 3"/><path d="M16.5 6.5l3 3M14.5 8.5l2 2"/></symbol>
+    <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="M4 18l5-5 3.5 3.5L16 13l5 5"/><path d="M3 3l18 18"/></symbol>
+    <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></symbol>
+    <symbol id="i-eyeoff" viewBox="0 0 24 24"><path d="M3 3l18 18"/><path d="M10.6 6.1c.5-.1.9-.1 1.4-.1 5 0 8.5 4 9.5 6-.4.9-1.2 2.1-2.3 3.2"/><path d="M6.6 6.6C4.6 7.9 3.2 9.8 2.5 12c1 2 4.5 6 9.5 6 1.6 0 3-.4 4.3-1"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 4.8-3.4 8-8 9-4.6-1-8-4.2-8-9V6z"/><path d="M8.5 12l2.5 2.5 4.5-5"/></symbol>
+    <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 2.5L4.5 14H11l-1 7.5L19.5 10H13z"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M4.6 4.6L6 6M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4L6 18M18 6l1.4-1.4"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></symbol>
+    <symbol id="i-code" viewBox="0 0 24 24"><path d="M8 7l-5 5 5 5"/><path d="M16 7l5 5-5 5"/><path d="M13.5 4.5l-3 15"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3.5l9.5 16.5h-19z"/><path d="M12 10v4.5M12 17.5h.01"/></symbol>
+    <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c2.5 2.5 3.8 5.5 3.8 9s-1.3 6.5-3.8 9c-2.5-2.5-3.8-5.5-3.8-9S9.5 5.5 12 3z"/></symbol>
+  </defs>
+</svg>
+
+<header class="nav">
+  <div class="wrap">
+    <a class="brand" href="#top" aria-label="Cirrus Mail home">
+      <svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-mark"/></svg>
+      <span><b>Cirrus</b> Mail</span>
+    </a>
+    <nav class="nav-links" aria-label="Sections">
+      <a href="#how">How it works</a>
+      <a href="#features">Features</a>
+      <a href="#cost">Cost</a>
+      <a href="#security">Security</a>
+      <a href="#faq">FAQ</a>
+    </nav>
+    <a class="btn btn-ghost" href="https://github.com/jackh54/cirrus-mail">
+      <svg class="icon" aria-hidden="true"><use href="#i-code"/></svg><span>GitHub</span>
+    </a>
+  </div>
+</header>
+
+<main id="main">
+  <!-- ======================= HERO ======================= -->
+  <div class="hero" id="top">
+    <div class="hero-grid" aria-hidden="true"></div>
+    <div class="wrap">
+      <svg class="hero-mark" viewBox="0 0 64 64" role="img" aria-label="Cirrus Mail logo"><use href="#i-mark"/></svg>
+      <div class="pill"><i>v0.1</i> Open source · MIT · Runs on your Cloudflare account</div>
+      <h1>Your own email suite, <span class="grad-text">on your own Cloudflare.</span></h1>
+      <p class="sub">Real mailboxes on your own domains, a fast web client and an admin console. It's one Worker with D1 and R2, deployed to your account in minutes. No servers to run, and nobody else holds your mail.</p>
+      <div class="cta">
+        <a class="btn btn-primary" href="https://deploy.workers.cloudflare.com/?url=https://github.com/jackh54/cirrus-mail">
+          Deploy to Cloudflare <svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg>
+        </a>
+        <a class="btn btn-ghost" href="https://github.com/jackh54/cirrus-mail">
+          <svg class="icon" aria-hidden="true"><use href="#i-code"/></svg> View on GitHub
+        </a>
+      </div>
+      <p class="fine">Requires Workers Paid. Email Sending is in beta. <a href="#cost">What it costs</a></p>
+
+      <!-- Product visual: an HTML/CSS mock of the web client. Not a screenshot. -->
+      <div class="mock-stage">
+        <div class="app" role="img" aria-label="The Cirrus Mail web client: folders on the left, the thread list in the middle, and an open conversation on the right.">
+          <aside class="rail" aria-hidden="true">
+            <div class="mbx">
+              <div class="avatar">AR</div>
+              <div><b>Alex Rivera</b><small>alex@example.com</small></div>
+            </div>
+            <div class="compose"><svg class="icon"><use href="#i-pen"/></svg> Compose <kbd>c</kbd></div>
+            <div class="folder on"><svg class="icon"><use href="#i-inbox"/></svg> Inbox <em>4</em></div>
+            <div class="folder"><svg class="icon"><use href="#i-star"/></svg> Starred</div>
+            <div class="folder"><svg class="icon"><use href="#i-send"/></svg> Sent</div>
+            <div class="folder"><svg class="icon"><use href="#i-file"/></svg> Drafts <em>1</em></div>
+            <div class="folder"><svg class="icon"><use href="#i-clock"/></svg> Scheduled <em>1</em></div>
+            <div class="folder"><svg class="icon"><use href="#i-archive"/></svg> Archive</div>
+            <div class="folder"><svg class="icon"><use href="#i-spam"/></svg> Spam</div>
+            <div class="folder"><svg class="icon"><use href="#i-trash"/></svg> Trash</div>
+            <h4>Folders</h4>
+            <div class="folder"><span class="dot" style="background:#38D6C4"></span> Receipts</div>
+            <div class="folder"><span class="dot" style="background:#B58CFF"></span> Family</div>
+            <h4>Shared</h4>
+            <div class="folder"><svg class="icon"><use href="#i-users"/></svg> support@ <em>2</em></div>
+          </aside>
+
+          <div class="list" aria-hidden="true">
+            <div class="search"><svg class="icon"><use href="#i-search"/></svg> Search mail <kbd>/</kbd></div>
+            <div class="list-head"><span>Inbox</span><span>1–7 of 214</span></div>
+            <div class="thread unread sel">
+              <div class="row"><span class="from">Priya Raman</span><span class="count">3</span><time>9:41 AM</time></div>
+              <div class="subj">Q4 launch plan, final draft</div>
+              <div class="snip">Here's v3 with your pricing notes folded in. Can you sign off by Thursday?</div>
+              <div class="tags"><svg class="icon"><use href="#i-clip"/></svg><span class="chip">Work</span></div>
+            </div>
+            <div class="thread unread">
+              <div class="row"><span class="from">Tom Becker</span><time>8:12 AM</time></div>
+              <div class="subj">Re: Climbing on Saturday?</div>
+              <div class="snip">I can drive. Leaving at 8 if that works for everyone.</div>
+            </div>
+            <div class="thread unread">
+              <div class="row"><span class="from">Harbor &amp; Pine Ceramics</span><time>7:30 AM</time></div>
+              <div class="subj">Your order has shipped</div>
+              <div class="snip">Two mugs and a serving bowl are on their way to you.</div>
+              <div class="tags"><span class="chip">Receipts</span></div>
+            </div>
+            <div class="thread">
+              <div class="row"><span class="from">Mum</span><span class="count">2</span><time>Yesterday</time></div>
+              <div class="subj">Photos from the lake</div>
+              <div class="snip">The kids loved the boat. Sending the rest tonight.</div>
+              <div class="tags"><svg class="icon star"><use href="#i-star"/></svg><svg class="icon"><use href="#i-clip"/></svg><span class="chip">Family</span></div>
+            </div>
+            <div class="thread unread">
+              <div class="row"><span class="from">Ana Sousa</span><time>Yesterday</time></div>
+              <div class="subj">Invoice 2026-114</div>
+              <div class="snip">Attached is the invoice for October. Thanks again for the quick turnaround.</div>
+            </div>
+            <div class="thread">
+              <div class="row"><span class="from">Sam Okafor</span><span class="count">2</span><time>Mon</time></div>
+              <div class="subj">Design review notes</div>
+              <div class="snip">Left comments on the onboarding flow. Mostly small copy tweaks.</div>
+            </div>
+            <div class="thread">
+              <div class="row"><span class="from">Kestrel Labs</span><time>Sun</time></div>
+              <div class="subj">Your weekly build summary</div>
+              <div class="snip">142 builds, 3 failed. Median build time 2m 14s.</div>
+            </div>
+          </div>
+
+          <div class="reader" aria-hidden="true">
+            <div class="reader-bar">
+              <span><svg class="icon"><use href="#i-archive"/></svg></span>
+              <span><svg class="icon"><use href="#i-trash"/></svg></span>
+              <span><svg class="icon"><use href="#i-spam"/></svg></span>
+              <span class="grow"></span>
+              <span><svg class="icon star"><use href="#i-star"/></svg></span>
+            </div>
+            <h3>Q4 launch plan, final draft</h3>
+            <div class="labels"><span class="chip">Inbox</span><span class="chip">Work</span></div>
+            <div class="msg collapsed">
+              <div class="avatar" style="background:linear-gradient(135deg,#ff9a6b,#e0457b)">PR</div>
+              <div class="meta"><div class="one"><b>Priya Raman</b> · Kicking this off. Rough plan below, shout if anything looks off.</div></div>
+              <time>Oct 30</time>
+            </div>
+            <div class="msg collapsed">
+              <div class="avatar">AR</div>
+              <div class="meta"><div class="one"><b>You</b> · Looks good. Two notes on pricing and the launch date.</div></div>
+              <time>Oct 31</time>
+            </div>
+            <div class="msg">
+              <div class="avatar" style="background:linear-gradient(135deg,#ff9a6b,#e0457b)">PR</div>
+              <div class="meta">
+                <div class="one"><b>Priya Raman</b> <small>&lt;priya@example.com&gt;</small></div>
+                <small>to me, Sam</small>
+                <div class="body">
+                  <p>Hi Alex,</p>
+                  <p>Here's v3 with your pricing notes folded in. Launch moves to the 18th so the docs team gets a full week, and the beta group gets access two days earlier.</p>
+                  <p>Can you sign off by Thursday? Then I'll share it with the wider team.</p>
+                  <p>Thanks, Priya</p>
+                  <div class="attach"><i>PDF</i><div>launch-plan-v3.pdf<small>2.4 MB</small></div></div>
+                </div>
+              </div>
+              <time>9:41 AM</time>
+            </div>
+            <div class="replybar">
+              <span><svg class="icon"><use href="#i-reply"/></svg> Reply</span>
+              <span><svg class="icon"><use href="#i-replyall"/></svg> Reply all</span>
+              <span><svg class="icon"><use href="#i-forward"/></svg> Forward</span>
+            </div>
+          </div>
+        </div>
+        <div class="toast" aria-hidden="true"><span>Sending your reply…</span><span class="bar"></span><b>Undo</b></div>
+      </div>
+
+      <div class="stack" aria-label="Built on">
+        <span><b>Email Routing</b> receives</span>
+        <span><b>Email Sending</b> delivers</span>
+        <span><b>Workers</b> runs the app</span>
+        <span><b>D1</b> indexes &amp; searches</span>
+        <span><b>R2</b> stores messages</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================= HOW IT WORKS ======================= -->
+  <section id="how">
+    <div class="wrap">
+      <div class="section-head">
+        <div class="eyebrow">How it works</div>
+        <h2>Three steps from domain to inbox.</h2>
+        <p>Everything lives in your Cloudflare account. Mail comes in through Email Routing, goes out through Email Sending, and a single Worker does the rest.</p>
+      </div>
+      <div class="steps">
+        <div class="card step">
+          <div class="num">1</div>
+          <h3>Onboard your domain</h3>
+          <p>In the Cloudflare dashboard, onboard your domain to <b>Email Sending</b>, which adds SPF, DKIM and a bounce MX. Then enable <b>Email Routing</b>. A DMARC record is recommended.</p>
+        </div>
+        <div class="card step">
+          <div class="num">2</div>
+          <h3>Deploy the Worker</h3>
+          <p>Use the Deploy to Cloudflare button, or <code>npm run deploy</code> from the CLI. D1 and R2 are provisioned for you, and migrations are applied.</p>
+        </div>
+        <div class="card step">
+          <div class="num">3</div>
+          <h3>Create your mailboxes</h3>
+          <p>Open <code>/setup</code> to create the admin account, add your domain and mailboxes, then point the catch-all routing rule at <code>cirrus-mail</code>.</p>
+        </div>
+      </div>
+      <div class="term">
+        <div class="term-head"><i></i><i></i><i></i><span>deploy from the CLI</span><button type="button" data-copy="cli">Copy</button></div>
+<pre id="cli"><span class="p">$ </span>git clone https://github.com/jackh54/cirrus-mail.git &amp;&amp; cd cirrus-mail
+<span class="p">$ </span>npm ci &amp;&amp; npx wrangler login
+<span class="p">$ </span>npx wrangler secret put SETUP_TOKEN
+<span class="p">$ </span>npx wrangler secret put APP_SECRET
+<span class="p">$ </span>npm run deploy   <span class="c"># checks, builds, migrates D1, deploys</span></pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- ======================= FEATURES ======================= -->
+  <section id="features">
+    <div class="wrap">
+      <div class="section-head center">
+        <div class="eyebrow">Features</div>
+        <h2>Everything you expect from a modern mail client.</h2>
+        <p>Built for a person, a family or a small team. No bulk mail, no tracking, no ads.</p>
+      </div>
+      <div class="features">
+        <div class="card feature"><div class="ficon"><svg class="icon" aria-hidden="true"><use href="#i-threads"/></svg></div><h3>Real conversations</h3><p>Messages thread by their headers, with a subject fallback, so replies land where they belong.</p></div>
+        <div class="card feature"><div class="ficon m"><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg></div><h3>Fast full-text search</h3><p>Search with D1 full-text search plus <code>from:</code>, <code>to:</code>, <code>has:attachment</code> and <code>is:unread</code>.</p></div>
+        <div class="card feature"><div class="ficon"><svg class="icon" aria-hidden="true"><use href="#i-pen"/></svg></div><h3>A compose window you'll like</h3><p>Rich text, recipient chips with autocomplete, send-as aliases, drag-and-drop attachments and autosave.</p></div>
+        <div class="card feature"><div class="ficon m"><svg class="icon" aria-hidden="true"><use href="#i-clock"/></svg></div><h3>Send later, undo send</h3><p>Schedule a message for tomorrow morning, or take it back in the five seconds after you hit send.</p></div>
+        <div class="card feature"><div class="ficon"><svg class="icon" aria-hidden="true"><use href="#i-filter"/></svg></div><h3>Filters and spam scoring</h3><p>Rules that move, star, mark read or forward. Spam is scored from SPF, DKIM and DMARC results, plus your blocklist.</p></div>
+        <div class="card feature"><div class="ficon m"><svg class="icon" aria-hidden="true"><use href="#i-users"/></svg></div><h3>Shared mailboxes</h3><p>Give <code>support@</code> or <code>hello@</code> several members. Everyone can read and reply from the same mailbox.</p></div>
+        <div class="card feature"><div class="ficon"><svg class="icon" aria-hidden="true"><use href="#i-at"/></svg></div><h3>Aliases and catch-alls</h3><p>Extra addresses for a mailbox, and a per-domain catch-all for everything else.</p></div>
+        <div class="card feature"><div class="ficon m"><svg class="icon" aria-hidden="true"><use href="#i-sun"/></svg></div><h3>Vacation replies</h3><p>Date-ranged auto-replies that skip mailing lists and bulk mail, and reply to each sender only once every few days.</p></div>
+        <div class="card feature"><div class="ficon"><svg class="icon" aria-hidden="true"><use href="#i-phone"/></svg></div><h3>Works on your phone</h3><p>A responsive layout, installable as a PWA, with light and dark themes and new-mail notifications.</p></div>
+        <div class="card feature"><div class="ficon m"><svg class="icon" aria-hidden="true"><use href="#i-keyboard"/></svg></div><h3>Keyboard first</h3><p><code>c</code> to compose, <code>/</code> to search, <code>j</code>/<code>k</code> to move, <code>e</code> to archive, <code>r</code> to reply. Press <code>?</code> for the rest.</p></div>
+        <div class="card feature"><div class="ficon"><svg class="icon" aria-hidden="true"><use href="#i-sliders"/></svg></div><h3>Admin console</h3><p>Manage users, domains, mailboxes and aliases. A DNS check for MX, SPF and DMARC, and usage stats.</p></div>
+        <div class="card feature"><div class="ficon m"><svg class="icon" aria-hidden="true"><use href="#i-bolt"/></svg></div><h3>One Worker, your account</h3><p>No Durable Objects, no Queues and no third-party services. Upgrade with <code>git pull &amp;&amp; npm run deploy</code>.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ======================= COST ======================= -->
+  <section id="cost">
+    <div class="wrap">
+      <div class="section-head">
+        <div class="eyebrow">What it costs</div>
+        <h2>Free software. Cloudflare pricing.</h2>
+        <p>Cirrus is MIT-licensed. You pay Cloudflare for your own usage, and for most small teams that's the Workers Paid plan and little else.</p>
+      </div>
+      <div class="pricing">
+        <div class="card price-card">
+          <div class="eyebrow">Workers Paid</div>
+          <div class="price"><b>$5</b><span>/ month</span></div>
+          <p class="lead">Required for Email Sending.</p>
+          <ul class="lines">
+            <li><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg><div><b>3,000 outbound emails / month included</b><small>Then $0.35 per 1,000. Sends to verified destination addresses on your own account are free.</small></div></li>
+            <li><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg><div><b>Inbound mail is free</b><small>Email Routing doesn't charge for receiving.</small></div></li>
+            <li><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg><div><b>D1 and R2 storage</b><small>Usage-based. A typical small team stays within the included tiers.</small></div></li>
+          </ul>
+          <p class="note">Prices change, so check Cloudflare's pricing page before you rely on these numbers.</p>
+        </div>
+        <div class="limits">
+          <div class="card">
+            <h3>Limits to know about</h3>
+            <div class="limit-grid">
+              <div class="limit"><b>50</b><span>recipients per message</span></div>
+              <div class="limit"><b>25 MiB</b><span>per message, attachments included</span></div>
+              <div class="limit"><b>Daily quota</b><span>starts conservative and grows over time</span></div>
+              <div class="limit"><b>Beta</b><span>Email Sending is in public beta</span></div>
+            </div>
+          </div>
+          <div class="callout" role="note">
+            <div class="t"><svg class="icon" aria-hidden="true"><use href="#i-alert"/></svg> Acceptable use</div>
+            Cloudflare documents Email Sending as being for <b>transactional email</b>. Its documentation doesn't explicitly address person-to-person mail from your own mailbox, which is what Cirrus does. Cirrus has no bulk or marketing features and never will. Review Cloudflare's terms for your use.
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ======================= SECURITY ======================= -->
+  <section id="security">
+    <div class="wrap security">
+      <div>
+        <div class="section-head" style="margin-bottom:36px">
+          <div class="eyebrow">Security &amp; privacy</div>
+          <h2>Your mail, locked down by default.</h2>
+          <p>Email is the key to every other account you own, so Cirrus treats it that way.</p>
+        </div>
+        <ul class="sec-list">
+          <li><div class="ficon"><svg class="icon" aria-hidden="true"><use href="#i-key"/></svg></div><div><b>Strong passwords and 2FA</b><span>PBKDF2-SHA256 hashing, optional TOTP with hashed recovery codes, and login throttling.</span></div></li>
+          <li><div class="ficon m"><svg class="icon" aria-hidden="true"><use href="#i-shield"/></svg></div><div><b>Sandboxed HTML mail</b><span>Sanitized with DOMPurify and rendered in a sandboxed frame with no scripts and a strict CSP.</span></div></li>
+          <li><div class="ficon"><svg class="icon" aria-hidden="true"><use href="#i-image"/></svg></div><div><b>Remote images blocked</b><span>Trackers don't load. When you allow images, they're fetched through a signed proxy on your own Worker.</span></div></li>
+          <li><div class="ficon m"><svg class="icon" aria-hidden="true"><use href="#i-link"/></svg></div><div><b>Signed attachment links</b><span>Attachment URLs are HMAC-signed and expire after an hour.</span></div></li>
+          <li><div class="ficon"><svg class="icon" aria-hidden="true"><use href="#i-eyeoff"/></svg></div><div><b>No invocation logs</b><span>Request logs are off, and message content is never logged.</span></div></li>
+        </ul>
+      </div>
+      <div class="card sec-visual" aria-hidden="true">
+        <div class="sec-row"><svg class="icon" style="color:#f5b93d"><use href="#i-image"/></svg><span>Remote images are hidden</span><span class="r"><span class="mini-btn">Load images</span></span></div>
+        <div class="sec-row"><svg class="icon" style="color:var(--mint)"><use href="#i-shield"/></svg><span>Authentication</span><span class="r"><span class="ok">spf=pass</span><span class="ok">dkim=pass</span><span class="ok">dmarc=pass</span></span></div>
+        <div class="sec-row"><svg class="icon" style="color:var(--iris-2)"><use href="#i-link"/></svg><code>/api/files/01JC8Q…?e=1762412400&amp;s=9f2c…</code><span class="r"><span class="chip">1 h</span></span></div>
+        <div class="sec-row"><svg class="icon" style="color:var(--iris-2)"><use href="#i-lock"/></svg><span>Session cookie</span><span class="r"><span class="ok">HttpOnly</span><span class="ok">Secure</span><span class="ok">SameSite=Lax</span></span></div>
+        <div class="sec-row"><svg class="icon" style="color:var(--mint)"><use href="#i-key"/></svg><span>Two-factor authentication</span><span class="r"><span class="ok">TOTP on</span></span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ======================= FAQ ======================= -->
+  <section id="faq">
+    <div class="wrap">
+      <div class="section-head center">
+        <div class="eyebrow">FAQ</div>
+        <h2>Questions, answered honestly.</h2>
+      </div>
+      <div class="faq">
+        <details>
+          <summary>What do I need to run it?</summary>
+          <p>A Cloudflare account on Workers Paid, and a domain whose DNS is on Cloudflare. Use the apex domain (<code>example.com</code>) for mail, because catch-all routing works on apex domains only. The setup guide walks through the rest.</p>
+        </details>
+        <details>
+          <summary>Is person-to-person email allowed on Email Sending?</summary>
+          <p>Cloudflare documents Email Sending as being for transactional email, and doesn't explicitly address mail people write from their own mailbox. Cirrus sends one human-written message at a time, to at most 50 recipients, and has no bulk or marketing features. Whether your use fits is between you and Cloudflare, so review their terms first.</p>
+        </details>
+        <details>
+          <summary>Can I use Apple Mail, Outlook or Thunderbird?</summary>
+          <p>Not yet. There's no IMAP or JMAP in v0.1; both are on the roadmap. The web client works well on phones and installs as a PWA.</p>
+        </details>
+        <details>
+          <summary>Where is my mail stored, and who can read it?</summary>
+          <p>In your own Cloudflare account: metadata and the search index in D1, and raw messages and attachments in R2. There's no Cirrus server and no third-party service. Mail isn't end-to-end encrypted, and Cloudflare's terms and privacy policy apply to your account.</p>
+        </details>
+        <details>
+          <summary>Can I host more than one domain, or share a mailbox?</summary>
+          <p>Yes to both. Add as many domains as you like in Admin, each onboarded to Email Sending and Email Routing. Any mailbox can have several members, which makes it a shared mailbox.</p>
+        </details>
+        <details>
+          <summary>How do I upgrade and back up?</summary>
+          <p>Upgrade with <code>git pull &amp;&amp; npm run deploy</code>, which applies new D1 migrations first. Back up with <code>wrangler d1 export</code> for the database, and any S3-compatible tool for the R2 bucket.</p>
+        </details>
+        <details>
+          <summary>Is it production-ready?</summary>
+          <p>Cirrus is at v0.1, and Email Sending has been in public beta since April 2026. It's built carefully, but test it on a spare domain before you move your main mail over.</p>
+        </details>
+      </div>
+    </div>
+  </section>
+
+  <section style="padding-top:0">
+    <div class="wrap">
+      <div class="final">
+        <svg class="hero-mark" viewBox="0 0 64 64" aria-hidden="true"><use href="#i-mark"/></svg>
+        <h2>Own your inbox again.</h2>
+        <p>Deploy Cirrus Mail to your Cloudflare account in a few minutes.</p>
+        <div class="cta">
+          <a class="btn btn-primary" href="https://deploy.workers.cloudflare.com/?url=https://github.com/jackh54/cirrus-mail">Deploy to Cloudflare <svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></a>
+          <a class="btn btn-ghost" href="https://github.com/jackh54/cirrus-mail/blob/main/docs/setup.md">Read the setup guide</a>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div>
+      <a class="brand" href="#top"><svg viewBox="0 0 64 64" aria-hidden="true"><use href="#i-mark"/></svg><span><b>Cirrus</b> Mail</span></a>
+      <p style="margin-top:10px">Built by <b>PandaScript</b>. MIT licensed.</p>
+    </div>
+    <nav aria-label="Footer">
+      <a href="https://github.com/jackh54/cirrus-mail">GitHub</a>
+      <a href="https://github.com/jackh54/cirrus-mail/blob/main/docs/setup.md">Setup guide</a>
+      <a href="https://github.com/jackh54/cirrus-mail/blob/main/docs/faq.md">FAQ</a>
+      <a href="https://github.com/jackh54/cirrus-mail/blob/main/SECURITY.md">Security</a>
+      <a href="https://github.com/jackh54/cirrus-mail/blob/main/LICENSE">License</a>
+    </nav>
+    <p class="small">Cirrus Mail is an independent open-source project, not affiliated with or endorsed by Cloudflare. Cloudflare is a trademark of Cloudflare, Inc.</p>
+  </div>
+</footer>
+
+<script src="assets/site.js" defer></script>
+</body>
+</html>
