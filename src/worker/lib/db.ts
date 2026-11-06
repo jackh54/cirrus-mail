@@ -17,7 +17,7 @@ export interface MessageRow {
   body_key: string | null; raw_key: string | null; size: number; has_attachments: number; is_read: number;
   is_starred: number; spam_score: number; auth_json: string | null; list_id: string | null; send_at: number | null;
   sent_at: number | null; error_code: string | null; error_message: string | null; date: number; scheduled_by: string | null;
-  created_at: number; updated_at: number; folder_changed_at: number;
+  created_at: number; updated_at: number; folder_changed_at: number; fts_rowid: number | null;
 }
 
 export interface AttachmentRow {
@@ -107,6 +107,7 @@ export type PageRow = ThreadRow & { tid: string; k: number; folder_ids: string }
 /**
  * Wraps a page query that returns `(tid, k)` so the same statement also returns each thread row and its
  * folder ids, in `orderBy` order. Bind: the page query's params, the mailbox id, `extraCols` params, the mailbox id.
+ * Everything outside the page query runs per page row, so an access condition in the page query covers it all.
  * Rows whose thread is gone have a NULL `id`. (A unary `+` on mailbox_id keeps SQLite on the thread index
  * instead of scanning every message in the mailbox.)
  */
@@ -178,9 +179,35 @@ export async function loadMessageFull(env: Env, origin: string, r: MessageRow): 
   return messageRowToFull(r, body, atts);
 }
 
-export function ftsInsertStmt(db: D1Database, m: { id: string; mailboxId: string; subject: string; addresses: string; body: string }) {
-  return db.prepare('INSERT INTO messages_fts (message_id, mailbox_id, subject, addresses, body) VALUES (?, ?, ?, ?, ?)')
-    .bind(m.id, m.mailboxId, m.subject, m.addresses, m.body.slice(0, 200_000));
+// messages_fts.message_id is UNINDEXED, so finding a row by it scans the whole index. Each message records its
+// FTS rowid instead (messages.fts_rowid, migration 0004), and rows are found by rowid.
+const LAST_FTS_ROWID = '(SELECT rowid FROM messages_fts ORDER BY rowid DESC LIMIT 1)';
+
+/**
+ * Inserts a message's FTS row with an explicit rowid (one past the highest) and records that rowid on the
+ * message. Run in a batch after the message row exists; the batch's transaction keeps "highest" ours.
+ */
+export function ftsInsertStmts(db: D1Database, m: { id: string; mailboxId: string; subject: string; addresses: string; body: string }): D1PreparedStatement[] {
+  return [
+    db.prepare(`INSERT INTO messages_fts (rowid, message_id, mailbox_id, subject, addresses, body) VALUES (COALESCE(${LAST_FTS_ROWID}, 0) + 1, ?, ?, ?, ?, ?)`)
+      .bind(m.id, m.mailboxId, m.subject, m.addresses, m.body.slice(0, 200_000)),
+    db.prepare(`UPDATE messages SET fts_rowid = ${LAST_FTS_ROWID} WHERE id = ?`).bind(m.id),
+  ];
+}
+
+/**
+ * Deletes the FTS rows of these messages by rowid. Messages without fts_rowid (indexed before 0004 found
+ * them, or by an older deploy) fall back to the message_id scan; the gate keeps that scan from running otherwise.
+ * Run before the message rows are deleted.
+ */
+export function ftsDeleteStmts(db: D1Database, messageIds: string[]): D1PreparedStatement[] {
+  const ph = messageIds.map(() => '?').join(',');
+  return [
+    db.prepare(`DELETE FROM messages_fts WHERE rowid IN (SELECT fts_rowid FROM messages WHERE id IN (${ph}) AND fts_rowid IS NOT NULL)`).bind(...messageIds),
+    db.prepare(`DELETE FROM messages_fts WHERE rowid IN (
+                  SELECT f.rowid FROM (SELECT 1 FROM messages WHERE id IN (${ph}) AND fts_rowid IS NULL LIMIT 1) gate
+                  CROSS JOIN messages_fts f WHERE f.message_id IN (${ph}))`).bind(...messageIds, ...messageIds),
+  ];
 }
 
 export function addressesForFts(from: Address, ...lists: Address[][]): string {
@@ -206,7 +233,7 @@ export async function deleteMessagesForever(env: Env, mailboxId: string, message
     const fph = found.map(() => '?').join(',');
     const attKeys = [...new Set((atts.results as { r2_key: string }[]).map((a) => a.r2_key))];
     await env.DB.batch([
-      env.DB.prepare(`DELETE FROM messages_fts WHERE message_id IN (${fph})`).bind(...found),
+      ...ftsDeleteStmts(env.DB, found),
       env.DB.prepare(`DELETE FROM messages WHERE id IN (${fph})`).bind(...found),
       ...[...new Set(rows.map((r) => r.thread_id))].flatMap((t) => recomputeThreadStmts(env.DB, t)),
     ]);

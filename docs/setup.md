@@ -102,10 +102,10 @@ If the Worker does not exist yet, `wrangler secret put` offers to create it. Say
 
 1. runs the checks (typecheck and tests)
 2. builds the web client
-3. deploys the Worker with `wrangler deploy`
-4. applies D1 migrations to the remote database
+3. applies D1 migrations to the remote database, so new code never runs against an old schema
+4. deploys the Worker with `wrangler deploy`, then re-runs migrations (a no-op unless this is the first deploy)
 
-On the first deploy, Wrangler provisions the D1 database and R2 bucket named in `wrangler.jsonc`. This is why migrations run after the deploy: the database doesn't exist until then. If you have more than one Cloudflare account, set `CLOUDFLARE_ACCOUNT_ID` first.
+On the first deploy, Wrangler provisions the D1 database and R2 bucket named in `wrangler.jsonc`. Step 3 is skipped that time because the database doesn't exist yet, and the migrations run right after the deploy instead. If you have more than one Cloudflare account, set `CLOUDFLARE_ACCOUNT_ID` first.
 
 ## 5. Give the web app a custom domain
 
@@ -190,7 +190,7 @@ You're done. Install the web app from your browser's menu if you want it on your
 git pull && npm run deploy
 ```
 
-`npm run deploy` deploys the new Worker and then applies any new D1 migrations. Read the release notes first: they call out anything that needs a manual step.
+`npm run deploy` applies any new D1 migrations, then deploys the new Worker. Read the release notes first: they call out anything that needs a manual step.
 
 **Button deploys:** your copy of the repository is yours. Merge changes from `jackh54/cirrus-mail` into it and push; Cloudflare rebuilds and redeploys from your repository.
 

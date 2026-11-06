@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { errorBody, onError } from './lib/errors';
+import { meters } from './lib/timing';
 import { csrf, requireMailbox } from './middleware/session';
 import { admin } from './routes/admin';
 import { auth } from './routes/auth';
@@ -33,6 +34,10 @@ app.use('*', async (c, next) => {
   if (!c.res.headers.has('cache-control')) c.res.headers.set('cache-control', 'no-store');
   c.res.headers.set('x-content-type-options', 'nosniff');
   c.res.headers.set('referrer-policy', 'no-referrer');
+  // Server-Timing only on successful responses to signed-in users: on a 401/404 the D1 time could hint at
+  // data the caller cannot see.
+  const meter = meters.get(c.req.raw);
+  if (meter && c.res.ok && c.get('user')) c.res.headers.set('server-timing', meter.header());
 });
 app.use('*', csrf);
 

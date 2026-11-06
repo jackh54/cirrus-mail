@@ -58,22 +58,45 @@ const SESSION_MAILBOX_SQL = `SELECT s.id AS session_id, s.last_seen_at AS sessio
        LEFT JOIN mailboxes m ON m.id = mm.mailbox_id
       WHERE s.token_hash = ?1`;
 
-/** The session user's id, for read statements that ride in the same batch as the session lookup. Binds the token hash. */
-export const SESSION_USER_SQL = '(SELECT user_id FROM sessions WHERE token_hash = ?)';
+/**
+ * Access condition for reads that share the authorization round trip. `from` starts the FROM clause of every
+ * such read (`SELECT … FROM ${authz.from} messages m …`) and binds `params` first, before any `?` that follows it.
+ * The subquery yields at most one row and only when the session is valid and its user is a member of the
+ * mailbox; CROSS JOIN keeps it the outer loop, so when access fails SQLite never touches the mailbox's rows
+ * (no timing signal, no forced scans).
+ */
+export interface Authz { from: string; params: unknown[] }
+
+export function mailboxAuthz(tokenHash: string, mb: string, now: number): Authz {
+  return {
+    from: `(SELECT 1 AS authz_ok FROM sessions az_s JOIN users az_u ON az_u.id = az_s.user_id
+              JOIN mailbox_members az_mm ON az_mm.user_id = az_s.user_id AND az_mm.mailbox_id = ?
+             WHERE az_s.token_hash = ? AND az_s.expires_at >= ? AND az_u.disabled = 0) authz CROSS JOIN`,
+    params: [mb, tokenHash, now],
+  };
+}
+
+/** The session user's id, or NULL unless the session is valid. A scalar subquery; bind `params`. */
+export function sessionUser(tokenHash: string, now: number): { sql: string; params: unknown[] } {
+  return {
+    sql: '(SELECT az_s.user_id FROM sessions az_s JOIN users az_u ON az_u.id = az_s.user_id WHERE az_s.token_hash = ? AND az_s.expires_at >= ? AND az_u.disabled = 0)',
+    params: [tokenHash, now],
+  };
+}
 
 /**
  * Validates the session (and, when `mb` is given, membership of that mailbox) in one D1 round trip,
- * together with `reads`. The results of `reads` are only returned once access is confirmed, so they may
- * be built before it is (they must be read-only). Sliding expiry is touched at most every 5 minutes.
+ * together with `reads`. `reads` must be read-only and carry the access condition themselves (see Authz),
+ * and their results are only returned once access is confirmed. Sliding expiry is touched at most every 5 minutes.
  */
-async function authorize(c: Context<AppEnv>, mb: string | null, reads: (tokenHash: string) => D1PreparedStatement[]): Promise<D1Result[]> {
+async function authorize(c: Context<AppEnv>, mb: string | null, reads: (tokenHash: string, now: number) => D1PreparedStatement[]): Promise<D1Result[]> {
   const token = getCookie(c, SESSION_COOKIE);
   if (!token) throw new HttpError(401, 'UNAUTHENTICATED', 'Sign in required');
   const now = Date.now();
   const db = c.env.DB;
   const hash = await sha256Hex(token);
   const lookup = mb === null ? db.prepare(SESSION_SQL).bind(hash) : db.prepare(SESSION_MAILBOX_SQL).bind(hash, mb);
-  const extra = reads(hash);
+  const extra = reads(hash, now);
   const [auth, ...rest] = extra.length ? await db.batch([lookup, ...extra]) : [await lookup.all()];
   const row = auth.results[0] as AuthRow | undefined;
   if (!row || row.session_expires < now || row.disabled) {
@@ -101,13 +124,15 @@ async function authorize(c: Context<AppEnv>, mb: string | null, reads: (tokenHas
   return rest;
 }
 
-/** Session check for handlers that run their first reads in the same round trip. `reads` gets the token hash. */
-export const authorizeSession = (c: Context<AppEnv>, reads: (tokenHash: string) => D1PreparedStatement[]) => authorize(c, null, reads);
+/** Session check for handlers that run their first reads in the same round trip. Scope them with `sessionUser`. */
+export function authorizeSession(c: Context<AppEnv>, reads: (user: { sql: string; params: unknown[] }) => D1PreparedStatement[]): Promise<D1Result[]> {
+  return authorize(c, null, (hash, now) => reads(sessionUser(hash, now)));
+}
 
-/** Session + mailbox membership check for handlers that run their first reads in the same round trip. `reads` gets the requested mailbox id. */
-export function authorizeMailbox(c: Context<AppEnv>, reads: (mb: string) => D1PreparedStatement[]): Promise<D1Result[]> {
+/** Session + membership check for handlers that run their first reads in the same round trip. `reads` gets the requested mailbox id and its Authz. */
+export function authorizeMailbox(c: Context<AppEnv>, reads: (mb: string, authz: Authz) => D1PreparedStatement[]): Promise<D1Result[]> {
   const mb = c.req.param('mb') ?? '';
-  return authorize(c, mb, () => reads(mb));
+  return authorize(c, mb, (hash, now) => reads(mb, mailboxAuthz(hash, mb, now)));
 }
 
 /** Requires a valid session. */

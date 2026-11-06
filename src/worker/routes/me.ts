@@ -6,31 +6,31 @@ import { base32Encode, hashPassword, randomBytes, sha256Hex, verifyPassword, ver
 import { rowToUser, type UserRow } from '../lib/db';
 import { HttpError } from '../lib/errors';
 import { jsonBody, zName, zPassword } from '../lib/validate';
-import { authorizeSession, requireAuth, SESSION_USER_SQL } from '../middleware/session';
+import { authorizeSession, requireAuth } from '../middleware/session';
 import type { AppEnv } from '../types';
 import { normalizeRecoveryCode } from './auth';
 
 export const me = new Hono<AppEnv>();
 
-/** Mailboxes and send-as aliases of the user given by `userSql` (a `?` or a subquery with one parameter). */
-function summaryStmts(db: D1Database, userSql: string, param: string): D1PreparedStatement[] {
+/** Mailboxes and send-as aliases of the user given by `user` (a `?` or a scalar subquery, with its params). */
+function summaryStmts(db: D1Database, user: { sql: string; params: unknown[] }): D1PreparedStatement[] {
   return [
     db.prepare(
       `SELECT m.id, m.address, m.display_name, mm.role,
               (SELECT COUNT(*) FROM messages x
                 WHERE x.mailbox_id = m.id AND x.folder_id = (SELECT id FROM folders WHERE mailbox_id = m.id AND role = 'inbox') AND x.is_read = 0) AS unread
          FROM mailboxes m JOIN mailbox_members mm ON mm.mailbox_id = m.id
-        WHERE mm.user_id = ${userSql} ORDER BY mm.role = 'member', m.address`,
-    ).bind(param),
+        WHERE mm.user_id = ${user.sql} ORDER BY mm.role = 'member', m.address`,
+    ).bind(...user.params),
     db.prepare(
       `SELECT a.address, a.mailbox_id FROM aliases a JOIN mailbox_members mm ON mm.mailbox_id = a.mailbox_id
-        WHERE mm.user_id = ${userSql} AND a.can_send = 1 ORDER BY a.address`,
-    ).bind(param),
+        WHERE mm.user_id = ${user.sql} AND a.can_send = 1 ORDER BY a.address`,
+    ).bind(...user.params),
   ];
 }
 
 export async function mailboxSummaries(db: D1Database, user: UserRow): Promise<MailboxSummary[]> {
-  const [boxes, aliases] = await db.batch(summaryStmts(db, '?', user.id));
+  const [boxes, aliases] = await db.batch(summaryStmts(db, { sql: '?', params: [user.id] }));
   return toSummaries(boxes, aliases, user);
 }
 
@@ -50,9 +50,9 @@ function toSummaries(boxes: D1Result, aliases: D1Result, user: UserRow): Mailbox
 }
 
 // Registered before the requireAuth guard and never calls next(): the session check and the mailbox reads
-// share one D1 round trip, and the reads are only used once the session is confirmed.
+// share one D1 round trip. The reads find nothing unless the session is valid, and are only used once it is confirmed.
 me.get('/', async (c) => {
-  const [boxes, aliases] = await authorizeSession(c, (tokenHash) => summaryStmts(c.env.DB, SESSION_USER_SQL, tokenHash));
+  const [boxes, aliases] = await authorizeSession(c, (user) => summaryStmts(c.env.DB, user));
   const user = c.get('user');
   return c.json({ user: rowToUser(user), mailboxes: toSummaries(boxes, aliases, user) });
 });

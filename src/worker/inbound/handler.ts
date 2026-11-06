@@ -3,7 +3,7 @@ import PostalMime, { type Email } from 'postal-mime';
 import { LIMITS, type Address } from '../../shared/api';
 import { ulid } from '../../shared/ulid';
 import { dedupeAddresses, fromParsed, normalizeEmail } from '../lib/addresses';
-import { addressesForFts, folderIdsByRole, ftsInsertStmt, recomputeThreadStmts } from '../lib/db';
+import { addressesForFts, folderIdsByRole, ftsInsertStmts, recomputeThreadStmts } from '../lib/db';
 import { htmlToText, makeSnippet } from '../lib/html';
 import { maybeAutoreply, type AutoreplyMailbox } from './autoreply';
 import { evaluateFilters, rowToFilter, type FilterRow } from './filters';
@@ -182,7 +182,7 @@ export async function processInbound(message: ForwardableEmailMessage, env: Env)
     stmts.push(db.prepare('INSERT INTO attachments (id, message_id, mailbox_id, filename, mime_type, size, content_id, inline, r2_key, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
       .bind(a.id, id, mailboxId, a.filename, a.mime, a.bytes.byteLength, a.contentId, a.inline, a.key, now));
   }
-  stmts.push(ftsInsertStmt(db, { id, mailboxId, subject, addresses: addressesForFts(from, to, cc), body: text }));
+  stmts.push(...ftsInsertStmts(db, { id, mailboxId, subject, addresses: addressesForFts(from, to, cc), body: text }));
   stmts.push(...recomputeThreadStmts(db, threadId));
   stmts.push(db.prepare('INSERT INTO receive_log (id, mailbox_id, accepted, reason, size, created_at) VALUES (?, ?, 1, ?, ?, ?)')
     .bind(ulid(now), mailboxId, spam.isSpam ? 'spam' : null, size, now));

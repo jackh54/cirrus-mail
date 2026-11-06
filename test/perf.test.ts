@@ -5,13 +5,27 @@ import { ulid } from '../src/shared/ulid';
 import worker from '../src/worker/index';
 import { processInbound } from '../src/worker/inbound/handler';
 import { randomBytes, sha256Hex, toBase64Url } from '../src/worker/lib/crypto';
-import { BASE, buildEml, call, createMailbox, fakeEmail, randomLocal } from './helpers';
+import { mailboxAuthz } from '../src/worker/middleware/session';
+import { folderListStmts, listThreadsStmts, pollStmts, threadDetailStmts } from '../src/worker/routes/mail';
+import { BASE, buildEml, call, createMailbox, fakeEmail, randomLocal, type CallOpts } from './helpers';
 
 const DOMAIN = 'perf.test';
 const s = {
   alice: '', bob: '', aliceId: '', bobId: '', aliceSession: '',
   mbA: '', mbB: '', foldersA: {} as Record<string, string>, threadA: '', threadB: '', addrA: '', addrB: '',
 };
+
+/** Like `call`, but collects waitUntil promises so background work can be awaited. */
+async function callCtx(path: string, o: CallOpts = {}): Promise<{ res: Response; settle: () => Promise<unknown> }> {
+  const pending: Promise<unknown>[] = [];
+  const ctx = { waitUntil: (p: Promise<unknown>) => pending.push(p), passThroughOnException() {}, props: {} } as unknown as ExecutionContext;
+  const headers: Record<string, string> = { 'x-cirrus': '1' };
+  if (o.cookie) headers.cookie = o.cookie;
+  if (o.body !== undefined) headers['content-type'] = 'application/json';
+  const req = new Request(BASE + path, { method: o.method ?? (o.body !== undefined ? 'POST' : 'GET'), headers, body: o.body === undefined ? undefined : JSON.stringify(o.body) });
+  const res = await worker.fetch(req as Request<unknown, IncomingRequestCfProperties>, env, ctx);
+  return { res, settle: () => Promise.all(pending) };
+}
 
 async function makeUser(name: string): Promise<{ id: string; cookie: string; sessionId: string }> {
   const id = ulid();
@@ -62,12 +76,25 @@ beforeAll(async () => {
 });
 
 describe('round trips per request (Server-Timing)', () => {
-  it('reports total, d1 and r2 on every /api response, including errors', async () => {
-    const ok = await call('/api/setup/status');
+  it('reports total, d1 and r2 only on successful responses to signed-in users', async () => {
+    const ok = await call(`/api/mailboxes/${s.mbA}/folders`, { cookie: s.alice });
     expect(ok.headers.get('server-timing')).toMatch(/^total;dur=[\d.]+, d1;dur=[\d.]+;desc="1", r2;dur=[\d.]+;desc="0"$/);
-    const missing = await call('/api/nope');
-    expect(missing.status).toBe(404);
-    expect(d1Trips(missing)).toBe(0);
+    const fake = `cirrus_session=${toBase64Url(randomBytes(32))}`;
+    const cases: [string, CallOpts, number][] = [
+      ['/api/setup/status', {}, 200],
+      ['/api/nope', {}, 404],
+      [`/api/mailboxes/${s.mbA}/threads?q=Quarterly`, { cookie: fake }, 401],
+      [`/api/mailboxes/${s.mbA}/threads?q=Quarterly`, { cookie: s.bob }, 404],
+      [`/api/mailboxes/${s.mbA}/folders`, { cookie: s.bob }, 404],
+      [`/api/mailboxes/${s.mbA}/poll?since=0`, { cookie: s.bob }, 404],
+      [`/api/mailboxes/${s.mbA}/threads/${s.threadA}`, { cookie: fake }, 401],
+      ['/api/me', { cookie: fake }, 401],
+    ];
+    for (const [path, opts, status] of cases) {
+      const res = await call(path, opts);
+      expect(res.status, path).toBe(status);
+      expect(res.headers.get('server-timing'), path).toBeNull();
+    }
   });
 
   it('GET /me, folders, threads, thread detail and poll are each one D1 round trip', async () => {
@@ -121,7 +148,7 @@ describe('round trips per request (Server-Timing)', () => {
     const saved = await call(`/api/mailboxes/${s.mbA}/drafts/${created.id}`, { method: 'PUT', body: { from: s.addrA, to: [{ email: 'x@vendor.test' }], cc: [], bcc: [], subject: 'Draft two', html: '<p>v2</p>' }, cookie: s.alice });
     expect(saved.status).toBe(200);
     expect(d1Trips(saved)).toBe(3);
-    expect(r2Ops(saved)).toBe(1);
+    expect(r2Ops(saved)).toBe(2); // the upload, plus deleting the replaced body in the background
     const m = await saved.json<MessageFull>();
     expect(m).toMatchObject({ id: created.id, subject: 'Draft two', html: '<p>v2</p>', status: 'draft', to: [{ email: 'x@vendor.test' }] });
     expect(m.text).toContain('v2');
@@ -219,5 +246,102 @@ describe('sessions and caching headers', () => {
     const file = await call(url.pathname + url.search);
     expect(file.status).toBe(200);
     expect(file.headers.get('cache-control')).toBe('private, max-age=3600, immutable');
+  });
+});
+
+describe('batched reads find nothing when access fails', () => {
+  it('every pre-auth statement returns no mailbox rows for a fake session or a non-member', async () => {
+    const now = Date.now();
+    const bobHash = await sha256Hex(s.bob.slice('cirrus_session='.length));
+    const aliceHash = await sha256Hex(s.alice.slice('cirrus_session='.length));
+    const build = (hash: string) => {
+      const authz = mailboxAuthz(hash, s.mbA, now);
+      return [
+        ...folderListStmts(env.DB, s.mbA, authz),
+        ...listThreadsStmts(env.DB, s.mbA, { limit: 50 }, authz),
+        ...listThreadsStmts(env.DB, s.mbA, { limit: 50, folder: s.foldersA.inbox, q: 'Quarterly' }, authz),
+        ...threadDetailStmts(env.DB, s.mbA, s.threadA, authz),
+        ...pollStmts(env.DB, s.mbA, 0, authz),
+      ];
+    };
+    for (const hash of ['0'.repeat(64), bobHash]) {
+      const results = await env.DB.batch(build(hash));
+      for (const r of results) {
+        const rows = r.results as Record<string, unknown>[];
+        // COUNT(*) still yields its single row, with 0.
+        if (rows.length === 1 && 'n' in rows[0]) expect(rows[0].n).toBe(0);
+        else expect(rows).toEqual([]);
+      }
+    }
+    const granted = await env.DB.batch(build(aliceHash));
+    // With access, everything returns rows (index 6 is threadA's attachments: it has none).
+    expect(granted.map((r, i) => i === 6 || r.results.length > 0)).toEqual(granted.map(() => true));
+  });
+});
+
+describe('draft bodies and FTS rows', () => {
+  const ftsRows = (id: string) => env.DB.prepare('SELECT rowid AS r, subject FROM messages_fts WHERE message_id = ?').bind(id).all<{ r: number; subject: string }>();
+  const msg = (id: string) => env.DB.prepare('SELECT body_key, fts_rowid FROM messages WHERE id = ?').bind(id).first<{ body_key: string; fts_rowid: number | null }>();
+  const draftBody = (subject: string) => ({ from: s.addrA, to: [], cc: [], bcc: [], subject, html: `<p>${subject}</p>` });
+
+  it('inbound and new drafts record their FTS rowid', async () => {
+    const d = await (await call(`/api/mailboxes/${s.mbA}/drafts`, { body: draftBody('Rowid draft'), cookie: s.alice })).json<MessageFull>();
+    const { results } = await ftsRows(d.id);
+    expect(results).toHaveLength(1);
+    expect((await msg(d.id))!.fts_rowid).toBe(results[0].r);
+    const inbound = await env.DB.prepare('SELECT id, fts_rowid FROM messages WHERE mailbox_id = ? AND direction = ? LIMIT 1').bind(s.mbA, 'in').first<{ id: string; fts_rowid: number }>();
+    expect((await ftsRows(inbound!.id)).results.map((r) => r.r)).toEqual([inbound!.fts_rowid]);
+    await call(`/api/mailboxes/${s.mbA}/drafts/${d.id}`, { method: 'DELETE', cookie: s.alice });
+    expect((await ftsRows(d.id)).results).toEqual([]);
+  });
+
+  it('a save writes a new versioned body, repoints the row, then deletes the old object; FTS follows by rowid', async () => {
+    const d = await (await call(`/api/mailboxes/${s.mbA}/drafts`, { body: draftBody('Version one'), cookie: s.alice })).json<MessageFull>();
+    const first = (await msg(d.id))!.body_key;
+    const one = await callCtx(`/api/mailboxes/${s.mbA}/drafts/${d.id}`, { method: 'PUT', body: draftBody('Version two'), cookie: s.alice });
+    expect(one.res.status).toBe(200);
+    await one.settle();
+    const second = (await msg(d.id))!.body_key;
+    expect(second).toMatch(new RegExp(`^body/${s.mbA}/${d.id}/[0-9A-Z]{26}\\.json$`));
+    expect(await env.BUCKET.head(first)).toBeNull();
+    const two = await callCtx(`/api/mailboxes/${s.mbA}/drafts/${d.id}`, { method: 'PUT', body: draftBody('Version three'), cookie: s.alice });
+    await two.settle();
+    const third = (await msg(d.id))!;
+    expect(await env.BUCKET.head(second)).toBeNull();
+    expect(await (await env.BUCKET.get(third.body_key))!.json()).toEqual({ html: '<p>Version three</p>', text: expect.stringContaining('Version three') });
+    const fts = (await ftsRows(d.id)).results;
+    expect(fts).toEqual([{ r: third.fts_rowid, subject: 'Version three' }]);
+    await call(`/api/mailboxes/${s.mbA}/drafts/${d.id}`, { method: 'DELETE', cookie: s.alice });
+    expect(await env.BUCKET.head(third.body_key)).toBeNull();
+  });
+
+  it('a refused save removes its upload and leaves the row alone', async () => {
+    const inbound = await env.DB.prepare('SELECT id, body_key FROM messages WHERE mailbox_id = ? AND direction = ? LIMIT 1').bind(s.mbA, 'in').first<{ id: string; body_key: string }>();
+    const r = await callCtx(`/api/mailboxes/${s.mbA}/drafts/${inbound!.id}`, { method: 'PUT', body: draftBody('Hijack'), cookie: s.alice });
+    expect(r.res.status).toBe(404);
+    await r.settle();
+    expect((await env.BUCKET.list({ prefix: `body/${s.mbA}/${inbound!.id}/` })).objects).toEqual([]);
+    expect((await msg(inbound!.id))!.body_key).toBe(inbound!.body_key);
+  });
+
+  it('messages indexed before 0004 (no fts_rowid) still lose their FTS row on save and delete', async () => {
+    const d = await (await call(`/api/mailboxes/${s.mbA}/drafts`, { body: draftBody('Legacy one'), cookie: s.alice })).json<MessageFull>();
+    await env.DB.prepare('UPDATE messages SET fts_rowid = NULL WHERE id = ?').bind(d.id).run();
+    await call(`/api/mailboxes/${s.mbA}/drafts/${d.id}`, { method: 'PUT', body: draftBody('Legacy two'), cookie: s.alice });
+    const fts = (await ftsRows(d.id)).results;
+    expect(fts.map((f) => f.subject)).toEqual(['Legacy two']);
+    expect((await msg(d.id))!.fts_rowid).toBe(fts[0].r);
+    await env.DB.prepare('UPDATE messages SET fts_rowid = NULL WHERE id = ?').bind(d.id).run();
+    await call(`/api/mailboxes/${s.mbA}/drafts/${d.id}`, { method: 'DELETE', cookie: s.alice });
+    expect((await ftsRows(d.id)).results).toEqual([]);
+  });
+
+  it('deleting by rowid leaves other messages\' FTS rows alone', async () => {
+    const before = await env.DB.prepare('SELECT COUNT(*) AS n FROM messages_fts').first<number>('n');
+    const d = await (await call(`/api/mailboxes/${s.mbA}/drafts`, { body: draftBody('Short lived'), cookie: s.alice })).json<MessageFull>();
+    await call(`/api/mailboxes/${s.mbA}/drafts/${d.id}`, { method: 'DELETE', cookie: s.alice });
+    expect(await env.DB.prepare('SELECT COUNT(*) AS n FROM messages_fts').first<number>('n')).toBe(before);
+    const search = await (await call(`/api/mailboxes/${s.mbA}/threads?q=Quarterly`, { cookie: s.alice })).json<Page<ThreadSummary>>();
+    expect(search.items.map((t) => t.subject)).toContain('Quarterly numbers');
   });
 });

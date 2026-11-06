@@ -11,7 +11,7 @@ import { HttpError, notFound } from '../lib/errors';
 import { jsonBody, zId } from '../lib/validate';
 import { buildSearchSql, parseSearch } from '../search';
 import { parseJsonAddresses } from '../lib/addresses';
-import { authorizeMailbox } from '../middleware/session';
+import { authorizeMailbox, type Authz } from '../middleware/session';
 import type { AppEnv } from '../types';
 
 export const mail = new Hono<AppEnv>();
@@ -19,7 +19,8 @@ export const mail = new Hono<AppEnv>();
 /**
  * Hot reads. Mounted before the mailbox guard: each handler calls authorizeMailbox, which runs the session and
  * membership check in the same D1 batch as the handler's reads and only hands back their results once access is
- * confirmed. Read-only handlers only; everything else belongs on `mail`.
+ * confirmed. Every read starts its FROM clause with `authz.from`, so it touches no mailbox rows unless access
+ * holds. Read-only handlers only; everything else belongs on `mail`.
  */
 export const mailReads = new Hono<AppEnv>();
 
@@ -27,14 +28,18 @@ const origin = (url: string) => new URL(url).origin;
 
 // ---------- folders ----------
 
-mailReads.get('/folders', async (c) => {
-  const [folders] = await authorizeMailbox(c, (mb) => [c.env.DB.prepare(
+export function folderListStmts(db: D1Database, mb: string, authz: Authz): D1PreparedStatement[] {
+  return [db.prepare(
     `SELECT f.id, f.name, f.role, f.sort, COALESCE(s.total, 0) AS total, COALESCE(s.unread, 0) AS unread
-       FROM folders f
-       LEFT JOIN (SELECT folder_id, COUNT(*) AS total, SUM(is_read = 0) AS unread FROM messages WHERE mailbox_id = ?1 GROUP BY folder_id) s
+       FROM ${authz.from} folders f
+       LEFT JOIN (SELECT folder_id, COUNT(*) AS total, SUM(is_read = 0) AS unread FROM ${authz.from} messages WHERE mailbox_id = ? GROUP BY folder_id) s
          ON s.folder_id = f.id
-      WHERE f.mailbox_id = ?1 ORDER BY f.sort, f.name`,
-  ).bind(mb)]);
+      WHERE f.mailbox_id = ? ORDER BY f.sort, f.name`,
+  ).bind(...authz.params, ...authz.params, mb, mb)];
+}
+
+mailReads.get('/folders', async (c) => {
+  const [folders] = await authorizeMailbox(c, (mb, authz) => folderListStmts(c.env.DB, mb, authz));
   return c.json(folders.results as unknown as Folder[]);
 });
 
@@ -102,10 +107,10 @@ type ListRow = PageRow & { draft?: string | null };
  * `readThreadList` turns their results into the page.
  */
 export function listThreadsStmts(
-  db: D1Database, mb: string, opts: { folder?: string; q?: string; cursor?: string; limit: number },
+  db: D1Database, mb: string, opts: { folder?: string; q?: string; cursor?: string; limit: number }, authz: Authz,
 ): D1PreparedStatement[] {
   const where: string[] = ['m.mailbox_id = ?'];
-  const params: unknown[] = [mb];
+  const params: unknown[] = [...authz.params, mb];
   if (opts.folder === 'starred') {
     where.push('m.is_starred = 1', `m.folder_id NOT IN ${TRASH_SPAM_SQL}`);
     params.push(mb);
@@ -131,7 +136,7 @@ export function listThreadsStmts(
     params.push(cur.k, cur.k, cur.id);
   }
   params.push(opts.limit + 1);
-  const pageSql = `SELECT m.thread_id AS tid, MAX(m.date) AS k FROM messages m WHERE ${where.join(' AND ')}
+  const pageSql = `SELECT m.thread_id AS tid, MAX(m.date) AS k FROM ${authz.from} messages m WHERE ${where.join(' AND ')}
       GROUP BY m.thread_id ${having} ORDER BY k DESC, tid DESC LIMIT ?`;
   // In Drafts, a row shows the latest draft itself: its subject, snippet and recipients.
   const draftCol = opts.folder && opts.folder !== 'starred'
@@ -142,7 +147,7 @@ export function listThreadsStmts(
   const draftParams = draftCol ? [opts.folder, mb, mb, opts.folder] : [];
   const list = db.prepare(pageSummariesSql(pageSql, 'page.k DESC, page.tid DESC', draftCol)).bind(...params, mb, ...draftParams, mb);
   // A named folder must exist in this mailbox (404 otherwise); its check runs first in the same batch.
-  return draftCol ? [db.prepare('SELECT id FROM folders WHERE id = ? AND mailbox_id = ?').bind(opts.folder, mb), list] : [list];
+  return draftCol ? [db.prepare(`SELECT f.id FROM ${authz.from} folders f WHERE f.id = ? AND f.mailbox_id = ?`).bind(...authz.params, opts.folder, mb), list] : [list];
 }
 
 export function readThreadList(results: D1Result[], limit: number): { items: ThreadSummary[]; nextCursor: string | null } {
@@ -162,16 +167,21 @@ mailReads.get('/threads', async (c) => {
   const limit = Math.min(Math.max(Number(c.req.query('limit')) || 50, 1), 100);
   const q = c.req.query('q')?.trim() || undefined;
   const opts = { folder: c.req.query('folder') || undefined, q, cursor: c.req.query('cursor'), limit };
-  return c.json(readThreadList(await authorizeMailbox(c, (mb) => listThreadsStmts(c.env.DB, mb, opts)), limit));
+  return c.json(readThreadList(await authorizeMailbox(c, (mb, authz) => listThreadsStmts(c.env.DB, mb, opts, authz)), limit));
 });
+
+export function threadDetailStmts(db: D1Database, mb: string, tid: string, authz: Authz): D1PreparedStatement[] {
+  return [
+    db.prepare(`SELECT t.* FROM ${authz.from} threads t WHERE t.id = ? AND t.mailbox_id = ?`).bind(...authz.params, tid, mb),
+    db.prepare(`SELECT m.* FROM ${authz.from} messages m WHERE m.thread_id = ? AND m.mailbox_id = ? ORDER BY m.date ASC, m.id ASC`).bind(...authz.params, tid, mb),
+    db.prepare(`SELECT a.* FROM ${authz.from} messages m CROSS JOIN attachments a ON a.message_id = m.id
+                 WHERE m.thread_id = ? AND a.mailbox_id = ? ORDER BY a.created_at, a.id`).bind(...authz.params, tid, mb),
+  ];
+}
 
 mailReads.get('/threads/:tid', async (c) => {
   const tid = c.req.param('tid');
-  const [thread, msgs, atts] = await authorizeMailbox(c, (mb) => [
-    c.env.DB.prepare('SELECT * FROM threads WHERE id = ? AND mailbox_id = ?').bind(tid, mb),
-    c.env.DB.prepare('SELECT * FROM messages WHERE thread_id = ? AND mailbox_id = ? ORDER BY date ASC, id ASC').bind(tid, mb),
-    c.env.DB.prepare('SELECT a.* FROM attachments a JOIN messages m ON m.id = a.message_id WHERE m.thread_id = ? AND a.mailbox_id = ? ORDER BY a.created_at, a.id').bind(tid, mb),
-  ]);
+  const [thread, msgs, atts] = await authorizeMailbox(c, (mb, authz) => threadDetailStmts(c.env.DB, mb, tid, authz));
   const t = thread.results[0] as unknown as ThreadRow | undefined;
   if (!t) throw notFound('Thread not found');
   const rows = msgs.results as unknown as MessageRow[];
@@ -290,15 +300,20 @@ mail.get('/messages/:id/raw', async (c) => {
   });
 });
 
+export function pollStmts(db: D1Database, mb: string, since: number, authz: Authz): D1PreparedStatement[] {
+  return [
+    db.prepare(`SELECT COUNT(*) AS n FROM ${authz.from} messages m WHERE m.mailbox_id = ? AND m.folder_id = ${INBOX_SQL} AND m.is_read = 0 AND m.created_at > ?`)
+      .bind(...authz.params, mb, mb, since),
+    db.prepare(pageSummariesSql(
+      `SELECT m.thread_id AS tid, MAX(m.date) AS k FROM ${authz.from} messages m WHERE m.mailbox_id = ? AND m.folder_id = ${INBOX_SQL} AND m.created_at > ?
+        GROUP BY m.thread_id ORDER BY k DESC LIMIT 10`, 'page.k DESC')).bind(...authz.params, mb, mb, since, mb, mb),
+  ];
+}
+
 /** Nearly free when nothing changed: one round trip with the authorization, two indexed range reads that find nothing. */
 mailReads.get('/poll', async (c) => {
   const since = Number(c.req.query('since')) || 0;
-  const [count, latest] = await authorizeMailbox(c, (mb) => [
-    c.env.DB.prepare(`SELECT COUNT(*) AS n FROM messages WHERE mailbox_id = ? AND folder_id = ${INBOX_SQL} AND is_read = 0 AND created_at > ?`).bind(mb, mb, since),
-    c.env.DB.prepare(pageSummariesSql(
-      `SELECT thread_id AS tid, MAX(date) AS k FROM messages WHERE mailbox_id = ? AND folder_id = ${INBOX_SQL} AND created_at > ?
-        GROUP BY thread_id ORDER BY k DESC LIMIT 10`, 'page.k DESC')).bind(mb, mb, since, mb, mb),
-  ]);
+  const [count, latest] = await authorizeMailbox(c, (mb, authz) => pollStmts(c.env.DB, mb, since, authz));
   return c.json({ newCount: (count.results[0] as { n: number }).n, latest: pageRowsToSummaries(latest.results as unknown as PageRow[]) });
 });
 

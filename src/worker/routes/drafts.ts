@@ -4,7 +4,7 @@ import { LIMITS, type ComposeMode } from '../../shared/api';
 import { ulid } from '../../shared/ulid';
 import { dedupeAddresses } from '../lib/addresses';
 import {
-  addressesForFts, attachmentToApi, deleteMessagesForever, ftsInsertStmt, loadMessageFull, messageRowToFull,
+  addressesForFts, attachmentToApi, deleteMessagesForever, ftsDeleteStmts, ftsInsertStmts, loadMessageFull, messageRowToFull,
   recomputeThreadStmts, recomputeThreads, type AttachmentRow, type MessageRow,
 } from '../lib/db';
 import { HttpError, notFound } from '../lib/errors';
@@ -105,7 +105,7 @@ drafts.post('/drafts', async (c) => {
      VALUES (?, ?, ?, ?, 'out', 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
   ).bind(id, mb, threadId, roles.drafts, th.inReplyTo, th.references, parent?.id ?? null, mode, b.from, fromName,
     JSON.stringify(to), JSON.stringify(cc), JSON.stringify(bcc), b.subject, makeSnippet(text), key, bytes(b.html) + bytes(text), now, now, now, now));
-  stmts.push(ftsInsertStmt(db, { id, mailboxId: mb, subject: b.subject, addresses: addressesForFts({ email: b.from, name: fromName }, to, cc, bcc), body: text }));
+  stmts.push(...ftsInsertStmts(db, { id, mailboxId: mb, subject: b.subject, addresses: addressesForFts({ email: b.from, name: fromName }, to, cc, bcc), body: text }));
   stmts.push(...recomputeThreadStmts(db, threadId));
   await db.batch(stmts);
 
@@ -143,33 +143,51 @@ drafts.put('/drafts/:id', async (c) => {
   const b = await jsonBody(c, DraftSchema);
   const mb = c.get('mailbox').id;
   const db = c.env.DB;
-  const [draft, identity] = await db.batch([draftStmt(db, mb, c.req.param('id')), identityStmt(db, mb, b.from)]);
-  const row = checkDraft(draft.results[0] as MessageRow | undefined);
-  const fromName = checkIdentity(identity.results[0] as { display_name: string } | undefined, c.get('user').name);
+  const id = c.req.param('id');
+  if (!zId.safeParse(id).success) throw notFound('Draft not found');
   const text = b.text ?? htmlToText(b.html);
-  const key = `body/${mb}/${row.id}.json`;
+  // Every save uploads a new body object, so the row only ever points at a complete upload; the object it
+  // replaces is deleted once the row has moved on. The upload overlaps the reads.
+  const key = `body/${mb}/${id}/${ulid()}.json`;
+  const [reads, upload] = await Promise.allSettled([
+    db.batch([draftStmt(db, mb, id), identityStmt(db, mb, b.from)]),
+    c.env.BUCKET.put(key, JSON.stringify({ html: b.html, text }), { httpMetadata: { contentType: 'application/json' } }),
+  ]);
+  let row: MessageRow, fromName: string;
+  try {
+    if (reads.status === 'rejected') throw reads.reason;
+    if (upload.status === 'rejected') throw upload.reason;
+    const [draft, identity] = reads.value;
+    row = checkDraft(draft.results[0] as MessageRow | undefined);
+    fromName = checkIdentity(identity.results[0] as { display_name: string } | undefined, c.get('user').name);
+  } catch (e) {
+    // Nothing points at the new object yet.
+    if (upload.status === 'fulfilled') c.executionCtx.waitUntil(c.env.BUCKET.delete(key));
+    throw e;
+  }
   const to = dedupeAddresses(b.to), cc = dedupeAddresses(b.cc), bcc = dedupeAddresses(b.bcc);
   const now = Date.now();
-  // The body upload and the row update run side by side; the batch ends by reading back the saved row and
-  // its attachments, so the response needs no further round trip (the body is the one just written).
-  const [, results] = await Promise.all([
-    c.env.BUCKET.put(key, JSON.stringify({ html: b.html, text }), { httpMetadata: { contentType: 'application/json' } }),
-    db.batch([
-      db.prepare(
-        `UPDATE messages SET status = 'draft', error_code = NULL, error_message = NULL, from_email = ?, from_name = ?, to_json = ?, cc_json = ?,
-           bcc_json = ?, subject = ?, snippet = ?, body_key = ?, size = ? + (SELECT COALESCE(SUM(size), 0) FROM attachments WHERE message_id = ?),
-           date = ?, updated_at = ? WHERE id = ?`,
-      ).bind(b.from, fromName, JSON.stringify(to), JSON.stringify(cc), JSON.stringify(bcc), b.subject, makeSnippet(text), key,
-        bytes(b.html) + bytes(text), row.id, now, now, row.id),
-      db.prepare('DELETE FROM messages_fts WHERE message_id = ?').bind(row.id),
-      ftsInsertStmt(db, { id: row.id, mailboxId: mb, subject: b.subject, addresses: addressesForFts({ email: b.from, name: fromName }, to, cc, bcc), body: text }),
-      db.prepare("UPDATE threads SET subject_norm = ? WHERE id = ? AND NOT EXISTS (SELECT 1 FROM messages WHERE thread_id = ? AND status IN ('received','sent'))")
-        .bind(normalizeSubject(b.subject), row.thread_id, row.thread_id),
-      ...recomputeThreadStmts(db, row.thread_id),
-      db.prepare('SELECT * FROM messages WHERE id = ?').bind(row.id),
-      db.prepare('SELECT * FROM attachments WHERE message_id = ? ORDER BY created_at, id').bind(row.id),
-    ]),
+  // If this batch fails the new object is left behind rather than risk deleting one the row may point at.
+  // One batch: the body key being replaced (read inside the transaction, so concurrent saves each delete the
+  // right one), the update, FTS, aggregates, then the saved row and its attachments for the response.
+  const results = await db.batch([
+    db.prepare('SELECT body_key FROM messages WHERE id = ?').bind(row.id),
+    db.prepare(
+      `UPDATE messages SET status = 'draft', error_code = NULL, error_message = NULL, from_email = ?, from_name = ?, to_json = ?, cc_json = ?,
+         bcc_json = ?, subject = ?, snippet = ?, body_key = ?, size = ? + (SELECT COALESCE(SUM(size), 0) FROM attachments WHERE message_id = ?),
+         date = ?, updated_at = ? WHERE id = ?`,
+    ).bind(b.from, fromName, JSON.stringify(to), JSON.stringify(cc), JSON.stringify(bcc), b.subject, makeSnippet(text), key,
+      bytes(b.html) + bytes(text), row.id, now, now, row.id),
+    ...ftsDeleteStmts(db, [row.id]),
+    ...ftsInsertStmts(db, { id: row.id, mailboxId: mb, subject: b.subject, addresses: addressesForFts({ email: b.from, name: fromName }, to, cc, bcc), body: text }),
+    db.prepare("UPDATE threads SET subject_norm = ? WHERE id = ? AND NOT EXISTS (SELECT 1 FROM messages WHERE thread_id = ? AND status IN ('received','sent'))")
+      .bind(normalizeSubject(b.subject), row.thread_id, row.thread_id),
+    ...recomputeThreadStmts(db, row.thread_id),
+    db.prepare('SELECT * FROM messages WHERE id = ?').bind(row.id),
+    db.prepare('SELECT * FROM attachments WHERE message_id = ? ORDER BY created_at, id').bind(row.id),
   ]);
+  const replaced = (results[0].results[0] as { body_key: string | null } | undefined)?.body_key;
+  if (replaced && replaced !== key) c.executionCtx.waitUntil(c.env.BUCKET.delete(replaced));
   const updated = results[results.length - 2].results[0] as unknown as MessageRow;
   const o = origin(c.req.url);
   const atts = await Promise.all((results[results.length - 1].results as unknown as AttachmentRow[]).map((a) => attachmentToApi(c.env, o, a)));

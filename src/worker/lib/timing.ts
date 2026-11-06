@@ -14,6 +14,9 @@ function track<T>(s: Span, p: Promise<T>): Promise<T> {
   });
 }
 
+/** The meter for each /api request, read by the app middleware that decides whether to expose it. */
+export const meters = new WeakMap<Request, Meter>();
+
 const D1_CALLS = new Set<PropertyKey>(['first', 'all', 'run', 'raw']);
 const R2_CALLS = new Set<PropertyKey>(['get', 'put', 'head', 'delete', 'list']);
 
