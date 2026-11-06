@@ -13,6 +13,7 @@ import { drafts } from './routes/drafts';
 import { files } from './routes/files';
 import { filters } from './routes/filters';
 import { mail, mailReads } from './routes/mail';
+import { mbox } from './routes/mbox';
 import { mailboxSettings } from './routes/mailbox-settings';
 import { invites } from './routes/invites';
 import { labels, labelReads } from './routes/labels';
@@ -42,6 +43,7 @@ mailbox.route('/', blocked);
 mailbox.route('/', templates);
 mailbox.route('/', unsubscribe);
 mailbox.route('/', aiMailbox);
+mailbox.route('/', mbox);
 
 export const app = new Hono<AppEnv>().basePath('/api');
 

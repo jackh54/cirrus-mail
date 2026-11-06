@@ -11,6 +11,7 @@ export const qk = {
   filters: (mb: string) => ['filters', mb] as const,
   blocked: (mb: string) => ['blocked', mb] as const,
   templates: (mb: string) => ['templates', mb] as const,
+  mboxImport: (mb: string) => ['mbox-import', mb] as const,
   sessions: ['sessions'] as const,
   appPasswords: ['app-passwords'] as const,
   passkeys: ['passkeys'] as const,
