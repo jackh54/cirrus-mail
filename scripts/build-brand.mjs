@@ -17,9 +17,9 @@ const jobs = [
   ['brand/social-card.svg', 'brand/social-card.png', 1280, null],
   ['brand/icon.svg', 'public/icons/icon-192.png', 192, null],
   ['brand/icon.svg', 'public/icons/icon-512.png', 512, null],
-  ['brand/icon-maskable.svg', 'public/icons/maskable-512.png', 512, '#4F6BFF'],
+  ['brand/icon-maskable.svg', 'public/icons/maskable-512.png', 512, '#2B63E8'],
   // Apple touch icons must not be transparent.
-  ['brand/icon-apple.svg', 'public/icons/apple-touch-icon.png', 180, '#4F6BFF'],
+  ['brand/icon-apple.svg', 'public/icons/apple-touch-icon.png', 180, '#2B63E8'],
 ];
 
 let failed = false;
