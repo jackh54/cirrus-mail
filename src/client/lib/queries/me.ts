@@ -1,3 +1,4 @@
+import { disablePush, setThisDeviceId } from '../push';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   AuthResponse, ChangePasswordInput, LoginInput, MeResponse, SessionInfo, SetupInput, SetupStatus,
@@ -44,7 +45,12 @@ export function useLogin() {
 export function useLogout() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => api.post<{ ok: boolean }>('/api/auth/logout'),
+    mutationFn: async () => {
+      // Best effort: stop mail alerts on this device before the session ends.
+      await disablePush().catch(() => undefined);
+      setThisDeviceId(null);
+      return api.post<{ ok: boolean }>('/api/auth/logout');
+    },
     onSettled: () => qc.clear(),
   });
 }

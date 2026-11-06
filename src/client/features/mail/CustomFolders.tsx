@@ -59,11 +59,11 @@ export function CustomFolders({ mailboxId, folders, onNavigate }: { mailboxId: s
               <NavLink to={`/mail/${mailboxId}/${f.id}`} onClick={onNavigate} className={({ isActive }) => railLinkClass(isActive)}>
                 <FolderIcon />
                 <span className="truncate pr-6">{f.name}</span>
-                <span className="group-hover/f:invisible group-focus-within/f:invisible ml-auto">
+                <span className="group-hover/f:invisible group-focus-within/f:invisible ml-auto pointer-coarse:mr-9 pointer-coarse:group-focus-within/f:visible">
                   <Badge n={f.unread} />
                 </span>
               </NavLink>
-              <div className="absolute top-0.5 right-0.5 opacity-0 group-hover/f:opacity-100 group-focus-within/f:opacity-100">
+              <div className="absolute top-1/2 right-0.5 -translate-y-1/2 opacity-0 group-hover/f:opacity-100 group-focus-within/f:opacity-100 pointer-coarse:opacity-100">
                 <Menu
                   label={`${f.name} options`}
                   width={180}

@@ -1,7 +1,9 @@
-import { Archive, ArrowLeft, ChevronDown, ChevronUp, FolderInput, Mail, ShieldAlert, ShieldCheck, Star, Trash2 } from 'lucide-react';
+import type { ReactNode } from 'react';
+import { Archive, ArrowLeft, ChevronDown, ChevronUp, FolderInput, Forward, Mail, Reply, ReplyAll, ShieldAlert, ShieldCheck, Star, Trash2 } from 'lucide-react';
 import type { Folder, ThreadAction } from '@shared/api';
 import { IconButton } from '../../components/Button';
 import { Menu } from '../../components/Menu';
+import { cn } from '../../lib/cn';
 import type { ViewRole } from './folderMeta';
 
 interface Props {
@@ -12,11 +14,31 @@ interface Props {
   onBack: () => void;
   onAction: (a: ThreadAction, folderId?: string) => void;
   onStep?: (delta: number) => void;
+  /** Phones: only back, spam and star up here; the rest lives in the bottom ReaderActionBar. */
+  mobile?: boolean;
 }
 
-export function ReaderToolbar({ role, starred, folders, showBack, onBack, onAction, onStep }: Props) {
+export function ReaderToolbar({ role, starred, folders, showBack, onBack, onAction, onStep, mobile }: Props) {
   const trashLike = role === 'trash' || role === 'spam';
   const movable = folders.filter((f) => f.role === 'inbox' || f.role === 'archive' || !f.role);
+  if (mobile) {
+    return (
+      <div className="flex h-12 shrink-0 items-center gap-1 border-b border-border bg-bg px-2" role="toolbar" aria-label="Conversation">
+        <IconButton label="Back to list" noTip size="md" onClick={onBack} className="size-11">
+          <ArrowLeft size={20} />
+        </IconButton>
+        <span className="flex-1" />
+        {role === 'spam' ? (
+          <IconButton label="Not spam" noTip onClick={() => onAction('not_spam')} className="size-11"><ShieldCheck size={18} /></IconButton>
+        ) : (
+          <IconButton label="Mark as spam" noTip onClick={() => onAction('spam')} className="size-11"><ShieldAlert size={18} /></IconButton>
+        )}
+        <IconButton label={starred ? 'Unstar' : 'Star'} noTip onClick={() => onAction(starred ? 'unstar' : 'star')} className="size-11">
+          <Star size={18} className={starred ? 'fill-amber-400 text-amber-400' : undefined} />
+        </IconButton>
+      </div>
+    );
+  }
   return (
     <div className="flex h-12 shrink-0 items-center gap-0.5 border-b border-border bg-bg px-3" role="toolbar" aria-label="Conversation actions">
       {showBack && (
@@ -53,5 +75,58 @@ export function ReaderToolbar({ role, starred, folders, showBack, onBack, onActi
         </span>
       )}
     </div>
+  );
+}
+
+interface BarProps {
+  role: ViewRole | undefined;
+  folders: Folder[];
+  onAction: (a: ThreadAction, folderId?: string) => void;
+  onReply: (mode: 'reply' | 'reply_all' | 'forward') => void;
+  canReply: boolean;
+}
+
+/** Phone reader: the main actions in a bottom bar within thumb reach, padded above the home indicator. */
+export function ReaderActionBar({ role, folders, onAction, onReply, canReply }: BarProps) {
+  const trashLike = role === 'trash' || role === 'spam';
+  const movable = folders.filter((f) => f.role === 'inbox' || f.role === 'archive' || !f.role);
+  return (
+    <div
+      role="toolbar"
+      aria-label="Conversation actions"
+      className="flex shrink-0 items-center justify-around border-t border-border bg-bg px-2 pt-0.5 pb-[max(0.125rem,env(safe-area-inset-bottom))]"
+    >
+      <BarButton label="Archive" disabled={role === 'archive'} onClick={() => onAction('archive')}><Archive /></BarButton>
+      {trashLike ? (
+        <BarButton label="Delete forever" onClick={() => onAction('delete_forever')} className="text-danger"><Trash2 /></BarButton>
+      ) : (
+        <BarButton label="Move to Trash" onClick={() => onAction('trash')}><Trash2 /></BarButton>
+      )}
+      <Menu
+        label="Move to folder"
+        align="start"
+        items={movable.length ? movable.map((f) => ({ label: f.name, icon: <FolderInput />, onSelect: () => onAction('move', f.id) })) : [{ kind: 'heading', label: 'No folders' }]}
+        trigger={(p) => <BarButton {...p} label="Move to folder"><FolderInput /></BarButton>}
+      />
+      <BarButton label="Mark as unread" onClick={() => onAction('unread')}><Mail /></BarButton>
+      <Menu
+        label="Reply options"
+        width={200}
+        items={[
+          { label: 'Reply', icon: <Reply />, onSelect: () => onReply('reply') },
+          { label: 'Reply all', icon: <ReplyAll />, onSelect: () => onReply('reply_all') },
+          { label: 'Forward', icon: <Forward />, onSelect: () => onReply('forward') },
+        ]}
+        trigger={(p) => <BarButton {...p} label="Reply options" disabled={!canReply}><Reply /></BarButton>}
+      />
+    </div>
+  );
+}
+
+function BarButton({ label, className, children, ...rest }: Omit<React.ComponentProps<typeof IconButton>, 'label'> & { label: string; children: ReactNode }) {
+  return (
+    <IconButton {...rest} label={label} noTip className={cn('size-11 rounded-lg active:bg-hover [&_svg]:size-[22px]', className)}>
+      {children}
+    </IconButton>
   );
 }

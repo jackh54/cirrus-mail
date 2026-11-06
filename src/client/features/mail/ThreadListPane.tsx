@@ -1,8 +1,9 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { useLatest } from '../../lib/useLatest';
 import { useQueryClient } from '@tanstack/react-query';
-import { Menu as MenuIcon, RefreshCw, Trash } from 'lucide-react';
+import { Archive, CheckSquare, Mail, MailOpen, Menu as MenuIcon, RefreshCw, Star, Trash, Trash2 } from 'lucide-react';
 import type { Folder, MailboxSummary, ThreadAction, ThreadSummary } from '@shared/api';
+import { ActionSheet, type SheetAction } from '../../components/ActionSheet';
 import { Button, IconButton } from '../../components/Button';
 import { useConfirm } from '../../components/Confirm';
 import { EmptyState } from '../../components/EmptyState';
@@ -13,14 +14,17 @@ import { cn } from '../../lib/cn';
 import { errorMessage } from '../../lib/api';
 import { qk } from '../../lib/queries/keys';
 import { emptyFolder } from '../../lib/queries/mail';
+import { currentDensity } from '../../lib/theme';
 import { identitiesOf } from '../compose/identities';
 import { BulkBar } from './BulkBar';
 import { VIEW_META, type ResolvedView } from './folderMeta';
 import { SearchBox } from './SearchBox';
-import { ThreadRow } from './ThreadRow';
+import { SwipeRow, type SwipeAction } from './SwipeRow';
+import { rowHeight, ThreadRow } from './ThreadRow';
 import { ThreadRows } from './ThreadRows';
 import type { MailController } from './useMailController';
-import { useMailRoute } from './useMailRoute';
+import { useMailRoute, useMediaQuery } from './useMailRoute';
+import { usePullToRefresh } from './usePullToRefresh';
 
 interface Props {
   mailbox: MailboxSummary;
@@ -28,19 +32,29 @@ interface Props {
   folders: Folder[];
   ctl: MailController;
   onOpenMenu?: () => void;
+  /** Phone layout (larger rows, room for the compose button). */
+  mobile?: boolean;
+  /** Covered by the open reader on phones: keep it mounted (and scrolled) but out of reach. */
+  inert?: boolean;
   className?: string;
 }
 
-export function ThreadListPane({ mailbox, view, folders, ctl, onOpenMenu, className }: Props) {
+export function ThreadListPane({ mailbox, view, folders, ctl, onOpenMenu, mobile = false, inert, className }: Props) {
   const { threadId, q } = useMailRoute();
   const scrollRef = useRef<HTMLDivElement>(null);
+  const pullRef = useRef<HTMLDivElement>(null);
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const touch = useMediaQuery('(pointer: coarse)');
+  const reducedMotion = useMediaQuery('(prefers-reduced-motion: reduce)');
+  const [sheetFor, setSheetFor] = useState<ThreadSummary | null>(null);
   const myEmails = useMemo(() => new Set(identitiesOf(mailbox).map((i) => i.email.toLowerCase())), [mailbox]);
   const { query, threads, focusIndex, cursorVisible, selected, toggle, selectAll, openThread, act, prefetch, hideCursor } = ctl;
   const meta = VIEW_META[view.role];
   const selecting = selected.size > 0;
 
   // Stable callbacks (read the latest closures through a ref) so memoised rows never re-render on hover or open.
-  const latest = useLatest({ act, openThread, toggle, prefetch, hideCursor });
+  const latest = useLatest({ act, openThread, toggle, prefetch, hideCursor, toast });
   const onAction = useCallback((a: ThreadAction, ids: string[]) => void latest.current.act(a, ids), [latest]);
   const onOpen = useCallback(
     (t: ThreadSummary, i: number, viaPointer: boolean) => {
@@ -55,7 +69,30 @@ export function ThreadListPane({ mailbox, view, folders, ctl, onOpenMenu, classN
     if (query.hasNextPage && !query.isFetchingNextPage) void query.fetchNextPage();
   }, [query]);
 
-  const renderRow = (t: ThreadSummary, i: number) => (
+  // Touch: swipe left archives, swipe right toggles read (with Undo); a long press opens the action sheet.
+  const onSwipe = useCallback(
+    (a: SwipeAction, t: ThreadSummary) => {
+      void latest.current.act(a, [t.id]);
+      if (a === 'archive') return; // the action hook shows its own toast with Undo
+      latest.current.toast({
+        tone: 'success',
+        title: a === 'read' ? 'Marked as read' : 'Marked as unread',
+        action: { label: 'Undo', onClick: () => void latest.current.act(a === 'read' ? 'unread' : 'read', [t.id]) },
+      });
+    },
+    [latest],
+  );
+  const onLongPress = useCallback((t: ThreadSummary) => setSheetFor(t), []);
+  const swipeable = touch && !reducedMotion && view.role !== 'drafts' && view.role !== 'scheduled';
+
+  usePullToRefresh(
+    scrollRef,
+    pullRef,
+    () => Promise.all([query.refetch(), qc.invalidateQueries({ queryKey: qk.folders(mailbox.id) })]),
+    touch && !selecting,
+  );
+
+  const thread = (t: ThreadSummary, i: number) => (
     <ThreadRow
       thread={t}
       index={i}
@@ -65,17 +102,27 @@ export function ThreadListPane({ mailbox, view, folders, ctl, onOpenMenu, classN
       selecting={selecting}
       myEmails={myEmails}
       scheduled={view.role === 'scheduled'}
+      mobile={mobile}
+      touch={touch}
       onOpen={onOpen}
       onToggle={onToggle}
       onAction={onAction}
       onPrefetch={onPrefetch}
     />
   );
+  const renderRow = (t: ThreadSummary, i: number) =>
+    touch ? (
+      <SwipeRow thread={t} swipe={swipeable && !selecting} canArchive={view.role !== 'archive'} onSwipe={onSwipe} onLongPress={onLongPress}>
+        {thread(t, i)}
+      </SwipeRow>
+    ) : (
+      thread(t, i)
+    );
 
   const allChecked = threads.length > 0 && selected.size === threads.length;
 
   return (
-    <section aria-label={`${view.label} conversations`} className={cn('flex min-w-0 flex-col bg-bg', className)}>
+    <section aria-label={`${view.label} conversations`} inert={inert} className={cn('relative flex min-w-0 flex-col bg-bg', className)}>
       {selecting ? (
         <BulkBar
           count={selected.size}
@@ -118,7 +165,21 @@ export function ThreadListPane({ mailbox, view, folders, ctl, onOpenMenu, classN
         </header>
       )}
 
-      <div ref={scrollRef} className="relative min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain">
+      {touch && (
+        <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-12 z-10 flex h-28 justify-center overflow-hidden">
+          <div ref={pullRef} className="flex size-9 items-center justify-center rounded-full bg-elevated text-primary opacity-0 shadow-pop" style={{ transform: 'translate3d(0,-40px,0)' }}>
+            <RefreshCw size={16} strokeWidth={2} />
+          </div>
+        </div>
+      )}
+      <div
+        ref={scrollRef}
+        className={cn(
+          'relative min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain',
+          // Room to scroll the last row clear of the compose button and the home indicator.
+          mobile && 'pb-[calc(5.5rem+env(safe-area-inset-bottom))]',
+        )}
+      >
         {query.isPending ? (
           Array.from({ length: 12 }, (_, i) => <ThreadRowSkeleton key={i} />)
         ) : query.isError ? (
@@ -139,6 +200,8 @@ export function ThreadListPane({ mailbox, view, folders, ctl, onOpenMenu, classN
               renderRow={renderRow}
               hasMore={!!query.hasNextPage}
               loadMore={loadMore}
+              rowHeight={rowHeight(currentDensity() === 'compact', mobile)}
+              lazyPaint={mobile}
             />
             {query.isFetchingNextPage && (
               <div className="flex h-12 items-center justify-center text-faint"><Spinner size={14} /></div>
@@ -146,8 +209,30 @@ export function ThreadListPane({ mailbox, view, folders, ctl, onOpenMenu, classN
           </>
         )}
       </div>
+      {sheetFor && (
+        <ActionSheet
+          open
+          title={sheetFor.subject || '(no subject)'}
+          onClose={() => setSheetFor(null)}
+          actions={sheetActions(sheetFor, view.role, (a) => void act(a, [sheetFor.id]), () => toggle(sheetFor.id, threads.indexOf(sheetFor), false))}
+        />
+      )}
     </section>
   );
+}
+
+function sheetActions(t: ThreadSummary, role: ResolvedView['role'], run: (a: ThreadAction) => void, select: () => void): SheetAction[] {
+  const unread = t.unreadCount > 0;
+  const trashLike = role === 'trash' || role === 'spam';
+  return [
+    ...(role !== 'archive' ? [{ label: 'Archive', icon: <Archive />, onSelect: () => run('archive') }] : []),
+    trashLike
+      ? { label: 'Delete forever', icon: <Trash2 />, danger: true, onSelect: () => run('delete_forever') }
+      : { label: 'Move to Trash', icon: <Trash2 />, onSelect: () => run('trash') },
+    { label: unread ? 'Mark as read' : 'Mark as unread', icon: unread ? <MailOpen /> : <Mail />, onSelect: () => run(unread ? 'read' : 'unread') },
+    { label: t.isStarred ? 'Unstar' : 'Star', icon: <Star />, onSelect: () => run(t.isStarred ? 'unstar' : 'star') },
+    { label: 'Select', icon: <CheckSquare />, onSelect: select },
+  ];
 }
 
 function EmptyFolderButton({ mailboxId, folder }: { mailboxId: string; folder: Folder }) {

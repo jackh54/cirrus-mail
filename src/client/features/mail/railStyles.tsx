@@ -1,9 +1,10 @@
 import { cn } from '../../lib/cn';
 
-/** Sidebar item: 28px, 13px text, 16px icons at 1.75 stroke; active is a quiet fill, not cobalt. */
+/** Sidebar item: 28px (44px on touch screens), 13px text, 16px icons at 1.75 stroke; active is a quiet fill, not cobalt. */
 export function railLinkClass(active: boolean): string {
   return cn(
     'group flex h-7 items-center gap-2 rounded-md px-2 text-[13px] [&_svg]:size-4 [&_svg]:shrink-0 [&_svg]:stroke-[1.75]',
+    'pointer-coarse:h-11 pointer-coarse:gap-3 pointer-coarse:text-[15px] pointer-coarse:active:bg-black/[0.055] dark:pointer-coarse:active:bg-white/[0.07]',
     active
       ? 'bg-black/[0.055] font-medium text-fg dark:bg-white/[0.07] [&_svg]:text-fg'
       : 'text-muted hover:bg-black/[0.035] hover:text-fg dark:hover:bg-white/[0.04] [&_svg]:text-faint hover:[&_svg]:text-muted',

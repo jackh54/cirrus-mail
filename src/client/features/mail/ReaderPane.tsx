@@ -5,9 +5,11 @@ import { Forward, MailX, Reply, ReplyAll } from 'lucide-react';
 import type { Folder, MailboxSummary, MessageFull, ThreadAction } from '@shared/api';
 import { Button, tipText } from '../../components/Button';
 import { EmptyState } from '../../components/EmptyState';
+import { committed, EDGE_PX, settle, trackHorizontalDrag } from '../../components/gestures';
 import { Skeleton } from '../../components/Skeleton';
 import { useToast } from '../../components/Toast';
 import { api, errorMessage } from '../../lib/api';
+import { cn } from '../../lib/cn';
 import { useHotkeys } from '../../lib/hotkeys';
 import { qk } from '../../lib/queries/keys';
 import { useThread } from '../../lib/queries/mail';
@@ -16,7 +18,7 @@ import { draftApi } from '../compose/draftApi';
 import { identitiesOf } from '../compose/identities';
 import type { ResolvedView } from './folderMeta';
 import { MessageCard } from './MessageCard';
-import { ReaderToolbar } from './ReaderToolbar';
+import { ReaderActionBar, ReaderToolbar } from './ReaderToolbar';
 import type { MailController } from './useMailController';
 import { useMailRoute } from './useMailRoute';
 
@@ -27,9 +29,12 @@ interface Props {
   folders: Folder[];
   ctl: MailController;
   showBack: boolean;
+  /** Phones: bottom action bar, and a swipe from the left edge goes back to the list. */
+  mobile?: boolean;
+  className?: string;
 }
 
-export function ReaderPane({ mailbox, threadId, view, folders, ctl, showBack }: Props) {
+export function ReaderPane({ mailbox, threadId, view, folders, ctl, showBack, mobile = false, className }: Props) {
   const mb = mailbox.id;
   const { data, isPending, isError, error } = useThread(mb, threadId);
   const route = useMailRoute();
@@ -41,6 +46,10 @@ export function ReaderPane({ mailbox, threadId, view, folders, ctl, showBack }: 
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const markedRead = useRef(false);
   const scroller = useRef<HTMLDivElement>(null);
+  const pane = useRef<HTMLElement>(null);
+  const back = () => navigate(route.listUrl);
+  const backRef = useRef(back);
+  backRef.current = back;
 
   const messages = data?.messages ?? [];
   const sent = messages.filter((m) => m.status !== 'draft');
@@ -65,6 +74,24 @@ export function ReaderPane({ mailbox, threadId, view, folders, ctl, showBack }: 
   useEffect(() => {
     scroller.current?.focus({ preventScroll: true });
   }, [threadId]);
+
+  // Phones: swipe in from the left edge to go back; the list (still mounted underneath) follows the finger.
+  useEffect(() => {
+    const el = pane.current;
+    if (!el || !mobile) return;
+    return trackHorizontalDrag(el, {
+      start: (x) => x < EDGE_PX,
+      move: (dx) => {
+        el.style.transform = `translate3d(${Math.max(0, dx)}px,0,0)`;
+        el.style.boxShadow = '-12px 0 32px rgb(0 0 0 / 0.12)';
+      },
+      end: (dx, vx) => {
+        if (dx > 0 && committed(dx, vx, el.offsetWidth, 0.35)) settle(el, el.offsetWidth, () => backRef.current());
+        else settle(el, 0, () => (el.style.boxShadow = ''));
+      },
+      cancel: () => settle(el, 0, () => (el.style.boxShadow = '')),
+    });
+  }, [mobile]);
 
   const reply = (mode: 'reply' | 'reply_all' | 'forward', m: MessageFull | undefined = latest) => {
     if (m) compose.open({ mailboxId: mb, mode, parent: m });
@@ -102,24 +129,29 @@ export function ReaderPane({ mailbox, threadId, view, folders, ctl, showBack }: 
   };
 
   return (
-    <section aria-label="Conversation" className="flex min-w-0 flex-1 flex-col bg-bg">
+    <section
+      ref={pane}
+      aria-label="Conversation"
+      className={cn('flex min-w-0 flex-1 flex-col bg-bg', className)}
+    >
       <ReaderToolbar
         role={view?.role}
         starred={!!data?.thread.isStarred}
         folders={folders}
         showBack={showBack}
-        onBack={() => navigate(route.listUrl)}
+        onBack={back}
         onAction={act}
         onStep={ctl.threads.length > 1 ? step : undefined}
+        mobile={mobile}
       />
-      <div ref={scroller} tabIndex={-1} className="min-h-0 flex-1 overflow-y-auto outline-none">
+      <div ref={scroller} tabIndex={-1} className={cn('min-h-0 flex-1 overflow-y-auto outline-none', mobile && 'overscroll-contain')}>
         {isPending ? (
           <ReaderSkeleton />
         ) : isError ? (
           <EmptyState icon={<MailX size={24} />} title="Couldn't open this conversation" body={errorMessage(error)} />
         ) : (
-          <div className="mx-auto max-w-[800px] px-4 pt-6 pb-16 sm:px-8">
-            <h1 className="mb-4 text-[18px] leading-7 font-semibold tracking-[-0.01em] text-balance text-fg">{data.thread.subject || '(no subject)'}</h1>
+          <div className={cn('mx-auto max-w-[800px] px-4 sm:px-8', mobile ? 'pt-4 pb-8' : 'pt-6 pb-16')}>
+            <h1 className={cn('text-[18px] leading-7 font-semibold tracking-[-0.01em] text-balance text-fg', mobile ? 'mb-2 break-words' : 'mb-4')}>{data.thread.subject || '(no subject)'}</h1>
             <div className="divide-y divide-border border-y border-border">
               {messages.map((m) => (
                 <MessageCard
@@ -148,10 +180,11 @@ export function ReaderPane({ mailbox, threadId, view, folders, ctl, showBack }: 
                 />
               ))}
             </div>
-            {latest && <ReplyBar onReply={(mode) => reply(mode)} />}
+            {latest && !mobile && <ReplyBar onReply={(mode) => reply(mode)} />}
           </div>
         )}
       </div>
+      {mobile && <ReaderActionBar role={view?.role} folders={folders} onAction={act} onReply={(mode) => reply(mode)} canReply={!!latest} />}
     </section>
   );
 }

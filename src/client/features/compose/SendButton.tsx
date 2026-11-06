@@ -48,7 +48,7 @@ export function SendButton({ onSend, disabled, busy }: { onSend: (sendAt?: numbe
     <div className="inline-flex">
       <Button
         variant="primary"
-        className="cm-tip rounded-r-none pr-3"
+        className="cm-tip rounded-r-none pr-3 pointer-coarse:h-11 pointer-coarse:px-4 pointer-coarse:text-[15px]"
         data-tip={tipText('Send', `${MOD_KEY}Enter`)}
         data-tip-side="top"
         data-tip-align="start"
@@ -65,7 +65,7 @@ export function SendButton({ onSend, disabled, busy }: { onSend: (sendAt?: numbe
         width={240}
         items={items}
         trigger={(p) => (
-          <Button {...p} variant="primary" className="rounded-l-none border-l border-white/20 px-1.5" disabled={disabled} aria-label="Send later">
+          <Button {...p} variant="primary" className="rounded-l-none border-l border-white/20 px-1.5 pointer-coarse:h-11 pointer-coarse:px-3" disabled={disabled} aria-label="Send later">
             <ChevronDown size={14} strokeWidth={1.75} />
           </Button>
         )}

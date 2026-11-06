@@ -27,7 +27,7 @@ export function AttachmentList({
           <FileTypeIcon mime={a.mimeType} size={15} />
           <span className="min-w-0 flex-1 truncate">{a.filename}</span>
           <span className="tnum shrink-0 text-[12px] text-faint">{formatBytes(a.size)}</span>
-          <button type="button" aria-label={`Remove ${a.filename}`} onClick={() => onRemove(a)} className="rounded p-0.5 text-faint hover:bg-hover hover:text-fg">
+          <button type="button" aria-label={`Remove ${a.filename}`} onClick={() => onRemove(a)} className="cm-hit rounded p-0.5 text-faint hover:bg-hover hover:text-fg">
             <X size={13} />
           </button>
         </li>
@@ -41,7 +41,7 @@ export function AttachmentList({
           <span className="min-w-0 flex-1 truncate">{u.error ? `${u.name}: ${u.error}` : u.name}</span>
           {!u.error && <span className="tnum shrink-0 text-[12px] text-faint">{Math.round(u.progress * 100)}%</span>}
           {u.error && (
-            <button type="button" aria-label="Dismiss" onClick={() => onDismissUpload(u.id)} className="rounded p-0.5 hover:bg-hover">
+            <button type="button" aria-label="Dismiss" onClick={() => onDismissUpload(u.id)} className="cm-hit rounded p-0.5 hover:bg-hover">
               <X size={13} />
             </button>
           )}

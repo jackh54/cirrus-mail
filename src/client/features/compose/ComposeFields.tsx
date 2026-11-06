@@ -19,12 +19,12 @@ export function ComposeFields({ draft, identities, onChange }: Props) {
   const toggles = (
     <div className="flex shrink-0 gap-0.5 pt-0.5">
       {!showCc && (
-        <button type="button" onClick={() => setShowCc(true)} className="h-6 rounded-[4px] px-1.5 text-[12px] text-muted hover:bg-hover hover:text-fg">
+        <button type="button" onClick={() => setShowCc(true)} className="cm-hit h-6 rounded-[4px] px-1.5 text-[12px] text-muted hover:bg-hover hover:text-fg pointer-coarse:px-2.5 pointer-coarse:text-[14px]">
           Cc
         </button>
       )}
       {!showBcc && (
-        <button type="button" onClick={() => setShowBcc(true)} className="h-6 rounded-[4px] px-1.5 text-[12px] text-muted hover:bg-hover hover:text-fg">
+        <button type="button" onClick={() => setShowBcc(true)} className="cm-hit h-6 rounded-[4px] px-1.5 text-[12px] text-muted hover:bg-hover hover:text-fg pointer-coarse:px-2.5 pointer-coarse:text-[14px]">
           Bcc
         </button>
       )}
@@ -34,7 +34,7 @@ export function ComposeFields({ draft, identities, onChange }: Props) {
   return (
     <div className="shrink-0">
       {identities.length > 1 && (
-        <div className="flex h-9 items-center gap-2 border-b border-border px-4">
+        <div className="flex h-9 items-center gap-2 border-b border-border px-4 pointer-coarse:h-11">
           <label htmlFor={fromId} className="w-9 shrink-0 text-[13px] text-faint">From</label>
           <select
             id={fromId}
@@ -54,7 +54,7 @@ export function ComposeFields({ draft, identities, onChange }: Props) {
       <RecipientInput label="To" value={draft.to} onChange={(to) => onChange({ to })} autoFocus={draft.to.length === 0} trailing={toggles} />
       {showCc && <RecipientInput label="Cc" value={draft.cc} onChange={(cc) => onChange({ cc })} />}
       {showBcc && <RecipientInput label="Bcc" value={draft.bcc} onChange={(bcc) => onChange({ bcc })} />}
-      <div className="flex h-9 items-center gap-2 border-b border-border px-4">
+      <div className="flex h-9 items-center gap-2 border-b border-border px-4 pointer-coarse:h-11">
         <label htmlFor={subjectId} className="sr-only">Subject</label>
         <input
           id={subjectId}

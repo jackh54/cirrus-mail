@@ -1,3 +1,4 @@
+import { getThisDeviceId } from '../../lib/push';
 import { useEffect, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { PollResponse } from '@shared/api';
@@ -62,6 +63,7 @@ export function usePolling(mb: string) {
 function notify(res: PollResponse) {
   if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
   if (document.hasFocus()) return; // the list already updates in front of the user
+  if (getThisDeviceId()) return; // this device gets Web Push; the service worker already notified
   const first = res.latest[0];
   const from = first?.participants[0];
   const title = res.newCount === 1 && from ? displayName(from) : `${res.newCount} new messages`;

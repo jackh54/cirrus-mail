@@ -27,8 +27,9 @@ const sizes: Record<Size, string> = {
   lg: 'h-9 px-4 text-[13px] gap-2',
 };
 
+// cm-hit: a 44px minimum hit area on touch screens (styles/index.css), without changing the look.
 const base =
-  'inline-flex shrink-0 items-center justify-center rounded-md font-medium whitespace-nowrap select-none ' +
+  'cm-hit inline-flex shrink-0 items-center justify-center rounded-md font-medium whitespace-nowrap select-none ' +
   'transition-colors duration-100 ease-out disabled:opacity-50 [&_svg]:shrink-0';
 
 export function buttonClass(variant: Variant = 'secondary', size: Size = 'md', className?: string): string {
@@ -98,7 +99,7 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
       data-tip-side={tipSide}
       data-tip-align={tipAlign === 'center' ? undefined : tipAlign}
       className={cn(
-        'inline-flex shrink-0 items-center justify-center rounded-md text-muted transition-colors duration-100 ease-out',
+        'cm-hit inline-flex shrink-0 items-center justify-center rounded-md text-muted transition-colors duration-100 ease-out',
         'hover:bg-hover hover:text-fg disabled:opacity-40 disabled:hover:bg-transparent [&_svg]:stroke-[1.75]',
         !noTip && 'cm-tip',
         active && 'text-primary',

@@ -71,7 +71,11 @@ function Toolbar({ editor }: { editor: Editor }) {
   };
 
   return (
-    <div role="toolbar" aria-label="Formatting" className="flex flex-wrap items-center gap-px px-3 py-1">
+    <div
+      role="toolbar"
+      aria-label="Formatting"
+      className="flex flex-wrap items-center gap-px px-3 py-1 pointer-coarse:flex-nowrap pointer-coarse:overflow-x-auto pointer-coarse:overscroll-x-contain pointer-coarse:px-1 pointer-coarse:py-0 pointer-coarse:[scrollbar-width:none]"
+    >
       <Tool label="Bold" active={s.bold} onClick={() => editor.chain().focus().toggleBold().run()}><Bold size={15} /></Tool>
       <Tool label="Italic" active={s.italic} onClick={() => editor.chain().focus().toggleItalic().run()}><Italic size={15} /></Tool>
       <Tool label="Underline" active={s.underline} onClick={() => editor.chain().focus().toggleUnderline().run()}><Underline size={15} /></Tool>
@@ -100,7 +104,8 @@ function Tool({ label, active, onClick, children }: { label: string; active?: bo
       onMouseDown={(e) => e.preventDefault()}
       onClick={onClick}
       className={cn(
-        'cm-tip inline-flex size-7 items-center justify-center rounded-md transition-colors duration-100 [&_svg]:stroke-[1.75]',
+        'cm-tip inline-flex size-7 shrink-0 items-center justify-center rounded-md transition-colors duration-100 [&_svg]:stroke-[1.75]',
+        'pointer-coarse:size-11 pointer-coarse:[&_svg]:size-[18px]',
         active ? 'bg-hover text-fg' : 'text-faint hover:bg-hover hover:text-fg',
       )}
     >
@@ -110,5 +115,5 @@ function Tool({ label, active, onClick, children }: { label: string; active?: bo
 }
 
 function Sep() {
-  return <span className="mx-1 h-3.5 w-px bg-border" aria-hidden="true" />;
+  return <span className="mx-1 h-3.5 w-px shrink-0 bg-border" aria-hidden="true" />;
 }

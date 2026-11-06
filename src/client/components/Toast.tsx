@@ -40,7 +40,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       {children}
       <div
         aria-live="polite"
-        className="pointer-events-none fixed inset-x-0 bottom-20 z-[60] flex flex-col items-center gap-2 px-3 md:bottom-4 md:left-4 md:right-auto md:items-start md:px-0"
+        className="pointer-events-none fixed inset-x-0 bottom-[calc(5rem+env(safe-area-inset-bottom))] z-[60] flex flex-col items-center gap-2 px-3 md:bottom-4 md:left-4 md:right-auto md:items-start md:px-0"
       >
         {items.map((t) => (
           <ToastView key={t.id} item={t} onDismiss={() => dismiss(t.id)} />
@@ -82,12 +82,12 @@ function ToastView({ item, onDismiss }: { item: ToastItem; onDismiss: () => void
               item.action?.onClick();
               onDismiss();
             }}
-            className="-my-0.5 h-6 shrink-0 rounded-md px-2 text-[13px] font-medium text-selected-fg hover:bg-primary-soft"
+            className="cm-hit -my-0.5 h-6 shrink-0 rounded-md px-2 text-[13px] font-medium text-selected-fg hover:bg-primary-soft"
           >
             {item.action.label}
           </button>
         )}
-        <button type="button" aria-label="Dismiss" onClick={onDismiss} className="-my-0.5 inline-flex size-6 shrink-0 items-center justify-center rounded-md text-faint hover:bg-hover hover:text-fg">
+        <button type="button" aria-label="Dismiss" onClick={onDismiss} className="cm-hit -my-0.5 inline-flex size-6 shrink-0 items-center justify-center rounded-md text-faint hover:bg-hover hover:text-fg">
           <X size={14} />
         </button>
       </div>

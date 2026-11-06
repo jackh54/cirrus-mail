@@ -11,6 +11,10 @@ export interface RowsProps {
   renderRow: (t: ThreadSummary, i: number) => ReactNode;
   hasMore: boolean;
   loadMore: () => void;
+  /** Fixed row height in px (the virtualizer's estimate). */
+  rowHeight: number;
+  /** Phones: skip layout and paint for rows outside the viewport (content-visibility). */
+  lazyPaint?: boolean;
 }
 
 /** Plain rendering for short lists, windowed rendering above 100 rows; infinite scroll either way. */
@@ -29,11 +33,12 @@ export function ThreadRows(props: RowsProps) {
   );
 }
 
-function PlainRows({ threads, renderRow, focusIndex, scrollRef }: RowsProps) {
+function PlainRows({ threads, renderRow, focusIndex, scrollRef, rowHeight, lazyPaint }: RowsProps) {
   useEffect(() => {
     scrollRef.current?.querySelector(`[data-index="${focusIndex}"]`)?.scrollIntoView({ block: 'nearest' });
   }, [focusIndex, scrollRef]);
-  return <div role="list">{threads.map((t, i) => <div key={t.id} role="presentation">{renderRow(t, i)}</div>)}</div>;
+  const style = lazyPaint ? { contentVisibility: 'auto' as const, containIntrinsicSize: `auto ${rowHeight}px` } : undefined;
+  return <div role="list">{threads.map((t, i) => <div key={t.id} role="presentation" style={style}>{renderRow(t, i)}</div>)}</div>;
 }
 
 function LoadMoreSentinel({ scrollRef, enabled, onVisible }: { scrollRef: RefObject<HTMLDivElement | null>; enabled: boolean; onVisible: () => void }) {

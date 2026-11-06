@@ -6,7 +6,7 @@ import { EmptyState } from '../../components/EmptyState';
 import { FullScreenSpinner } from '../../components/Spinner';
 import { isApiError } from '../../lib/api';
 import { useMe } from '../../lib/queries/me';
-import { applyPrefs } from '../../lib/theme';
+import { applyPrefs, useDarkTheme } from '../../lib/theme';
 import { ComposeProvider } from '../compose/ComposeProvider';
 import { ShortcutsOverlay } from '../mail/ShortcutsOverlay';
 import { PaletteHost } from '../palette/PaletteHost';
@@ -15,10 +15,16 @@ import { PaletteHost } from '../palette/PaletteHost';
 export function AppShell() {
   const me = useMe();
   const user = me.data?.user;
+  const dark = useDarkTheme();
 
   useEffect(() => {
     if (user) applyPrefs({ theme: user.theme, density: user.density });
   }, [user?.theme, user?.density, user]);
+
+  // index.html has one theme-color per system scheme; follow the resolved theme so a user choice wins.
+  useEffect(() => {
+    document.querySelectorAll('meta[name="theme-color"]').forEach((m) => m.setAttribute('content', dark ? '#131417' : '#FFFFFF'));
+  }, [dark]);
 
   if (me.isPending || (me.isError && isApiError(me.error) && me.error.status === 401)) return <FullScreenSpinner />;
   if (me.isError) {
@@ -36,7 +42,8 @@ export function AppShell() {
 
   return (
     <ComposeProvider>
-      <div className="flex h-full flex-col">
+      {/* Installed on iOS the app draws under the status bar and home indicator, so the shell pads by the safe areas. */}
+      <div className="flex h-full flex-col pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pl-[env(safe-area-inset-left)]">
         {user?.mustChangePassword && (
           <div className="flex h-9 items-center justify-center gap-2 border-b border-border bg-warning-soft px-4 text-[13px] text-warning">
             <KeyRound size={14} />

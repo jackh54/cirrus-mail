@@ -25,7 +25,7 @@ export function Rail({ mailbox, folders, onNavigate }: Props) {
   const compose = useCompose();
   return (
     <nav aria-label="Mailbox" className="flex h-full w-full flex-col bg-sidebar md:w-60 md:shrink-0 md:border-r md:border-border">
-      <div className="flex h-12 shrink-0 items-center gap-1 px-2">
+      <div className="flex h-12 shrink-0 items-center gap-1 px-2 pointer-coarse:h-14">
         <MailboxSwitcher current={mailbox} onNavigate={onNavigate} />
       </div>
       <div className="flex gap-1.5 px-2 pb-3">
@@ -36,7 +36,7 @@ export function Rail({ mailbox, folders, onNavigate }: Props) {
             compose.open({ mailboxId: mailbox.id, mode: 'new' });
             onNavigate?.();
           }}
-          className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md border border-border bg-bg px-2.5 text-[13px] font-medium text-fg shadow-[0_1px_1px_rgb(0_0_0/0.04)] hover:bg-hover dark:bg-surface-2 dark:hover:bg-hover"
+          className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md border border-border bg-bg px-2.5 text-[13px] font-medium pointer-coarse:h-11 pointer-coarse:text-[15px] text-fg shadow-[0_1px_1px_rgb(0_0_0/0.04)] hover:bg-hover dark:bg-surface-2 dark:hover:bg-hover"
         >
           <PenLine size={15} strokeWidth={1.75} className="text-primary" />
           <span className="flex-1 text-left">Compose</span>
@@ -51,7 +51,7 @@ export function Rail({ mailbox, folders, onNavigate }: Props) {
             onNavigate?.();
             window.dispatchEvent(new Event(OPEN_PALETTE_EVENT));
           }}
-          className="cm-tip inline-flex size-8 shrink-0 items-center justify-center rounded-md border border-border bg-bg text-muted shadow-[0_1px_1px_rgb(0_0_0/0.04)] hover:bg-hover hover:text-fg dark:bg-surface-2 dark:hover:bg-hover"
+          className="cm-tip inline-flex size-8 shrink-0 items-center justify-center rounded-md border pointer-coarse:size-11 border-border bg-bg text-muted shadow-[0_1px_1px_rgb(0_0_0/0.04)] hover:bg-hover hover:text-fg dark:bg-surface-2 dark:hover:bg-hover"
         >
           <Command size={15} strokeWidth={1.75} />
         </button>
@@ -95,7 +95,7 @@ function MailboxSwitcher({ current, onNavigate }: { current: MailboxSummary; onN
     </>
   );
   if (mailboxes.length < 2) {
-    return <div className="flex h-8 min-w-0 flex-1 items-center gap-2 px-2" title={current.address}>{label}</div>;
+    return <div className="flex h-8 min-w-0 flex-1 items-center gap-2 px-2 pointer-coarse:h-11" title={current.address}>{label}</div>;
   }
   return (
     <Menu
@@ -114,7 +114,7 @@ function MailboxSwitcher({ current, onNavigate }: { current: MailboxSummary; onN
         })),
       ]}
       trigger={(p) => (
-        <button {...p} type="button" title={current.address} className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-2 hover:bg-black/[0.035] dark:hover:bg-white/[0.04]">
+        <button {...p} type="button" title={current.address} className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-2 hover:bg-black/[0.035] pointer-coarse:h-11 dark:hover:bg-white/[0.04]">
           {label}
           <ChevronsUpDown size={14} strokeWidth={1.75} className="shrink-0 text-faint" />
         </button>

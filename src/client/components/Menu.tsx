@@ -126,6 +126,7 @@ export function Menu({ trigger, items, align = 'end', label, width = 220 }: Menu
                   }}
                   className={cn(
                     'flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[13px] outline-none',
+                    'pointer-coarse:h-11 pointer-coarse:gap-3 pointer-coarse:px-3 pointer-coarse:text-[15px] pointer-coarse:active:bg-hover',
                     'hover:bg-hover focus-visible:bg-hover focus-visible:outline-none disabled:opacity-40',
                     it.danger ? 'text-danger' : 'text-fg',
                   )}

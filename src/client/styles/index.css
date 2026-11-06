@@ -150,6 +150,20 @@
 
 @layer base {
   html, body, #root { height: 100%; }
+  /*
+   * Touch screens: the app shell never scrolls or rubber-bands; only its inner lists and panes do
+   * (overscroll-contain). Desktop keeps the default so trackpad history swipes still work.
+   */
+  @media (pointer: coarse) {
+    html, body { overscroll-behavior: none; }
+  }
+  /* No double-tap zoom (so no tap delay) and no grey tap flash; pinch zoom still works. */
+  html {
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
   body {
     background: var(--c-bg);
     color: var(--c-fg);
@@ -197,20 +211,61 @@
 
   dialog.cm-drawer {
     margin: 0;
-    padding: 0;
+    padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom) env(safe-area-inset-left);
     border: 0;
     height: 100dvh;
     max-height: none;
-    width: min(288px, 86vw);
+    width: calc(min(288px, 86vw) + env(safe-area-inset-left));
     background: var(--c-sidebar);
     color: var(--c-fg);
     box-shadow: var(--shadow-pop);
+    overscroll-behavior: contain;
+    touch-action: pan-y pinch-zoom;
   }
   dialog.cm-drawer[open] { animation: drawer-in 120ms var(--ease-out-soft); }
-  dialog.cm-drawer::backdrop { background: rgb(10 11 14 / 0.4); }
+  /* Opened by an edge swipe: the finger drives the position, so skip the entrance animation. */
+  dialog.cm-drawer[data-dragging][open] { animation: none; }
+  /* --drawer-p (0..1) tracks an edge swipe; ::backdrop inherits it from the dialog. */
+  dialog.cm-drawer::backdrop { background: rgb(10 11 14 / 0.4); opacity: var(--drawer-p, 1); }
   @keyframes drawer-in {
     from { transform: translateX(-16px); opacity: 0; }
     to { transform: none; opacity: 1; }
+  }
+
+  /* Bottom action sheet (long-press on a thread row), on native <dialog>. */
+  dialog.cm-sheet {
+    margin: auto auto 0;
+    padding: 0 8px calc(8px + env(safe-area-inset-bottom));
+    border: 0;
+    background: transparent;
+    color: var(--c-fg);
+    width: 100%;
+    max-width: 480px;
+    max-height: calc(100dvh - 48px);
+    overflow: visible;
+  }
+  dialog.cm-sheet[open] { animation: sheet-in 120ms var(--ease-out-soft); }
+  dialog.cm-sheet::backdrop { background: rgb(10 11 14 / 0.4); }
+  @keyframes sheet-in {
+    from { transform: translateY(16px); opacity: 0; }
+    to { transform: none; opacity: 1; }
+  }
+
+  /*
+   * Touch targets: on coarse pointers, small controls get an invisible hit area of at least 44px,
+   * centred on the control, so the visual density stays the same.
+   */
+  @media (pointer: coarse) {
+    .cm-hit { position: relative; }
+    .cm-hit::before {
+      content: "";
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: max(100%, 44px);
+      height: max(100%, 44px);
+      transform: translate(-50%, -50%);
+    }
   }
 
   /* CSS-only tooltip: put data-tip="Archive  E" on a .cm-tip element (see components/Button.tsx). */
@@ -271,6 +326,14 @@
     height: 0;
     pointer-events: none;
   }
+}
+
+/*
+ * iOS zooms the page when a focused field's text is under 16px. On touch devices every text field
+ * and the editor use 16px (unlayered, so it wins over the 13px utilities); desktop keeps 13px.
+ */
+@media (pointer: coarse) {
+  input:not([type="checkbox"], [type="radio"], [type="range"], [type="file"]), textarea, select, .cm-prose { font-size: 16px; }
 }
 
 @keyframes cm-drain {

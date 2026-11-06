@@ -3,9 +3,15 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#FFFFFF" />
+    <!-- Graphite bg tokens per scheme; AppShell re-syncs both when the user picks a theme other than the system's. -->
+    <meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#131417" media="(prefers-color-scheme: dark)" />
     <meta name="color-scheme" content="light dark" />
+    <!-- Installed (home screen) app: full-bleed under the status bar; the shell pads by env(safe-area-inset-*). -->
+    <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="Cirrus" />
     <meta name="referrer" content="same-origin" />
     <meta name="description" content="Cirrus Mail: your own email suite on Cloudflare." />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />

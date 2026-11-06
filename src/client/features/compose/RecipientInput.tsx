@@ -85,7 +85,7 @@ export function RecipientInput({ label, value, onChange, autoFocus, trailing }: 
   };
 
   return (
-    <div className="relative flex min-h-9 items-start gap-2 border-b border-border px-4 py-1">
+    <div className="relative flex min-h-9 items-start gap-2 border-b border-border px-4 py-1 pointer-coarse:min-h-11 pointer-coarse:py-2">
       <label htmlFor={`${listId}-input`} className="w-9 shrink-0 pt-1.5 text-[13px] text-faint">
         {label}
       </label>
@@ -97,7 +97,7 @@ export function RecipientInput({ label, value, onChange, autoFocus, trailing }: 
               key={`${a.email}-${i}`}
               title={formatAddress(a)}
               className={cn(
-                'inline-flex h-6 max-w-full items-center gap-0.5 rounded-[4px] pr-0.5 pl-1.5 text-[13px]',
+                'inline-flex h-6 max-w-full items-center gap-0.5 rounded-[4px] pr-0.5 pl-1.5 text-[13px] pointer-coarse:h-7 pointer-coarse:text-[15px]',
                 valid ? 'bg-surface-2 text-fg' : 'bg-danger-soft text-danger ring-1 ring-danger/40',
               )}
             >
@@ -106,7 +106,7 @@ export function RecipientInput({ label, value, onChange, autoFocus, trailing }: 
                 type="button"
                 aria-label={`Remove ${a.email}`}
                 onClick={() => onChange(value.filter((_, j) => j !== i))}
-                className="inline-flex size-4 items-center justify-center rounded-[3px] text-faint hover:bg-hover hover:text-fg"
+                className="cm-hit inline-flex size-4 items-center justify-center rounded-[3px] text-faint hover:bg-hover hover:text-fg pointer-coarse:size-6"
               >
                 <X size={12} />
               </button>
@@ -156,7 +156,7 @@ export function RecipientInput({ label, value, onChange, autoFocus, trailing }: 
                 pick(c);
               }}
               onMouseEnter={() => setActive(i)}
-              className={cn('cursor-pointer rounded-md px-2 py-1', i === active && 'bg-hover')}
+              className={cn('cursor-pointer rounded-md px-2 py-1 pointer-coarse:py-2', i === active && 'bg-hover')}
             >
               <div className="truncate text-[13px] leading-5 text-fg">{c.name || c.email}</div>
               {c.name && <div className="truncate text-[12px] leading-4 text-muted">{c.email}</div>}
