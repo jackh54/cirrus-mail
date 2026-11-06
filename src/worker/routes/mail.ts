@@ -3,7 +3,7 @@ import { z } from 'zod';
 import type { Folder, FolderRole, ThreadSummary } from '../../shared/api';
 import { ulid } from '../../shared/ulid';
 import {
-  attachmentToApi, decodeCursor, deleteMessagesForever, encodeCursor, loadBody, loadMessageFull, messageRowToFull,
+  attachmentToApi, decodeCursor, deleteMessagesForever, encodeCursor, loadRowBody, loadMessageFull, messageRowToFull,
   pageRowsToSummaries, pageSummariesSql, recomputeThreadStmts, recomputeThreads, threadRowToSummary,
   type AttachmentRow, type MessageRow, type PageRow, type ThreadRow,
 } from '../lib/db';
@@ -188,9 +188,9 @@ mailReads.get('/threads/:tid', async (c) => {
   const o = origin(c.req.url);
   const attByMsg = new Map<string, AttachmentRow[]>();
   for (const a of atts.results as unknown as AttachmentRow[]) attByMsg.set(a.message_id, [...(attByMsg.get(a.message_id) ?? []), a]);
-  // All R2 bodies in parallel.
+  // Bodies not stored inline come from R2, in parallel.
   const messages = await Promise.all(rows.map(async (m) => {
-    const [body, list] = await Promise.all([loadBody(c.env, m.body_key), Promise.all((attByMsg.get(m.id) ?? []).map((a) => attachmentToApi(c.env, o, a)))]);
+    const [body, list] = await Promise.all([loadRowBody(c.env, m), Promise.all((attByMsg.get(m.id) ?? []).map((a) => attachmentToApi(c.env, o, a)))]);
     return messageRowToFull(m, body, list, o);
   }));
   const summary = threadRowToSummary(t, [...new Set(rows.map((m) => m.folder_id))]);
