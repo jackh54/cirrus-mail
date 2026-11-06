@@ -1,6 +1,6 @@
 import { Hono, type Context } from 'hono';
 import { z } from 'zod';
-import { INVITE_TTL_MS, type AdminInviteResponse, type AdminMailbox, type AdminStats, type AdminUser, type Alias, type Domain, type DomainCheck } from '../../shared/api';
+import { INVITE_TTL_MS, type AdminInviteResponse, type AdminMailbox, type AdminSettings, type AdminStats, type AdminUser, type Alias, type Domain, type DomainCheck } from '../../shared/api';
 import { ulid } from '../../shared/ulid';
 import { domainOf } from '../lib/addresses';
 import { sendInviteEmail, memberAddresses } from '../invite-email';
@@ -9,6 +9,7 @@ import { rowToUser, SYSTEM_FOLDERS, type UserRow } from '../lib/db';
 import { HttpError, notFound } from '../lib/errors';
 import { hit } from '../lib/ratelimit';
 import { jsonBody, zDomainName, zEmail, zHeaderText, zId, zLocalPart, zName, zPassword } from '../lib/validate';
+import { DAILY_LIMIT_KEY, parseLimit, utcDay } from '../lib/sendcount';
 import { requireAdmin, requireAuth } from '../middleware/session';
 import type { AppEnv } from '../types';
 
@@ -413,6 +414,8 @@ admin.get('/stats', async (c) => {
     one('SELECT COUNT(*) AS n FROM send_log WHERE ok = 0 AND created_at >= ?', d30),
     one("SELECT strftime('%Y-%m-%d', created_at / 1000, 'unixepoch') AS day, COUNT(*) AS n FROM send_log WHERE ok = 1 AND created_at >= ? GROUP BY day", d14),
     one("SELECT strftime('%Y-%m-%d', created_at / 1000, 'unixepoch') AS day, COUNT(*) AS n FROM receive_log WHERE accepted = 1 AND created_at >= ? GROUP BY day", d14),
+    one('SELECT sent AS n FROM send_counts WHERE day = ?', utcDay(now)),
+    one('SELECT value FROM settings WHERE key = ?', DAILY_LIMIT_KEY),
   ]);
   const n = (i: number) => (r[i].results[0] as { n: number }).n;
   const sentBy = new Map((r[9].results as { day: string; n: number }[]).map((x) => [x.day, x.n]));
@@ -423,7 +426,26 @@ admin.get('/stats', async (c) => {
   });
   const stats: AdminStats = {
     users: n(0), mailboxes: n(1), domains: n(2), messages: n(3), storageBytes: (r[3].results[0] as { bytes: number }).bytes,
-    sentToday: n(4), sent30d: n(5), received30d: n(6), rejected30d: n(7), sendErrors30d: n(8), daily,
+    // send_counts only exists from the day it shipped; the message-based count covers earlier sends.
+    sentToday: Math.max(n(4), (r[11].results[0] as { n: number } | undefined)?.n ?? 0), sent30d: n(5), received30d: n(6), rejected30d: n(7), sendErrors30d: n(8), daily,
+    dailySendLimit: parseLimit((r[12].results[0] as { value: string } | undefined)?.value),
   };
   return c.json(stats);
+});
+
+// ---------- settings ----------
+
+async function adminSettings(db: D1Database): Promise<AdminSettings> {
+  const v = await db.prepare('SELECT value FROM settings WHERE key = ?').bind(DAILY_LIMIT_KEY).first<string>('value');
+  return { dailySendLimit: parseLimit(v) };
+}
+
+admin.get('/settings', async (c) => c.json(await adminSettings(c.env.DB)));
+
+admin.patch('/settings', async (c) => {
+  const b = await jsonBody(c, z.object({ dailySendLimit: z.number().int().min(1).max(1_000_000).nullable() }));
+  const db = c.env.DB;
+  if (b.dailySendLimit === null) await db.prepare('DELETE FROM settings WHERE key = ?').bind(DAILY_LIMIT_KEY).run();
+  else await db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').bind(DAILY_LIMIT_KEY, String(b.dailySendLimit)).run();
+  return c.json(await adminSettings(db));
 });

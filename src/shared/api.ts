@@ -404,7 +404,29 @@ export interface AdminStats {
   rejected30d: number;
   sendErrors30d: number;
   daily: { day: string; sent: number; received: number }[]; // last 14 days, YYYY-MM-DD
+  /** The admin-set daily limit (see SendingStatus), so the Overview can show sentToday against it. */
+  dailySendLimit: number | null;
 }
+
+// ---------- sending quota ----------
+
+/**
+ * GET /api/sending (any signed-in user): today's outbound count against the daily limit.
+ * Cloudflare doesn't expose the account's quota, so an admin types it in (it differs per account and grows
+ * over time). Counted per UTC day, one per recipient, across everything Cirrus sends through Email Sending:
+ * mail, invites and auto-replies. Forwards to verified addresses are free and not counted.
+ */
+export interface SendingStatus {
+  dailyLimit: number | null;    // null = not set: show the count without a limit
+  sentToday: number;
+  dayStartsAt: Millis;          // 00:00 UTC today
+}
+
+/** Share of the daily limit at which the UI starts warning. */
+export const SEND_WARN_RATIO = 0.8;
+
+/** GET/PATCH /api/admin/settings */
+export interface AdminSettings { dailySendLimit: number | null } // PATCH: 1..1,000,000, or null to clear
 
 // ---------- limits shared by both sides ----------
 

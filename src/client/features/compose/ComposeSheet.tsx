@@ -3,6 +3,7 @@ import { Check, CloudOff, Maximize2, Minimize2, Minus, Paperclip, Trash2, X } fr
 import type { Address } from '@shared/api';
 import { LIMITS } from '@shared/api';
 import { IconButton } from '../../components/Button';
+import { SendingNotice } from '../../components/SendingNotice';
 import { Spinner } from '../../components/Spinner';
 import { useToast } from '../../components/Toast';
 import { useConfirm } from '../../components/Confirm';
@@ -204,6 +205,7 @@ export function ComposeSheet({ initial }: { initial: ComposeDraft }) {
               {error}
             </p>
           )}
+          <SendingNotice className="mx-4 mb-2 shrink-0 group-data-keyboard/sheet:hidden" />
           {/* With the keyboard up it covers the home indicator, so the safe-area padding goes away. */}
           <footer className="flex shrink-0 items-center gap-1 px-3 pt-1 pb-[max(0.75rem,env(safe-area-inset-bottom))] group-data-keyboard/sheet:pb-2 max-md:gap-2">
             <SendButton onSend={(at) => void send(at)} busy={sending} disabled={files.busy} />

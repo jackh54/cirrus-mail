@@ -135,6 +135,7 @@ export function ComposeProvider({ children }: { children: ReactNode }) {
           .send(d.mailboxId, id)
           .then((res) => {
             refreshMail(d.mailboxId);
+            void qc.invalidateQueries({ queryKey: qk.sending });
             toast({ tone: 'success', title: res.status === 'scheduled' ? 'Message scheduled' : 'Message sent' });
           })
           .catch((e: unknown) => failed(d, e));
@@ -154,7 +155,7 @@ export function ComposeProvider({ children }: { children: ReactNode }) {
         },
       });
     },
-    [toast, dismiss, refreshMail, failed],
+    [toast, dismiss, qc, refreshMail, failed],
   );
 
   useEffect(() => {

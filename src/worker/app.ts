@@ -15,6 +15,7 @@ import { invites } from './routes/invites';
 import { me } from './routes/me';
 import { proxy } from './routes/proxy';
 import { push } from './routes/push';
+import { sending } from './routes/sending';
 import { setup } from './routes/setup';
 import type { AppEnv } from './types';
 
@@ -51,6 +52,7 @@ app.route('/contacts', contacts);
 app.route('/files', files);
 app.route('/proxy', proxy);
 app.route('/push', push);
+app.route('/sending', sending);
 app.route('/admin', admin);
 app.route('/mailboxes/:mb', mailbox);
 

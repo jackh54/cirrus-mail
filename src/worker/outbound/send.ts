@@ -6,6 +6,7 @@ import { folderIdsByRole, loadBody, recomputeThreadStmts, type AttachmentRow, ty
 import { HttpError } from '../lib/errors';
 import { cleanHeaderText } from '../lib/validate';
 import { htmlToText } from '../lib/html';
+import { recordSendsSafe } from '../lib/sendcount';
 
 const QUOTA_CODES = new Set(['E_RATE_LIMIT_EXCEEDED', 'E_DAILY_LIMIT_EXCEEDED']);
 
@@ -116,6 +117,8 @@ export async function performSend(env: Env, row: MessageRow, contactUserIds: str
     } as EmailMessageBuilder;
     const res = await env.EMAIL.send(builder);
     result = { ok: true, messageId: bracketId(res.messageId) };
+    // Once per claimed send (claimForSend lets only one attempt through), one per recipient.
+    await recordSendsSafe(db, to.length + cc.length + bcc.length);
   } catch (e) {
     const { code, message } = mapSendError(e);
     console.error('send failed', code);

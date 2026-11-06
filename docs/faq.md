@@ -17,7 +17,7 @@ Cirrus itself is free and MIT-licensed. You pay Cloudflare for what you use on y
 | Item | Cost |
 |---|---|
 | Workers Paid plan | $5/month. Required for Email Sending. |
-| Outbound mail (Email Sending) | 3,000 emails/month included, then $0.35 per 1,000. Sends to verified destination addresses on your own account are free. |
+| Outbound mail (Email Sending) | 3,000 emails/month included per account (aligned with your billing cycle), then $0.35 per 1,000. Sends to verified destination addresses on your own account are free. |
 | Inbound mail (Email Routing) | Free |
 | D1 and R2 | Usage-based. A typical small team stays within the included tiers. |
 
@@ -27,7 +27,7 @@ Prices change, so check Cloudflare's pricing pages before you rely on these numb
 
 - **50 recipients** per message (To + Cc + Bcc combined).
 - **25 MiB** per message including attachments, in either direction.
-- A **daily sending quota** that starts conservative and grows over time. When you hit it, Cirrus keeps the message in Drafts and tells you.
+- A **daily sending quota** per Cloudflare account, which grows as you send good mail (for example 1,000 a day). Cloudflare doesn't expose it to Workers, so enter it in **Admin → Overview → Sending**: Cirrus then shows today's usage and warns you at 80%. It never blocks a send itself. If Cloudflare refuses one, Cirrus keeps the message in Drafts and tells you.
 - **Email Sending is in beta.** It has been in public beta since 2026-04-16, so expect changes.
 - Catch-all routing works on **apex domains only** (`example.com`, not `mail.example.com`).
 

@@ -173,7 +173,7 @@ export function uploadFile<T>(
 export function errorMessage(e: unknown): string {
   if (isApiError(e)) {
     if (e.code === 'E_DAILY_LIMIT_EXCEEDED' || (e.status === 429 && e.code.includes('DAILY'))) {
-      return "You've reached today's sending quota. Cloudflare starts new accounts with a small daily limit that grows as you send real mail. Your message is safe in Drafts; try again tomorrow.";
+      return "You've reached today's sending quota. Cloudflare starts new accounts with a daily limit that grows as you send real mail, and it resets every day. Your message is safe in Drafts; try again tomorrow.";
     }
     if (e.code === 'E_RATE_LIMIT_EXCEEDED' || e.status === 429) {
       return "You're sending too quickly. Wait a minute and try again. Your message is safe in Drafts.";

@@ -3,6 +3,7 @@ import { Check, Copy } from 'lucide-react';
 import type { AdminInviteInput, AdminInviteResponse, Role } from '@shared/api';
 import { Button } from '../../components/Button';
 import { Dialog } from '../../components/Dialog';
+import { SendingNotice } from '../../components/SendingNotice';
 import { Field, Input, Select } from '../../components/Field';
 import { errorMessage } from '../../lib/api';
 import { isValidEmail, longDate } from '../../lib/format';
@@ -102,6 +103,7 @@ export function InviteUserDialog({ onClose }: { onClose: () => void }) {
     >
       <div className="space-y-4">
         {error && <p role="alert" className="rounded-md bg-danger-soft px-3 py-2 text-[13px] text-danger">{error}</p>}
+        <SendingNotice limitOnly />
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Name">{(id) => <Input id={id} autoFocus value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} />}</Field>
           <Field label="Role">

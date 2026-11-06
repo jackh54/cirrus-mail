@@ -243,7 +243,7 @@ The From address's domain isn't onboarded to Email Sending, or verification hasn
 
 ### Daily limit reached (`E_DAILY_LIMIT_EXCEEDED`)
 
-New accounts get a conservative daily sending quota, which grows over time as you send good mail. When you hit it, Cirrus keeps the message in Drafts and tells you. Try again later. `E_RATE_LIMIT_EXCEEDED` means you sent too many messages in a short burst; wait a minute and retry.
+Each Cloudflare account has a daily sending quota, which starts conservative and grows as you send good mail. Enter yours in **Admin → Overview → Sending** (find it under Email Service → Email Sending in the dashboard), and Cirrus shows today's usage and warns everyone once 80% is used. Cirrus counts per recipient per UTC day, including invites and auto-replies. When Cloudflare refuses a send, Cirrus keeps the message in Drafts and tells you. Try again the next day, or schedule it. `E_RATE_LIMIT_EXCEEDED` means you sent too many messages in a short burst; wait a minute and retry.
 
 ### My sent mail lands in the recipient's spam folder
 

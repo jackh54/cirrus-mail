@@ -28,7 +28,7 @@ There are no Durable Objects, no Queues and no third-party services.
 - Sending requires **Workers Paid**. It includes 3,000 emails a month, then $0.35 per 1,000. Email Routing (inbound) is free and unlimited.
 - At most **50 recipients** per message (to + cc + bcc) and **25 MiB** per message including attachments, in either direction. At most 32 attachments.
 - `Message-ID` is **set by the platform**: `send()` returns `{ messageId }`, and we store that value. `In-Reply-To` and `References` may be set, so threading works.
-- The daily sending quota starts low and grows over time. The UI must surface `E_DAILY_LIMIT_EXCEEDED` and `E_RATE_LIMIT_EXCEEDED` clearly.
+- The daily sending quota is per account, starts low and grows over time, and isn't readable from a Worker. An admin enters it (`settings.daily_send_limit`); Cirrus counts accepted sends per recipient per UTC day (`send_counts`) and warns at 80%, never blocking. The UI must surface `E_DAILY_LIMIT_EXCEEDED` and `E_RATE_LIMIT_EXCEEDED` clearly.
 - `wrangler dev` **simulates** sends by default. Use `"remote": true` on the binding only when you mean it.
 - **Acceptable use:** Cloudflare documents Email Sending as transactional email only. Human-to-human mail from your own mailbox is not explicitly addressed. The README states this plainly. Cirrus has no bulk or marketing features and never will.
 - The catch-all (`*@domain`) works on apex domains only.
@@ -162,6 +162,7 @@ IDs are text ULIDs; `src/shared/ulid.ts` is the only generator. Timestamps are i
 | GET/POST/PUT/DELETE | `/api/mailboxes/:mb/filters[/:id]` | `Filter` CRUD |
 | GET/POST/DELETE | `/api/mailboxes/:mb/blocked[/:id]` | blocked senders |
 | GET | `/api/mailboxes/:mb/poll?since=<ms>` | `{ newCount, latest: ThreadSummary[] }`, polled by the client every 30 s |
+| GET | `/api/sending` | → `SendingStatus` (any signed-in user): today's sends (UTC day, one per recipient) against the admin-set limit. Counts only; Cloudflare enforces the real limit |
 | GET | `/api/files/:aid?e=&s=` | signed attachment download (`?inline=1` for images) |
 | POST | `/api/proxy/sign` | `{ urls: string[] }` (≤ 200, http/https only) → `{ signed: Record<url, proxyUrl> }` (session required) |
 | GET | `/api/proxy/image?u=&s=` | signed remote-image proxy |
@@ -175,7 +176,8 @@ IDs are text ULIDs; `src/shared/ulid.ts` is the only generator. Timestamps are i
 | GET | `/api/admin/domains/:id/check` → DNS health from DoH (`cloudflare-dns.com`): MX points at Cloudflare Email Routing, SPF includes Cloudflare, DMARC present |
 | GET/POST/PATCH/DELETE | `/api/admin/mailboxes[/:id]` (address, displayName, members `[{userId, role}]`) |
 | GET/POST/DELETE | `/api/admin/aliases[/:id]` |
-| GET | `/api/admin/stats` → `{ users, mailboxes, messages, storageBytes, sentToday, sent30d, received30d }` |
+| GET | `/api/admin/stats` → `{ users, mailboxes, messages, storageBytes, sentToday, sent30d, received30d, dailySendLimit }` |
+| GET/PATCH | `/api/admin/settings` → `AdminSettings` (`PATCH { dailySendLimit: 1..1,000,000 \| null }`) |
 
 ## 6. Client (`src/client/`)
 

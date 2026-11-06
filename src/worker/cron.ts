@@ -1,5 +1,6 @@
 // scheduled(): every minute send due scheduled messages; at minute 0 purge and prune.
 import { deleteMessagesForever } from './lib/db';
+import { utcDay } from './lib/sendcount';
 import { checkScheduled, claimForSend, mailboxMemberIds, performSend, recordOutcome } from './outbound/send';
 
 const DAY = 24 * 3600 * 1000;
@@ -49,6 +50,7 @@ export async function hourlyMaintenance(env: Env, now = Date.now()): Promise<voi
     db.prepare('DELETE FROM sessions WHERE expires_at < ?').bind(now),
     db.prepare('DELETE FROM rate_limits WHERE window_end < ?').bind(now),
     db.prepare('DELETE FROM autoreply_log WHERE sent_at < ?').bind(now - 30 * DAY),
+    db.prepare('DELETE FROM send_counts WHERE day < ?').bind(utcDay(now - 60 * DAY)),
     // A send interrupted mid-flight (isolate killed) would stay 'sending' forever; surface it as failed.
     db.prepare(
       `UPDATE messages SET status = 'failed', error_code = 'E_INTERRUPTED', error_message = 'Sending was interrupted. Try again.',

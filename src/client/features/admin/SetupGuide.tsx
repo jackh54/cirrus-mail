@@ -13,7 +13,7 @@ const SENDING = [
   'In the dashboard go to Compute & AI → Email Service → Email Sending and onboard the same domain.',
   'Add the DNS records it shows (DKIM and the sending SPF include). If the domain uses Cloudflare DNS this is one click.',
   'Wait until the domain shows as verified. Until then, sends fail with a clear error and stay in Drafts.',
-  'New accounts start with a small daily sending quota that grows as you send real mail. Cirrus shows a friendly message if you hit it.',
+  'Cloudflare gives each account its own daily sending quota, which grows over time as you send good mail. Enter it in Admin → Overview so Cirrus can warn you before it runs out.',
 ];
 
 function Steps({ items }: { items: string[] }) {

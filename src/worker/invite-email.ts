@@ -3,6 +3,7 @@ import type { AdminInviteResponse } from '../shared/api';
 import { escapeHtml } from './lib/html';
 import { cleanHeaderText } from './lib/validate';
 import { domainOf } from './lib/addresses';
+import { recordSendsSafe } from './lib/sendcount';
 import { mapSendError } from './outbound/send';
 
 export interface InviteEmailInput {
@@ -93,6 +94,7 @@ export async function sendInviteEmail(env: Env, i: InviteEmailInput): Promise<Ad
   const { subject, html, text } = renderInvite(appName, i);
   try {
     await env.EMAIL.send({ from: { email: address, name: fromName }, to: i.to, subject: cleanHeaderText(subject).slice(0, 200), html, text });
+    await recordSendsSafe(env.DB, 1);
     return { sent: true, from: address };
   } catch (err) {
     const { code, message } = mapSendError(err);

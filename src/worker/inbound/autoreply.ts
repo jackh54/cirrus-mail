@@ -3,6 +3,7 @@
 import type { AuthResults } from '../../shared/api';
 import { ulid } from '../../shared/ulid';
 import { domainOf } from '../lib/addresses';
+import { recordSendsSafe } from '../lib/sendcount';
 import { cleanHeaderText } from '../lib/validate';
 
 const DAY = 24 * 3600 * 1000;
@@ -74,6 +75,7 @@ export async function maybeAutoreply(env: Env, mb: AutoreplyMailbox, i: Autorepl
       headers,
     });
     ok = 1;
+    await recordSendsSafe(env.DB, 1, i.now);
   } catch (e) {
     const raw = (e as { code?: unknown }).code;
     code = typeof raw === 'string' && /^E_[A-Z_]{1,48}$/.test(raw) ? raw : 'E_DELIVERY_FAILED';
