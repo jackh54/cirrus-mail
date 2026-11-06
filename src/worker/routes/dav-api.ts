@@ -1,11 +1,12 @@
 // JSON view of the user's address books and calendars for the web app. Same store as the DAV server.
 import { Hono } from 'hono';
 import { z } from 'zod';
-import type { ContactView, DavCollectionInfo, EventView, Page } from '../../shared/api';
+import type { ContactView, DavCollectionInfo, EventView, InvitePreview, Page } from '../../shared/api';
 import { ulid } from '../../shared/ulid';
-import { applyEvent, buildEvent, eventFields, IcsError } from '../dav/ical';
+import { applyEvent, buildEvent, eventFields, IcsError, inviteFields } from '../dav/ical';
 import {
-  DavError, deleteObject, ensureDefaults, getCollectionById, getObjectById, listCollections, putObject, queryObjects, type CollectionRow, type Kind, type ObjectRow,
+  createCollection, DavError, deleteObject, ensureDefaults, getCollectionById, getObjectById, listCollections, putObject, queryObjects, updateCollection,
+  type CollectionRow, type Kind, type ObjectRow,
 } from '../dav/store';
 import { applyContact, buildContact, contactFields, VcfError } from '../dav/vcard';
 import { HttpError, notFound } from '../lib/errors';
@@ -42,6 +43,27 @@ davApi.get('/collections', async (c) => {
   const uid = c.get('user').id;
   await ensureDefaults(c.env.DB, uid);
   return c.json((await listCollections(c.env.DB, uid)).map(info));
+});
+
+const zColor = z.string().regex(/^#[0-9A-Fa-f]{6}$/, 'Use #RRGGBB');
+const CollectionSchema = z.object({ kind: z.enum(['addressbook', 'calendar']), name: zHeaderText(100, 1), color: zColor.nullable().default(null) });
+const CollectionPatch = z.object({ name: zHeaderText(100, 1).optional(), color: zColor.nullable().optional() });
+
+davApi.post('/collections', async (c) => {
+  const uid = c.get('user').id;
+  const b = await jsonBody(c, CollectionSchema);
+  await ensureDefaults(c.env.DB, uid);
+  const coll = await guard(() => createCollection(c.env.DB, uid, b.kind, ulid().toLowerCase(), { displayname: b.name, color: b.color ?? undefined }));
+  return c.json(info(coll), 201);
+});
+
+davApi.patch('/collections/:id', async (c) => {
+  const uid = c.get('user').id;
+  const coll = await getCollectionById(c.env.DB, uid, c.req.param('id'));
+  if (!coll) throw notFound();
+  const b = await jsonBody(c, CollectionPatch);
+  await updateCollection(c.env.DB, coll, { displayname: b.name, color: b.color });
+  return c.json(info((await getCollectionById(c.env.DB, uid, coll.id))!));
 });
 
 /** The requested collection of `kind`, or the user's first one. */
@@ -208,4 +230,54 @@ davApi.delete('/events/:id', async (c) => {
   const { o, coll } = await loadEvent(c, c.req.param('id'));
   await guard(() => deleteObject(c.env.DB, coll, o.uri, { ifMatch: c.req.header('if-match') }));
   return c.json({ ok: true });
+});
+
+// ---------- invitations (text/calendar parts of received mail) ----------
+
+const InviteSchema = z.object({ ics: z.string().min(20).max(256 * 1024), calendarId: z.string().max(64).optional() });
+
+/** The invitation's master event, and the copy of it (same UID) already in one of the user's calendars. */
+async function readInvite(c: { env: Env; get(k: 'user'): { id: string } }, ics: string) {
+  const inv = await guard(async () => {
+    try {
+      return inviteFields(ics);
+    } catch (e) {
+      throw e instanceof IcsError ? e : new IcsError('Malformed calendar data');
+    }
+  });
+  if (!inv.uid || inv.uid.length > 255) throw new HttpError(400, 'INVALID_DATA', 'The invitation has no usable UID');
+  const row = await c.env.DB.prepare(
+    `SELECT o.id, o.collection_id FROM dav_objects o JOIN dav_collections c ON c.id = o.collection_id
+      WHERE c.user_id = ? AND c.kind = 'calendar' AND o.uid = ? AND o.component = 'VEVENT' ORDER BY o.created_at LIMIT 1`,
+  ).bind(c.get('user').id, inv.uid).first<{ id: string; collection_id: string }>();
+  return { inv, row };
+}
+
+davApi.post('/invite/parse', async (c) => {
+  const { ics } = await jsonBody(c, InviteSchema);
+  const { inv, row } = await readInvite(c, ics);
+  const out: InvitePreview = {
+    method: inv.method, uid: inv.uid, sequence: inv.sequence, event: inv.event, organizer: inv.organizer, attendees: inv.attendees,
+    existing: row ? { id: row.id, calendarId: row.collection_id } : null,
+  };
+  return c.json(out);
+});
+
+/** Adds the invitation's event to the chosen (default) calendar, or updates the copy that already carries its UID. */
+davApi.post('/invite/accept', async (c) => {
+  const { ics, calendarId } = await jsonBody(c, InviteSchema);
+  const { inv, row } = await readInvite(c, ics);
+  if (inv.method && inv.method !== 'REQUEST' && inv.method !== 'PUBLISH') throw new HttpError(400, 'INVALID_DATA', `A ${inv.method.toLowerCase()} message cannot be added to a calendar`);
+  const parsed = EventSchema.safeParse({ ...inv.event, rrule: inv.event.rrule && RRULE_RE.test(inv.event.rrule) ? inv.event.rrule : null });
+  if (!parsed.success) throw new HttpError(400, 'INVALID_DATA', 'The invitation has no usable date');
+  const { calendarId: _ignored, ...fields } = parsed.data;
+  const userId = c.get('user').id;
+  if (row) {
+    const { o, coll } = await loadEvent(c, row.id);
+    const r = await guard(async () => putObject(c.env.DB, coll, o.uri, applyEvent(o.data!, fields)));
+    return c.json(eventView((await getObjectById(c.env.DB, userId, 'calendar', r.id))!));
+  }
+  const coll = await pick(c, 'calendar', calendarId);
+  const r = await guard(async () => putObject(c.env.DB, coll, `${ulid()}.ics`, buildEvent(fields, inv.uid), { ifNoneMatch: '*' }));
+  return c.json(eventView((await getObjectById(c.env.DB, userId, 'calendar', r.id))!), 201);
 });

@@ -1,10 +1,12 @@
 import { useState } from 'react';
-import { AlarmClock, Ban, Bell, BellOff, ChevronDown, Code2, FolderInput, Forward, Mail, Moon, MoreHorizontal, Reply, ReplyAll, Star, Sun } from 'lucide-react';
+import { useNavigate } from 'react-router';
+import { AlarmClock, Ban, Bell, BellOff, ChevronDown, Code2, FolderInput, Forward, Mail, Moon, MoreHorizontal, Reply, ReplyAll, Star, Sun, UserPlus, UserRoundPen } from 'lucide-react';
 import type { Address, Folder, MessageFull } from '@shared/api';
 import { Avatar } from '../../components/Avatar';
 import { IconButton } from '../../components/Button';
 import { Menu, type MenuItem } from '../../components/Menu';
 import { displayName, longDate, smartTime } from '../../lib/format';
+import { useContacts } from '../../lib/queries/dav';
 import { useDarkTheme } from '../../lib/theme';
 import { setOverride, useRenderPref, wantsDark } from './renderPrefs';
 import { AuthBadge } from './AuthBadge';
@@ -37,6 +39,10 @@ export function MessageHeader({ message: m, starred, muted, unsubscribable, mail
   const [details, setDetails] = useState(false);
   const [unsubscribing, setUnsubscribing] = useState(false);
   const recipients = list([...m.to, ...m.cc], myEmails);
+  const navigate = useNavigate();
+  // The address book is one cached query shared by every header in the thread.
+  const contacts = useContacts();
+  const known = m.direction === 'in' ? contacts.data?.find((c) => c.emails.some((e) => e.value.toLowerCase() === m.from.email.toLowerCase())) : undefined;
   const movable = folders.filter((f) => f.role === 'inbox' || f.role === 'archive' || !f.role);
   const items: MenuItem[] = [
     { label: 'Reply', icon: <Reply />, onSelect: () => onReply('reply'), hint: 'R' },
@@ -51,6 +57,11 @@ export function MessageHeader({ message: m, starred, muted, unsubscribable, mail
       icon: <Code2 />,
       onSelect: () => window.open(`/api/mailboxes/${mailboxId}/messages/${m.id}/raw`, '_blank', 'noopener,noreferrer'),
     },
+    ...(m.direction === 'in' && contacts.data
+      ? [known
+          ? { label: 'Edit contact', icon: <UserRoundPen />, onSelect: () => navigate(`/contacts/${known.id}?edit=1`) }
+          : { label: 'Add to contacts', icon: <UserPlus />, onSelect: () => navigate(`/contacts/new?${new URLSearchParams({ email: m.from.email, name: m.from.name ?? '' })}`) }]
+      : []),
     ...(m.direction === 'in' ? [{ label: `Block ${m.from.email}`, icon: <Ban />, danger: true, onSelect: () => onBlock(m.from.email) }] : []),
     { kind: 'separator' },
     { kind: 'heading', label: 'Move to' },

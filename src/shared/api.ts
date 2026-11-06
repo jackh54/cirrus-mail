@@ -691,6 +691,26 @@ export interface MboxImport {
 /** POST /api/mailboxes/:mb/import. Files with X-Gmail-Labels map labels to folders; others go to `folderId` (default Archive). */
 export interface MboxImportStart { filename: string; size: number; folderId?: ID; markRead?: boolean }
 
+/** POST /api/dav/collections and PATCH /api/dav/collections/:id (PATCH takes any subset, without `kind`). `color` is #RRGGBB. */
+export interface DavCollectionInput {
+  kind: 'addressbook' | 'calendar';
+  name: string;
+  color: string | null;
+}
+
+/** POST /api/dav/invite/parse: an .ics from a received message, read by the server. */
+export interface InvitePreview {
+  /** The iTIP METHOD (REQUEST, CANCEL, REPLY, ...), null when the file has none. */
+  method: string | null;
+  uid: string;
+  sequence: number;
+  event: Omit<EventInput, 'calendarId'>;
+  organizer: Address | null;
+  attendees: string[];
+  /** The event with this UID that is already in one of the user's calendars. */
+  existing: { id: ID; calendarId: ID } | null;
+}
+
 // ---------- limits shared by both sides ----------
 
 export const MAX_TEMPLATES_PER_MAILBOX = 100;
