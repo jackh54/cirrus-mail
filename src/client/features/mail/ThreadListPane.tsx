@@ -118,7 +118,7 @@ export function ThreadListPane({ mailbox, view, folders, ctl, onOpenMenu, classN
         </header>
       )}
 
-      <div ref={scrollRef} className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain">
+      <div ref={scrollRef} className="relative min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain">
         {query.isPending ? (
           Array.from({ length: 12 }, (_, i) => <ThreadRowSkeleton key={i} />)
         ) : query.isError ? (
