@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { useLatest } from '../../lib/useLatest';
 import { useQueryClient } from '@tanstack/react-query';
-import { Archive, CheckSquare, Mail, MailOpen, Menu as MenuIcon, RefreshCw, Star, Trash, Trash2 } from 'lucide-react';
+import { Archive, CheckSquare, Mail, MailOpen, Menu as MenuIcon, RefreshCw, Star, Tag, Trash, Trash2 } from 'lucide-react';
 import type { Folder, MailboxSummary, ThreadAction, ThreadSummary } from '@shared/api';
 import { ActionSheet, type SheetAction } from '../../components/ActionSheet';
 import { Button, IconButton } from '../../components/Button';
@@ -21,6 +21,7 @@ import { BulkBar } from './BulkBar';
 import { CategoryTabs } from './CategoryTabs';
 import { setCategoryTab } from './categoryTab';
 import { VIEW_META, type ResolvedView } from './folderMeta';
+import { LabelDot } from './labelMeta';
 import { SearchBox } from './SearchBox';
 import { SwipeRow, type SwipeAction } from './SwipeRow';
 import { rowHeight, ThreadRow } from './ThreadRow';
@@ -134,6 +135,7 @@ export function ThreadListPane({ mailbox, view, folders, ctl, onOpenMenu, mobile
           role={view.role}
           folders={folders}
           onSelectAll={selectAll}
+          onLabel={() => ctl.openLabels([...selected])}
           onAction={(a, folderId) => void act(a, [...selected], folderId)}
         />
       ) : (
@@ -157,6 +159,7 @@ export function ThreadListPane({ mailbox, view, folders, ctl, onOpenMenu, mobile
           <h1 className={cn('min-w-0 shrink truncate text-[14px] font-semibold tracking-[-0.01em]', onOpenMenu && 'pl-4')}>
             {view.role === 'search' ? <>Results for “{q}”</> : view.label}
           </h1>
+          {view.tag && <LabelDot color={view.tag.color} className="shrink-0" />}
           {view.folder && view.folder.unread > 0 && <span className="tnum shrink-0 text-[12px] text-faint">{view.folder.unread}</span>}
           <span className="flex-1" />
           {(view.role === 'trash' || view.role === 'spam') && view.folder && threads.length > 0 && (
@@ -220,14 +223,14 @@ export function ThreadListPane({ mailbox, view, folders, ctl, onOpenMenu, mobile
           open
           title={sheetFor.subject || '(no subject)'}
           onClose={() => setSheetFor(null)}
-          actions={sheetActions(sheetFor, view.role, (a) => void act(a, [sheetFor.id]), () => toggle(sheetFor.id, threads.indexOf(sheetFor), false))}
+          actions={sheetActions(sheetFor, view.role, (a) => void act(a, [sheetFor.id]), () => toggle(sheetFor.id, threads.indexOf(sheetFor), false), () => ctl.openLabels([sheetFor.id]))}
         />
       )}
     </section>
   );
 }
 
-function sheetActions(t: ThreadSummary, role: ResolvedView['role'], run: (a: ThreadAction) => void, select: () => void): SheetAction[] {
+function sheetActions(t: ThreadSummary, role: ResolvedView['role'], run: (a: ThreadAction) => void, select: () => void, label: () => void): SheetAction[] {
   const unread = t.unreadCount > 0;
   const trashLike = role === 'trash' || role === 'spam';
   return [
@@ -237,6 +240,7 @@ function sheetActions(t: ThreadSummary, role: ResolvedView['role'], run: (a: Thr
       : { label: 'Move to Trash', icon: <Trash2 />, onSelect: () => run('trash') },
     { label: unread ? 'Mark as read' : 'Mark as unread', icon: unread ? <MailOpen /> : <Mail />, onSelect: () => run(unread ? 'read' : 'unread') },
     { label: t.isStarred ? 'Unstar' : 'Star', icon: <Star />, onSelect: () => run(t.isStarred ? 'unstar' : 'star') },
+    { label: 'Label as…', icon: <Tag />, onSelect: label },
     { label: 'Select', icon: <CheckSquare />, onSelect: select },
   ];
 }

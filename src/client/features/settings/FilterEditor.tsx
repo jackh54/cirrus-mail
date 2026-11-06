@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Plus, X } from 'lucide-react';
-import type { Filter, FilterAction, FilterCondition, FilterField, FilterInput, FilterOp, Folder } from '@shared/api';
+import type { Filter, FilterAction, FilterCondition, FilterField, FilterInput, FilterOp, Folder, Label } from '@shared/api';
 import { Button, IconButton } from '../../components/Button';
 import { Dialog } from '../../components/Dialog';
 import { Field, Input, Select } from '../../components/Field';
@@ -21,27 +21,31 @@ const OPS: { v: FilterOp; label: string }[] = [
 type ActionType = FilterAction['type'];
 const ACTIONS: { v: ActionType; label: string }[] = [
   { v: 'move_to', label: 'Move to folder' },
+  { v: 'apply_label', label: 'Apply label' },
   { v: 'mark_read', label: 'Mark as read' },
   { v: 'star', label: 'Star it' },
   { v: 'delete', label: 'Move to Trash' },
   { v: 'forward_to', label: 'Forward to' },
 ];
 
-export function describeFilter(f: Filter, folders: Folder[]): string {
+export function describeFilter(f: Filter, folders: Folder[], labels: Label[] = []): string {
   const cond = f.conditions
     .map((c) => (c.field === 'has_attachment' ? 'has attachment' : `${FIELDS.find((x) => x.v === c.field)?.label.toLowerCase()} ${OPS.find((o) => o.v === c.op)?.label ?? c.op} "${c.value}"`))
     .join(f.match === 'all' ? ' and ' : ' or ');
   const acts = f.actions
-    .map((a) => (a.type === 'move_to' ? `move to ${folders.find((x) => x.id === a.folderId)?.name ?? 'folder'}` : a.type === 'forward_to' ? `forward to ${a.email}` : ACTIONS.find((x) => x.v === a.type)?.label.toLowerCase()))
+    .map((a) => (a.type === 'move_to' ? `move to ${folders.find((x) => x.id === a.folderId)?.name ?? 'folder'}` : a.type === 'apply_label' ? `apply label ${labels.find((x) => x.id === a.labelId)?.name ?? '(deleted label)'}` : a.type === 'forward_to' ? `forward to ${a.email}` : ACTIONS.find((x) => x.v === a.type)?.label.toLowerCase()))
     .join(', ');
   return `If ${cond || '…'}, then ${acts || '…'}`;
 }
 
-function makeAction(type: ActionType, folders: Folder[]): FilterAction {
+function makeAction(type: ActionType, folders: Folder[], labels: Label[] = []): FilterAction {
   switch (type) {
+    case 'apply_label': return { type, labelId: labels[0]?.id ?? '' };
     case 'move_to': return { type, folderId: folders.find((f) => !f.role)?.id ?? folders.find((f) => f.role === 'archive')?.id ?? '' };
     case 'forward_to': return { type, email: '' };
-    default: return { type };
+    case 'mark_read':
+    case 'star':
+    case 'delete': return { type };
   }
 }
 
@@ -59,12 +63,13 @@ function invalidRegex(c: FilterCondition): string | null {
 interface Props {
   initial: Filter | null;
   folders: Folder[];
+  labels?: Label[];
   saving: boolean;
   onSave: (f: FilterInput) => void;
   onCancel: () => void;
 }
 
-export function FilterEditor({ initial, folders, saving, onSave, onCancel }: Props) {
+export function FilterEditor({ initial, folders, labels = [], saving, onSave, onCancel }: Props) {
   const [f, setF] = useState<FilterInput>(
     initial ?? { name: '', match: 'all', conditions: [{ field: 'from', op: 'contains', value: '' }], actions: [makeAction('move_to', folders)], enabled: true, sort: 0 },
   );
@@ -77,7 +82,7 @@ export function FilterEditor({ initial, folders, saving, onSave, onCancel }: Pro
     f.conditions.every((c) => c.field === 'has_attachment' || c.value.trim()) &&
     errors.every((e) => !e) &&
     f.actions.length > 0 &&
-    f.actions.every((a) => (a.type === 'move_to' ? !!a.folderId : a.type === 'forward_to' ? /@/.test(a.email) : true));
+    f.actions.every((a) => (a.type === 'move_to' ? !!a.folderId : a.type === 'apply_label' ? labels.some((l) => l.id === a.labelId) : a.type === 'forward_to' ? /@/.test(a.email) : true));
   const movable = folders.filter((x) => x.role !== 'drafts' && x.role !== 'sent' && x.role !== 'scheduled');
 
   return (
@@ -139,12 +144,18 @@ export function FilterEditor({ initial, folders, saving, onSave, onCancel }: Pro
           <ul className="space-y-2">
             {f.actions.map((a, i) => (
               <li key={i} className="flex flex-wrap items-center gap-2">
-                <Select aria-label="Action" value={a.type} className="w-44" onChange={(e) => setAct(i, makeAction(e.target.value as ActionType, folders))}>
-                  {ACTIONS.map((x) => <option key={x.v} value={x.v}>{x.label}</option>)}
+                <Select aria-label="Action" value={a.type} className="w-44" onChange={(e) => setAct(i, makeAction(e.target.value as ActionType, folders, labels))}>
+                  {ACTIONS.filter((x) => x.v !== 'apply_label' || labels.length > 0 || a.type === 'apply_label').map((x) => <option key={x.v} value={x.v}>{x.label}</option>)}
                 </Select>
                 {a.type === 'move_to' && (
                   <Select aria-label="Folder" value={a.folderId} className="min-w-40 flex-1" onChange={(e) => setAct(i, { type: 'move_to', folderId: e.target.value })}>
                     {movable.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+                  </Select>
+                )}
+                {a.type === 'apply_label' && (
+                  <Select aria-label="Label" value={a.labelId} className="min-w-40 flex-1" onChange={(e) => setAct(i, { type: 'apply_label', labelId: e.target.value })}>
+                    {!labels.some((x) => x.id === a.labelId) && <option value={a.labelId}>(deleted label)</option>}
+                    {labels.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
                   </Select>
                 )}
                 {a.type === 'forward_to' && (

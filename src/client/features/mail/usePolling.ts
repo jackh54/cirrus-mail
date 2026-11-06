@@ -28,6 +28,7 @@ export function usePolling(mb: string) {
           void qc.invalidateQueries({ queryKey: qk.threadsAll(mb) });
           void qc.invalidateQueries({ queryKey: qk.folders(mb) });
           void qc.invalidateQueries({ queryKey: qk.categories(mb) });
+          void qc.invalidateQueries({ queryKey: qk.labels(mb) });
           void qc.invalidateQueries({ queryKey: qk.me });
           notify(res);
         }

@@ -4,11 +4,13 @@ import { PenLine } from 'lucide-react';
 import { Drawer, type DrawerHandle } from '../../components/Drawer';
 import { committed, EDGE_PX, trackHorizontalDrag } from '../../components/gestures';
 import { FullScreenSpinner } from '../../components/Spinner';
-import { useFolders } from '../../lib/queries/mail';
+import { useLabels } from '../../lib/queries/labels';
+import { LABEL_KEY, useFolders } from '../../lib/queries/mail';
 import { useMeData } from '../../lib/queries/me';
 import { setLastMailbox } from '../../lib/storage';
 import { useCompose } from '../compose/ComposeProvider';
 import { resolveView } from './folderMeta';
+import { LabelPicker } from './LabelDialogs';
 import { Rail } from './Rail';
 import { ReaderEmpty } from './ReaderEmpty';
 import { ReaderPane } from './ReaderPane';
@@ -22,7 +24,8 @@ export function MailPage() {
   const { mailboxes } = useMeData();
   const mailbox = mailboxes.find((m) => m.id === mailboxId);
   const folders = useFolders(mailbox?.id);
-  const view = resolveView(folders.data, folder);
+  const labels = useLabels(mailbox?.id);
+  const view = resolveView(folders.data, folder, labels.data);
   const layout = useLayoutMode();
   const mobile = layout === 'mobile';
   // 'swipe' when an edge swipe is opening it, so the finger drives the slide-in.
@@ -67,18 +70,18 @@ export function MailPage() {
   }, [mobile, threadId]);
 
   useEffect(() => {
-    const unread = view?.folder?.unread ?? 0;
+    const unread = view?.folder?.unread ?? view?.tag?.unread ?? 0;
     const label = view?.label ?? 'Mail';
     document.title = `${unread > 0 ? `(${unread}) ` : ''}${label} - Cirrus Mail`;
     return () => {
       document.title = 'Cirrus Mail';
     };
-  }, [view?.folder?.unread, view?.label]);
+  }, [view?.folder?.unread, view?.tag?.unread, view?.label]);
 
   if (!mailbox) return <Navigate to="/" replace />;
   if (folder === 'search' && !q.trim()) return <Navigate to={`/mail/${mailbox.id}/inbox`} replace />;
   if (folders.data && !view) {
-    return folder === 'inbox' ? <FullScreenSpinner /> : <Navigate to={`/mail/${mailbox.id}/inbox`} replace />;
+    return folder === 'inbox' || (folder.startsWith(LABEL_KEY) && labels.isPending) ? <FullScreenSpinner /> : <Navigate to={`/mail/${mailbox.id}/inbox`} replace />;
   }
 
   const rail = <Rail mailbox={mailbox} folders={folders.data} onNavigate={mobile ? () => setDrawer(false) : undefined} />;
@@ -127,6 +130,9 @@ export function MailPage() {
         ) : (
           <ReaderEmpty />
         ))}
+      {ctl.labelTargets && (
+        <LabelPicker mailboxId={mailbox.id} threadIds={ctl.labelTargets} threads={ctl.labelThreads} onClose={ctl.closeLabels} />
+      )}
       {mobile && !threadId && !compose.isOpen && (
         <button
           type="button"

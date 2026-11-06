@@ -66,7 +66,7 @@ export const REAUTH_MAX_FAILURES = 5;
  * Checks the current password for a sensitive change. Like login, the attempt is counted atomically before
  * any hashing, per user, so a stolen session cannot brute-force the password (15-minute window).
  */
-async function requireCurrentPassword(db: D1Database, user: UserRow, password: string, message: string): Promise<void> {
+export async function requireCurrentPassword(db: D1Database, user: UserRow, password: string, message: string): Promise<void> {
   const key = `reauth:${user.id}`;
   if ((await hit(db, key, LOGIN_WINDOW_MS)) > REAUTH_MAX_FAILURES) {
     throw new HttpError(429, 'RATE_LIMITED', 'Too many password attempts. Try again in 15 minutes.');

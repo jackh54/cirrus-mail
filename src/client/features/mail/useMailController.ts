@@ -7,6 +7,7 @@ import { useHotkeys } from '../../lib/hotkeys';
 import { qk } from '../../lib/queries/keys';
 import { useCategoryTabsOn } from '../../lib/queries/ai';
 import { prefetchThread, useThreads } from '../../lib/queries/mail';
+import { OPEN_LABEL_PICKER_EVENT } from './labelMeta';
 import { useCompose } from '../compose/ComposeProvider';
 import { useCategoryTab } from './categoryTab';
 import type { ResolvedView } from './folderMeta';
@@ -34,11 +35,14 @@ export function useMailController(view: ResolvedView | null, folders: Folder[] |
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const anchor = useRef<number | null>(null);
   const runAction = useThreadActions(mb, view?.listKey ?? null, folders);
+  // Threads the label picker is open for (null = closed).
+  const [labelTargets, setLabelTargets] = useState<string[] | null>(null);
 
   useEffect(() => {
     setSelected(new Set());
     setFocusIndex(0);
     setCursorVisible(false);
+    setLabelTargets(null);
     anchor.current = null;
   }, [mb, view?.listKey, route.q, category]);
 
@@ -139,6 +143,29 @@ export function useMailController(view: ResolvedView | null, folders: Folder[] |
     void act(allStarred ? 'unstar' : 'star', list);
   }, [targets, threadId, qc, mb, threads, act]);
 
+  const openLabels = useCallback(
+    (ids?: string[]) => {
+      const list = ids ?? targets();
+      if (list.length) setLabelTargets(list);
+    },
+    [targets],
+  );
+  const closeLabels = useCallback(() => setLabelTargets(null), []);
+  // The palette (and anything else) opens the picker through a window event.
+  useEffect(() => {
+    const on = () => openLabels();
+    window.addEventListener(OPEN_LABEL_PICKER_EVENT, on);
+    return () => window.removeEventListener(OPEN_LABEL_PICKER_EVENT, on);
+  }, [openLabels]);
+  // What the client knows about the targets, so the picker can show which labels they carry.
+  const labelThreads = useMemo(
+    () => (labelTargets ?? []).flatMap((id) => {
+      const t = threads.find((x) => x.id === id) ?? qc.getQueryData<ThreadDetail>(qk.thread(mb, id))?.thread;
+      return t ? [t] : [];
+    }),
+    [labelTargets, threads, qc, mb],
+  );
+
   const step = (delta: number) => {
     if (!threads.length) return;
     if (threadId) {
@@ -171,12 +198,16 @@ export function useMailController(view: ResolvedView | null, folders: Folder[] |
     e: () => role !== 'archive' && void act('archive'),
     '#': () => void act(role === 'trash' || role === 'spam' ? 'delete_forever' : 'trash'),
     s: starToggle,
+    l: () => openLabels(),
     I: () => void act('read'),
     U: () => void act('unread'),
     Escape: () => selected.size && setSelected(new Set()),
   });
 
-  return { query, tabsOn, category, threads, focusIndex, cursorVisible, selected, toggle, selectAll, openThread, act, prefetch, hideCursor };
+  return {
+    query, tabsOn, category, threads, focusIndex, cursorVisible, selected, toggle, selectAll, openThread, act, prefetch, hideCursor,
+    labelTargets, labelThreads, openLabels, closeLabels,
+  };
 }
 
 export type MailController = ReturnType<typeof useMailController>;

@@ -50,7 +50,7 @@ export interface SessionInfo {
 
 export interface SetupStatus { needsSetup: boolean }
 export interface SetupInput { token: string; name: string; email: string; password: string }
-export interface LoginInput { email: string; password: string; totp?: string }
+export interface LoginInput { email: string; password: string; totp?: string; passkey?: PasskeyAssertionJSON }
 export interface AuthResponse { user: User }
 
 export interface MailboxSummary {
@@ -73,6 +73,21 @@ export interface UpdateMeInput { name?: string; theme?: Theme; density?: Density
 export interface ChangePasswordInput { current: string; next: string }
 export interface TotpBeginResponse { secret: string; otpauthUrl: string }
 export interface TotpEnableResponse { recoveryCodes: string[] }
+
+// ---------- passkeys (WebAuthn) ----------
+
+export interface PasskeyInfo { id: ID; name: string; createdAt: Millis; lastUsedAt: Millis | null }
+/** PublicKeyCredentialCreationOptionsJSON / RequestOptionsJSON as the server builds them (binary fields base64url). */
+export interface PasskeyOptionsResponse { options: Record<string, unknown> }
+export interface PasskeyAttestationJSON {
+  id: string; rawId: string; type: 'public-key';
+  response: { clientDataJSON: string; attestationObject: string; transports?: string[] };
+}
+export interface PasskeyAssertionJSON {
+  id: string; rawId: string; type: 'public-key';
+  response: { clientDataJSON: string; authenticatorData: string; signature: string; userHandle?: string | null };
+}
+export interface PasskeyRegisterInput { credential: PasskeyAttestationJSON; name?: string }
 
 // ---------- mail ----------
 
@@ -103,6 +118,7 @@ export interface ThreadSummary {
   folderIds: ID[];              // folders that contain at least one message of this thread
   /** Inbox tab the thread belongs to. Always 'primary' while AI triage is off or a thread has not been classified. */
   category: ThreadCategory;
+  labels: ID[];                 // labels carried by at least one message of this thread (see Label)
 }
 
 export type MessageStatus = 'received' | 'draft' | 'scheduled' | 'sending' | 'sent' | 'failed';
@@ -172,6 +188,34 @@ export interface ThreadActionInput {
   folderId?: ID;                // required for 'move'
 }
 
+// ---------- labels ----------
+
+/** The fixed label palette (cobalt/graphite friendly). The client maps each name to a colour token. */
+export const LABEL_COLORS = ['cobalt', 'sky', 'teal', 'green', 'amber', 'orange', 'red', 'pink', 'violet', 'graphite'] as const;
+export type LabelColor = (typeof LABEL_COLORS)[number];
+
+export const LABEL_LIMITS = { maxPerMailbox: 100, maxName: 40 } as const;
+
+/** Labels are per mailbox; names are unique ignoring case. `unread` counts unread messages with the label outside Trash and Spam. */
+export interface Label {
+  id: ID;
+  name: string;
+  color: LabelColor;
+  unread: number;
+}
+
+export interface LabelInput { name: string; color: LabelColor }
+
+/**
+ * POST /api/mailboxes/:mb/threads/labels: adds and/or removes labels on every message of the given threads.
+ * An unknown thread or label id is a 404 and nothing is written.
+ */
+export interface ThreadLabelsInput {
+  threadIds: ID[];
+  add?: ID[];
+  remove?: ID[];
+}
+
 export interface DraftInput {
   from: string;                 // identity email
   to: Address[];
@@ -217,6 +261,7 @@ export interface FilterCondition {
 
 export type FilterAction =
   | { type: 'move_to'; folderId: ID }
+  | { type: 'apply_label'; labelId: ID }
   | { type: 'mark_read' }
   | { type: 'star' }
   | { type: 'delete' }

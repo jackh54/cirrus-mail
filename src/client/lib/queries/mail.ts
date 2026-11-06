@@ -7,8 +7,11 @@ import { qk } from './keys';
 
 export type ThreadsData = InfiniteData<Page<ThreadSummary>, string | null>;
 
-/** List key for a view: a folder id, `starred`, or `search`. */
+/** List key for a view: a folder id, `starred`, `search`, or `label:<id>`. */
 export type ListKey = string;
+
+export const LABEL_KEY = 'label:';
+export const isLabelKey = (k: string) => k.startsWith(LABEL_KEY);
 
 export function useFolders(mb: string | undefined) {
   return useQuery({
@@ -30,7 +33,7 @@ export function useThreads(mb: string, listKey: ListKey, q: string, enabled = tr
       asPage(
         await api.get<Page<ThreadSummary> | ThreadSummary[]>(
           `/api/mailboxes/${mb}/threads`,
-          { folder: listKey === 'search' ? undefined : listKey, q: q || undefined, category, cursor: pageParam, limit: 50 },
+          { folder: listKey === 'search' || isLabelKey(listKey) ? undefined : listKey, label: isLabelKey(listKey) ? listKey.slice(LABEL_KEY.length) : undefined, q: q || undefined, category, cursor: pageParam, limit: 50 },
           signal,
         ),
       ),
@@ -80,7 +83,10 @@ function patchList(data: ThreadsData, ids: Set<string>, input: ThreadActionInput
   const removes =
     action === 'delete_forever' ||
     (action === 'unstar' && listKey === 'starred') ||
-    (MOVES.includes(action) && listKey !== 'starred' && listKey !== 'search' && input.folderId !== listKey);
+    // A label list keeps a thread through archive and moves; only Trash and Spam take it out.
+    (isLabelKey(listKey)
+      ? action === 'trash' || action === 'spam'
+      : MOVES.includes(action) && listKey !== 'starred' && listKey !== 'search' && input.folderId !== listKey);
   return {
     ...data,
     pages: data.pages.map((p) => ({
@@ -156,6 +162,7 @@ export function useThreadAction(mb: string) {
       void qc.invalidateQueries({ queryKey: qk.threadsAll(mb) });
       void qc.invalidateQueries({ queryKey: qk.folders(mb) });
       void qc.invalidateQueries({ queryKey: qk.categories(mb) });
+      void qc.invalidateQueries({ queryKey: qk.labels(mb) });
       void qc.invalidateQueries({ queryKey: qk.me });
       if (input.action === 'delete_forever') {
         input.threadIds.forEach((id) => qc.removeQueries({ queryKey: qk.thread(mb, id) }));
