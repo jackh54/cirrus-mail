@@ -14,7 +14,7 @@ export function AppSidebar({ label, children, onNavigate }: { label: string; chi
         <span className="text-[13px] font-semibold text-fg">Cirrus</span>
       </div>
       <AppSwitcher onNavigate={onNavigate} />
-      <div className="min-h-0 flex-1 overflow-y-auto px-2 pt-1 pb-3">{children}</div>
+      <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-2 pt-1 pb-3">{children}</div>
       <div className="border-t border-border p-2">
         <NavLink to="/settings/profile" onClick={onNavigate} className={({ isActive }) => railLinkClass(isActive)}>
           <Settings /> Settings

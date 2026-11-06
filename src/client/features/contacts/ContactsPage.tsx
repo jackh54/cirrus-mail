@@ -67,7 +67,7 @@ export function ContactsPage() {
         />
       )}
       {showDetail && (
-        <main className="min-w-0 flex-1 overflow-y-auto" aria-label="Contact">
+        <main className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto" aria-label="Contact">
           {isNew ? (
             <NewContact key="new" />
           ) : selected ? (
