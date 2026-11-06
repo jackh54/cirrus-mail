@@ -20,12 +20,13 @@ export function Table({ head, children }: { head: string[]; children: ReactNode 
   );
 }
 
-export function Pill({ children, tone = 'neutral' }: { children: ReactNode; tone?: 'neutral' | 'primary' | 'danger' | 'success' }) {
+export function Pill({ children, tone = 'neutral' }: { children: ReactNode; tone?: 'neutral' | 'primary' | 'danger' | 'success' | 'warning' }) {
   const cls = {
     neutral: 'bg-surface-2 text-muted',
     primary: 'bg-primary-soft text-selected-fg',
     danger: 'bg-danger-soft text-danger',
     success: 'bg-success-soft text-success',
+    warning: 'bg-warning-soft text-warning',
   }[tone];
   return <span className={cn('inline-flex h-5 items-center rounded-[4px] px-1.5 text-[12px] font-medium', cls)}>{children}</span>;
 }

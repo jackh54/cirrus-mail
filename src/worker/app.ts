@@ -11,6 +11,7 @@ import { files } from './routes/files';
 import { filters } from './routes/filters';
 import { mail, mailReads } from './routes/mail';
 import { mailboxSettings } from './routes/mailbox-settings';
+import { invites } from './routes/invites';
 import { me } from './routes/me';
 import { proxy } from './routes/proxy';
 import { push } from './routes/push';
@@ -44,6 +45,7 @@ app.use('*', csrf);
 
 app.route('/setup', setup);
 app.route('/auth', auth);
+app.route('/invites', invites);
 app.route('/me', me);
 app.route('/contacts', contacts);
 app.route('/files', files);

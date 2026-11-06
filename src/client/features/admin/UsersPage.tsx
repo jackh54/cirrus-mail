@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { KeyRound, MoreHorizontal, Plus, Shield, ShieldOff, Trash2, UserCheck, UserX } from 'lucide-react';
-import type { AdminUser } from '@shared/api';
+import { KeyRound, MailPlus, MoreHorizontal, Shield, ShieldOff, Trash2, UserCheck, UserX } from 'lucide-react';
+import type { AdminInviteResponse, AdminUser } from '@shared/api';
 import { Avatar } from '../../components/Avatar';
 import { Button, IconButton } from '../../components/Button';
 import { useConfirm } from '../../components/Confirm';
@@ -14,22 +14,23 @@ import { errorMessage } from '../../lib/api';
 import { relativeAgo } from '../../lib/format';
 import { useAdminUsers, useUserMutations } from '../../lib/queries/admin';
 import { useMeData } from '../../lib/queries/me';
-import { CreateUserDialog } from './CreateUserDialog';
+import { InviteResultDialog, InviteUserDialog } from './InviteUserDialog';
 import { genPassword, Pill, Table } from './shared';
 
 export function UsersPage() {
   const users = useAdminUsers();
-  const { update, remove } = useUserMutations();
+  const { update, remove, resendInvite } = useUserMutations();
   const { user: me } = useMeData();
   const confirm = useConfirm();
   const { toast } = useToast();
   const [creating, setCreating] = useState(false);
   const [resetting, setResetting] = useState<AdminUser | null>(null);
+  const [resent, setResent] = useState<AdminInviteResponse | null>(null);
   const onError = (e: unknown) => toast({ tone: 'error', title: 'Not saved', description: errorMessage(e) });
 
   return (
     <>
-      <PageTitle title="Users" description="People who can sign in. Give them mailboxes on the Mailboxes page." action={<Button variant="primary" icon={<Plus size={15} />} onClick={() => setCreating(true)}>Add user</Button>} />
+      <PageTitle title="Users" description="People who can sign in. Give them mailboxes on the Mailboxes page." action={<Button variant="primary" icon={<MailPlus size={15} />} onClick={() => setCreating(true)}>Invite user</Button>} />
       {users.isPending ? (
         <Skeleton className="h-48 rounded-[10px]" />
       ) : users.isError ? (
@@ -51,6 +52,7 @@ export function UsersPage() {
                 <div className="flex flex-wrap gap-1">
                   <Pill tone={u.role === 'admin' ? 'primary' : 'neutral'}>{u.role === 'admin' ? 'Admin' : 'Member'}</Pill>
                   {u.disabled && <Pill tone="danger">Disabled</Pill>}
+                  {u.invite && (u.invite.expiresAt < Date.now() ? <Pill tone="warning">Invite expired</Pill> : <Pill>Invited</Pill>)}
                   {u.totpEnabled && <Pill tone="success">2FA</Pill>}
                 </div>
               </td>
@@ -60,7 +62,9 @@ export function UsersPage() {
                 <Menu
                   label={`Actions for ${u.name}`}
                   items={[
-                    { label: 'Reset password', icon: <KeyRound />, onSelect: () => setResetting(u) },
+                    u.invite
+                      ? { label: 'Resend invite', icon: <MailPlus />, onSelect: () => resendInvite.mutate(u.id, { onSuccess: setResent, onError: (e) => toast({ tone: 'error', title: 'Not sent', description: errorMessage(e) }) }) }
+                      : { label: 'Reset password', icon: <KeyRound />, onSelect: () => setResetting(u) },
                     u.role === 'admin'
                       ? { label: 'Make member', icon: <ShieldOff />, disabled: u.id === me.id, onSelect: () => update.mutate({ id: u.id, patch: { role: 'member' } }, { onError }) }
                       : { label: 'Make admin', icon: <Shield />, onSelect: () => update.mutate({ id: u.id, patch: { role: 'admin' } }, { onError }) },
@@ -77,12 +81,16 @@ export function UsersPage() {
                         },
                     { kind: 'separator' },
                     {
-                      label: 'Delete user',
+                      label: u.invite ? 'Revoke invite' : 'Delete user',
                       icon: <Trash2 />,
                       danger: true,
                       disabled: u.id === me.id,
                       onSelect: async () => {
-                        if (await confirm({ title: `Delete ${u.name}?`, body: 'This removes their account and signs them out everywhere.', confirmLabel: 'Delete user', danger: true }))
+                        if (await confirm(
+                          u.invite
+                            ? { title: `Revoke the invite for ${u.name}?`, body: 'Their link stops working and the pending account is removed.', confirmLabel: 'Revoke invite', danger: true }
+                            : { title: `Delete ${u.name}?`, body: 'This removes their account and signs them out everywhere.', confirmLabel: 'Delete user', danger: true },
+                        ))
                           remove.mutate(u.id, { onError });
                       },
                     },
@@ -94,7 +102,8 @@ export function UsersPage() {
           ))}
         </Table>
       )}
-      {creating && <CreateUserDialog onClose={() => setCreating(false)} />}
+      {creating && <InviteUserDialog onClose={() => setCreating(false)} />}
+      {resent && <InviteResultDialog result={resent} onClose={() => setResent(null)} />}
       {resetting && <ResetPasswordDialog user={resetting} onClose={() => setResetting(null)} />}
     </>
   );

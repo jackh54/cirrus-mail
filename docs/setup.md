@@ -143,9 +143,17 @@ In **Admin**:
    - **Aliases**, such as `hello@` delivering into `you@`
    - a **catch-all mailbox** on the domain, for mail to addresses that don't exist
    - **shared mailboxes**, such as `support@`, with several members
-   - more **Users**. You create them with a temporary password and share it with them; they can change it in Settings.
 
 Mail to an address that matches no mailbox, alias or catch-all is rejected with `550 5.1.1 No such user`.
+
+### Invite your team
+
+In **Admin → Users**, click **Invite user**. Enter their name, the email they'll sign in with, and optionally a new mailbox for them (for example `sam@example.com`). Cirrus creates the account and emails them a link to choose their password.
+
+- Use a sign-in email they can **already read**, such as their personal or work address. An address on a domain Cirrus hosts can't receive the invite before the account exists, so Cirrus shows you the link to share yourself instead.
+- The email is sent from your own mailbox (or `noreply@` your domain if you have none), so finish step 2 (Email Sending) first. If sending fails, the invite still exists and you can copy the link.
+- Links work once and expire after 7 days. **Resend invite** issues a new link and cancels the old one. Deleting the user revokes the invite.
+- Prefer to set a password yourself? **Set a password instead** in the same dialog creates the user with a temporary password they must change on first sign-in.
 
 ## 8. Route all mail to the Worker (catch-all)
 

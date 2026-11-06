@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
-  AdminCreateUserInput, AdminMailbox, AdminMailboxInput, AdminStats, AdminUpdateUserInput, AdminUser, Alias,
+  AdminCreateUserInput, AdminInviteInput, AdminInviteResponse, AdminMailbox, AdminMailboxInput, AdminStats, AdminUpdateUserInput, AdminUser, Alias,
   Domain, DomainCheck, Page,
 } from '@shared/api';
 import { api, asList } from '../api';
@@ -48,6 +48,11 @@ export function useUserMutations() {
   const done = useInvalidateAdmin();
   return {
     create: useMutation({ mutationFn: (u: AdminCreateUserInput) => api.post<AdminUser>('/api/admin/users', u), onSuccess: done }),
+    invite: useMutation({ mutationFn: (u: AdminInviteInput) => api.post<AdminInviteResponse>('/api/admin/users/invite', u), onSuccess: done }),
+    resendInvite: useMutation({
+      mutationFn: (id: string) => api.post<AdminInviteResponse>(`/api/admin/users/${id}/invite`, {}),
+      onSuccess: done,
+    }),
     update: useMutation({
       mutationFn: (v: { id: string; patch: AdminUpdateUserInput }) => api.patch<AdminUser>(`/api/admin/users/${v.id}`, v.patch),
       onSuccess: done,

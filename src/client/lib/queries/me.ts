@@ -1,7 +1,7 @@
 import { disablePush, setThisDeviceId } from '../push';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
-  AuthResponse, ChangePasswordInput, LoginInput, MeResponse, SessionInfo, SetupInput, SetupStatus,
+  AuthResponse, ChangePasswordInput, InviteAcceptInput, InviteLookupResponse, LoginInput, MeResponse, SessionInfo, SetupInput, SetupStatus,
   TotpBeginResponse, TotpEnableResponse, UpdateMeInput,
 } from '@shared/api';
 import { api, asList } from '../api';
@@ -39,6 +39,27 @@ export function useLogin() {
   return useMutation({
     mutationFn: (input: LoginInput) => api.post<AuthResponse>('/api/auth/login', input),
     onSuccess: () => qc.invalidateQueries({ queryKey: qk.me }),
+  });
+}
+
+export function useInviteLookup() {
+  return useMutation({ mutationFn: (token: string) => api.post<InviteLookupResponse>('/api/invites/lookup', { token }) });
+}
+
+export function useInviteAccept() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: InviteAcceptInput) => {
+      // Someone else may be signed in on this browser: stop their mail alerts here before this account takes over.
+      await disablePush().catch(() => undefined);
+      setThisDeviceId(null);
+      return api.post<AuthResponse>('/api/invites/accept', input);
+    },
+    // The invite may be for a different account than the one signed in here, so drop everything cached.
+    onSuccess: () => {
+      qc.clear();
+      void qc.invalidateQueries({ queryKey: qk.me });
+    },
   });
 }
 

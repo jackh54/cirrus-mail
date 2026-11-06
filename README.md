@@ -71,6 +71,7 @@
 
 **Admin**
 - Users, domains, mailboxes, aliases and catch-all addresses
+- Email invites: add someone's sign-in email and Cirrus sends them a link to set up their account
 - Shared mailboxes with several members
 - A DNS health check for MX, SPF and DMARC
 - Instance stats: storage, and mail sent and received

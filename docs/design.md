@@ -94,6 +94,7 @@ There are no Durable Objects, no Queues and no third-party services.
 - **CSRF:** every non-GET `/api` request must carry the header `X-Cirrus: 1`. The client always sends it, and SameSite=Lax blocks cross-site cookie use on top of that.
 - **2FA:** optional TOTP (RFC 6238, SHA-1, 6 digits, 30 s, ±1 step), plus 10 one-time recovery codes stored hashed.
 - **Login throttling:** `rate_limits` table, at most 10 failures per 15 min per (ip, email). After that, return 429.
+- **Invites:** a 256-bit random token, stored only as its sha256. The link carries it in the URL fragment (`/invite#token`), so it never reaches a server log or a Referer header. It works once (consumed with an atomic `DELETE … RETURNING`) and expires after 7 days. Until it's accepted, the account's password is a random value nobody knows.
 - **First-run setup:** `POST /api/setup` works only while there are zero users. It requires `SETUP_TOKEN` (a Worker secret) to match, and it creates the first admin.
 - **Authorization:** every mailbox-scoped query joins `mailbox_members` on the session user. Admin routes require `role='admin'`.
 - **HTML mail rendering:**
@@ -108,7 +109,7 @@ There are no Durable Objects, no Queues and no third-party services.
 
 The schema in `migrations/0001_init.sql` is authoritative. In summary:
 
-- `users`, `sessions`, `recovery_codes`
+- `users`, `sessions`, `recovery_codes`, `invites` (one live invite per user: sha256 of the token, expiry)
 - `domains` (catch-all mailbox), `mailboxes`, `mailbox_members` (owner or member, which gives shared mailboxes), `aliases`
 - `folders` (system roles: inbox, sent, drafts, archive, spam, trash, scheduled; plus custom folders)
 - `threads`, `messages`, `attachments`, `messages_fts` (FTS5; external content off, keyed by `message_id`)
@@ -137,6 +138,8 @@ IDs are text ULIDs; `src/shared/ulid.ts` is the only generator. Timestamps are i
 | POST | `/api/me/totp/enable` | `{ code }` → `{ recoveryCodes: string[] }` |
 | POST | `/api/me/totp/disable` | `{ password }` → `{ ok }` |
 | GET | `/api/me/sessions` · DELETE `/api/me/sessions/:id` | session management |
+| POST | `/api/invites/lookup` | `{ token }` → `InviteLookupResponse` or 404 `INVITE_INVALID` (public, rate limited) |
+| POST | `/api/invites/accept` | `{ token, name, password }` → `{ user }` (consumes the invite, signs in) |
 
 ### Mail (mailbox-scoped; `:mb` = mailbox id)
 | Method | Path | Notes |
@@ -167,6 +170,7 @@ IDs are text ULIDs; `src/shared/ulid.ts` is the only generator. Timestamps are i
 | Method | Path |
 |---|---|
 | GET/POST/PATCH/DELETE | `/api/admin/users[/:id]` (create with a temp password; reset password; disable) |
+| POST | `/api/admin/users/invite` → `AdminInviteResponse` (creates the user with an unusable password and emails a one-time link) · `/api/admin/users/:id/invite` resends with a new link |
 | GET/POST/PATCH/DELETE | `/api/admin/domains[/:id]` (`catchAllMailboxId`) |
 | GET | `/api/admin/domains/:id/check` → DNS health from DoH (`cloudflare-dns.com`): MX points at Cloudflare Email Routing, SPF includes Cloudflare, DMARC present |
 | GET/POST/PATCH/DELETE | `/api/admin/mailboxes[/:id]` (address, displayName, members `[{userId, role}]`) |
@@ -233,4 +237,4 @@ Cirrus is a tool people live in all day, so it should feel calm, fast and precis
 
 ## 8. Out of scope for v0.1 (roadmap)
 
-IMAP/JMAP access, Web Push, labels as a separate concept from folders, calendar/contacts sync, PGP, passkeys, mobile apps, an AI triage add-on (Workers AI) and mbox import.
+IMAP/JMAP access, labels as a separate concept from folders, calendar/contacts sync, PGP, passkeys, native mobile apps (the PWA has Web Push), an AI triage add-on (Workers AI) and mbox import.

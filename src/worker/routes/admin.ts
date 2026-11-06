@@ -1,11 +1,13 @@
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { z } from 'zod';
-import type { AdminMailbox, AdminStats, AdminUser, Alias, Domain, DomainCheck } from '../../shared/api';
+import { INVITE_TTL_MS, type AdminInviteResponse, type AdminMailbox, type AdminStats, type AdminUser, type Alias, type Domain, type DomainCheck } from '../../shared/api';
 import { ulid } from '../../shared/ulid';
 import { domainOf } from '../lib/addresses';
-import { hashPassword } from '../lib/crypto';
+import { sendInviteEmail } from '../invite-email';
+import { hashPassword, randomBytes, sha256Hex, toBase64Url } from '../lib/crypto';
 import { rowToUser, SYSTEM_FOLDERS, type UserRow } from '../lib/db';
 import { HttpError, notFound } from '../lib/errors';
+import { hit } from '../lib/ratelimit';
 import { jsonBody, zDomainName, zEmail, zHeaderText, zId, zLocalPart, zName, zPassword } from '../lib/validate';
 import { requireAdmin, requireAuth } from '../middleware/session';
 import type { AppEnv } from '../types';
@@ -17,18 +19,28 @@ const DAY = 24 * 3600 * 1000;
 
 // ---------- users ----------
 
+type AdminUserRow = UserRow & { mailbox_count: number; invite_sent_at: number | null; invite_expires_at: number | null; invite_user: string | null };
+
+const ADMIN_USER_SELECT = `SELECT u.*, (SELECT COUNT(*) FROM mailbox_members mm WHERE mm.user_id = u.id) AS mailbox_count,
+  i.user_id AS invite_user, i.sent_at AS invite_sent_at, i.expires_at AS invite_expires_at
+  FROM users u LEFT JOIN invites i ON i.user_id = u.id`;
+
+function toAdminUser(r: AdminUserRow): AdminUser {
+  return {
+    ...rowToUser(r), disabled: !!r.disabled, mailboxCount: r.mailbox_count,
+    invite: r.invite_user ? { sentAt: r.invite_sent_at, expiresAt: r.invite_expires_at! } : null,
+  };
+}
+
 async function adminUser(db: D1Database, id: string): Promise<AdminUser> {
-  const r = await db.prepare('SELECT u.*, (SELECT COUNT(*) FROM mailbox_members mm WHERE mm.user_id = u.id) AS mailbox_count FROM users u WHERE u.id = ?')
-    .bind(id).first<UserRow & { mailbox_count: number }>();
+  const r = await db.prepare(`${ADMIN_USER_SELECT} WHERE u.id = ?`).bind(id).first<AdminUserRow>();
   if (!r) throw notFound('User not found');
-  return { ...rowToUser(r), disabled: !!r.disabled, mailboxCount: r.mailbox_count };
+  return toAdminUser(r);
 }
 
 admin.get('/users', async (c) => {
-  const { results } = await c.env.DB.prepare('SELECT u.*, (SELECT COUNT(*) FROM mailbox_members mm WHERE mm.user_id = u.id) AS mailbox_count FROM users u ORDER BY u.name')
-    .all<UserRow & { mailbox_count: number }>();
-  const items: AdminUser[] = results.map((r) => ({ ...rowToUser(r), disabled: !!r.disabled, mailboxCount: r.mailbox_count }));
-  return c.json(items);
+  const { results } = await c.env.DB.prepare(`${ADMIN_USER_SELECT} ORDER BY u.name`).all<AdminUserRow>();
+  return c.json(results.map(toAdminUser));
 });
 
 /** Statements that create a mailbox, its system folders and memberships. */
@@ -73,6 +85,81 @@ admin.post('/users', async (c) => {
   return c.json(await adminUser(db, id), 201);
 });
 
+// ---------- invites ----------
+
+const INVITE_SEND_WINDOW_MS = 3600 * 1000;
+const INVITE_SENDS_PER_ADMIN = 50;
+
+const InviteSchema = z.object({
+  name: zName, email: zEmail, role: z.enum(['admin', 'member']),
+  mailbox: z.object({ localPart: zLocalPart, domainId: zId }).optional(),
+  send: z.boolean().optional(),
+});
+
+/** Counts an invite send against the admin's hourly cap, so a stolen admin session cannot spam people. */
+async function inviteSendBudget(c: Context<AppEnv>) {
+  if ((await hit(c.env.DB, `invite-send:${c.get('user').id}`, INVITE_SEND_WINDOW_MS)) > INVITE_SENDS_PER_ADMIN) {
+    throw new HttpError(429, 'RATE_LIMITED', 'Too many invites sent. Try again later.');
+  }
+}
+
+/** Emails the invite (unless told not to) and records sent_at on success. */
+async function deliverInvite(c: Context<AppEnv>, o: { userId: string; name: string; email: string; mailboxAddress: string | null; token: string; expiresAt: number; send: boolean }): Promise<AdminInviteResponse> {
+  const db = c.env.DB;
+  const inviteUrl = `${new URL(c.req.url).origin}/invite#${o.token}`;
+  const email = await sendInviteEmail(c.env, {
+    adminId: c.get('user').id, adminName: c.get('user').name, to: o.email, name: o.name,
+    mailboxAddress: o.mailboxAddress, url: inviteUrl, expiresAt: o.expiresAt, send: o.send,
+  });
+  if (email.sent) await db.prepare('UPDATE invites SET sent_at = ? WHERE user_id = ?').bind(Date.now(), o.userId).run();
+  return { user: await adminUser(db, o.userId), inviteUrl, email };
+}
+
+admin.post('/users/invite', async (c) => {
+  const b = await jsonBody(c, InviteSchema);
+  const db = c.env.DB;
+  await inviteSendBudget(c);
+  if (await db.prepare('SELECT 1 FROM users WHERE email = ?').bind(b.email).first()) throw new HttpError(409, 'EMAIL_TAKEN', 'A user with that email already exists');
+  const now = Date.now();
+  const id = ulid(now);
+  const token = toBase64Url(randomBytes(32));
+  const expiresAt = now + INVITE_TTL_MS;
+  // The password is random and never shown: the person sets their own through the invite link.
+  const stmts = [db.prepare(
+    `INSERT INTO users (id, email, name, password_hash, role, must_change_password, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 0, ?, ?)`,
+  ).bind(id, b.email, b.name, await hashPassword(toBase64Url(randomBytes(32))), b.role, now, now)];
+  let mailboxAddress: string | null = null;
+  if (b.mailbox) {
+    mailboxAddress = await resolveNewAddress(db, b.mailbox.localPart, b.mailbox.domainId);
+    stmts.push(...createMailboxStmts(db, { id: ulid(now), domainId: b.mailbox.domainId, localPart: b.mailbox.localPart, address: mailboxAddress, displayName: b.name, members: [{ userId: id, role: 'owner' }] }, now));
+  }
+  stmts.push(db.prepare('INSERT INTO invites (user_id, token_hash, created_by, created_at, expires_at) VALUES (?, ?, ?, ?, ?)')
+    .bind(id, await sha256Hex(token), c.get('user').id, now, expiresAt));
+  await db.batch(stmts);
+  return c.json(await deliverInvite(c, { userId: id, name: b.name, email: b.email, mailboxAddress, token, expiresAt, send: b.send !== false }), 201);
+});
+
+admin.post('/users/:id/invite', async (c) => {
+  const raw = await c.req.json().catch(() => ({}));
+  const b = z.object({ send: z.boolean().optional() }).parse(raw ?? {});
+  const db = c.env.DB;
+  const id = c.req.param('id');
+  const target = await db.prepare('SELECT id, name, email, disabled FROM users WHERE id = ?').bind(id).first<{ id: string; name: string; email: string; disabled: number }>();
+  if (!target) throw notFound('User not found');
+  if (target.disabled) throw new HttpError(400, 'USER_DISABLED', 'Enable this user before resending their invite');
+  if (!(await db.prepare('SELECT 1 FROM invites WHERE user_id = ?').bind(id).first())) throw new HttpError(400, 'ALREADY_ACTIVE', 'This user has already accepted their invite');
+  await inviteSendBudget(c);
+  const now = Date.now();
+  const token = toBase64Url(randomBytes(32));
+  const expiresAt = now + INVITE_TTL_MS;
+  await db.prepare('UPDATE invites SET token_hash = ?, created_at = ?, expires_at = ?, sent_at = NULL WHERE user_id = ?')
+    .bind(await sha256Hex(token), now, expiresAt, id).run();
+  const mailboxAddress = await db.prepare(
+    'SELECT m.address FROM mailbox_members mm JOIN mailboxes m ON m.id = mm.mailbox_id WHERE mm.user_id = ? ORDER BY m.address LIMIT 1',
+  ).bind(id).first<string>('address');
+  return c.json(await deliverInvite(c, { userId: id, name: target.name, email: target.email, mailboxAddress, token, expiresAt, send: b.send !== false }));
+});
+
 /** Number of enabled admins other than `exceptId`. */
 async function otherAdmins(db: D1Database, exceptId: string): Promise<number> {
   return (await db.prepare("SELECT COUNT(*) AS n FROM users WHERE role = 'admin' AND disabled = 0 AND id != ?").bind(exceptId).first<number>('n')) ?? 0;
@@ -98,6 +185,7 @@ admin.patch('/users/:id', async (c) => {
     .bind(b.name ?? target.name, b.role ?? target.role, b.disabled === undefined ? target.disabled : b.disabled ? 1 : 0, now, id)];
   if (b.resetPassword) {
     stmts.push(db.prepare('UPDATE users SET password_hash = ?, must_change_password = 1 WHERE id = ?').bind(await hashPassword(b.resetPassword), id));
+    stmts.push(db.prepare('DELETE FROM invites WHERE user_id = ?').bind(id)); // the admin chose a password instead
   }
   if (b.resetPassword || b.disabled) stmts.push(db.prepare('DELETE FROM sessions WHERE user_id = ?').bind(id));
   await db.batch(stmts);

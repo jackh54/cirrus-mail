@@ -14,11 +14,12 @@ const loadAuth = () => import('./features/auth/authPages');
 const MailPage = lazy(() => loadMail().then((m) => ({ default: m.MailPage })));
 const LoginPage = lazy(() => loadAuth().then((m) => ({ default: m.LoginPage })));
 const SetupPage = lazy(() => loadAuth().then((m) => ({ default: m.SetupPage })));
+const InvitePage = lazy(() => loadAuth().then((m) => ({ default: m.InvitePage })));
 const SettingsRoutes = lazy(() => import('./features/settings/SettingsRoutes'));
 const AdminRoutes = lazy(() => import('./features/admin/AdminRoutes'));
 
 if (typeof location !== 'undefined') {
-  if (location.pathname.startsWith('/login') || location.pathname.startsWith('/setup')) void loadAuth();
+  if (location.pathname.startsWith('/login') || location.pathname.startsWith('/setup') || location.pathname.startsWith('/invite')) void loadAuth();
   else void loadMail();
 }
 
@@ -45,7 +46,7 @@ function UnauthorizedRedirect() {
   useEffect(() => {
     setUnauthorizedHandler(() => {
       const here = location.pathname + location.search;
-      if (location.pathname.startsWith('/login') || location.pathname.startsWith('/setup')) return;
+      if (location.pathname.startsWith('/login') || location.pathname.startsWith('/setup') || location.pathname.startsWith('/invite')) return;
       queryClient.clear();
       void navigate(`/login?next=${encodeURIComponent(here)}`, { replace: true });
     });
@@ -63,6 +64,7 @@ export function AppRoutes() {
       <Routes>
         <Route path="/setup" element={<Lazy><SetupPage /></Lazy>} />
         <Route path="/login" element={<Lazy><LoginPage /></Lazy>} />
+        <Route path="/invite" element={<Lazy><InvitePage /></Lazy>} />
         <Route path="/" element={<AppShell />}>
           <Route index element={<HomeRedirect />} />
           <Route path="mail" element={<HomeRedirect />} />

@@ -276,7 +276,61 @@ export interface PushPayload {
 export interface AdminUser extends User {
   disabled: boolean;
   mailboxCount: number;
+  /** Set while the user has not accepted their invite yet (they cannot sign in until they do). */
+  invite: InviteStatus | null;
 }
+
+export interface InviteStatus {
+  sentAt: Millis | null;        // last time the invite email went out (null: never emailed, link only)
+  expiresAt: Millis;            // expired invites stay listed so the admin can resend them
+}
+
+// ---------- invites ----------
+
+/**
+ * POST /api/admin/users/invite: creates the user (no usable password) plus an optional mailbox, and emails
+ * a one-time link to their sign-in email. The link is also returned so the admin can share it by hand.
+ */
+export interface AdminInviteInput {
+  name: string;
+  email: string;                // sign-in email: must be an address the person can already read
+  role: Role;
+  mailbox?: { localPart: string; domainId: ID };
+  /** false = create the link only, don't email it. Default true. */
+  send?: boolean;
+}
+
+/** Why the invite email did not go out (the user and link still exist). */
+export type InviteEmailSkip =
+  | 'NOT_REQUESTED'             // send: false
+  | 'HOSTED_HERE'               // the sign-in email is on a domain this Cirrus hosts, so they can't read it yet
+  | 'NO_SENDING_DOMAIN'         // no domain has been added yet, so there is nothing to send from
+  | 'SEND_FAILED';              // Email Sending rejected it (see `error`)
+
+export interface AdminInviteResponse {
+  user: AdminUser;
+  inviteUrl: string;            // https://<host>/invite#<token>, valid until user.invite.expiresAt
+  email: { sent: true; from: string } | { sent: false; reason: InviteEmailSkip; error?: string };
+}
+
+/** POST /api/admin/users/:id/invite (resend) takes `{ send?: boolean }`, issues a new link (the old one stops working) and returns AdminInviteResponse. */
+export interface AdminResendInviteInput { send?: boolean }
+
+/** POST /api/invites/lookup (public): what the accept page shows. The token travels in the body, never in a URL. */
+export interface InviteLookupInput { token: string }
+export interface InviteLookupResponse {
+  email: string;
+  name: string;
+  inviterName: string | null;
+  mailboxAddress: string | null; // first mailbox the user belongs to, if any
+  expiresAt: Millis;
+}
+
+/** POST /api/invites/accept (public): sets the password, consumes the invite and signs the user in. */
+export interface InviteAcceptInput { token: string; name: string; password: string }
+// response: AuthResponse
+
+export const INVITE_TTL_MS = 7 * 24 * 3600 * 1000;
 
 export interface AdminCreateUserInput {
   name: string;
