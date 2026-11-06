@@ -1,6 +1,7 @@
 import { NavLink, useNavigate } from 'react-router';
 import { ChevronsUpDown, Command, Keyboard, LogOut, MoreHorizontal, PenLine, Settings, ShieldCheck } from 'lucide-react';
 import type { Folder, MailboxSummary } from '@shared/api';
+import { AppSwitcher } from '../../components/AppSwitcher';
 import { IconButton, tipText } from '../../components/Button';
 import { Kbd } from '../../components/Kbd';
 import { LogoMark } from '../../components/Logo';
@@ -29,6 +30,7 @@ export function Rail({ mailbox, folders, onNavigate }: Props) {
       <div className="flex h-12 shrink-0 items-center gap-1 px-2 pointer-coarse:h-14">
         <MailboxSwitcher current={mailbox} onNavigate={onNavigate} />
       </div>
+      <AppSwitcher onNavigate={onNavigate} />
       <div className="flex gap-1.5 px-2 pb-3">
         <button
           type="button"

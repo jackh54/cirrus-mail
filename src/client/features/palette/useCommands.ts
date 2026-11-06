@@ -1,7 +1,7 @@
 import { createElement, useMemo, type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 import {
-  AlarmClock, AtSign, BellOff, MailMinus, Globe, Inbox, Keyboard, LayoutDashboard, Mail, Moon, Palette, PenLine, Search, Shield, Sparkles, Sun, Tag, User, Users,
+  AlarmClock, AtSign, BellOff, BookUser, CalendarDays, CalendarPlus, UserPlus, MailMinus, Globe, Inbox, Keyboard, LayoutDashboard, Mail, Moon, Palette, PenLine, Search, Shield, Sparkles, Sun, Tag, User, Users,
   type LucideIcon,
 } from 'lucide-react';
 import { useLabels } from '../../lib/queries/labels';
@@ -68,6 +68,12 @@ export function useCommands(query: string): Command[] {
         { id: 'mute', group: 'Actions', label: 'Mute or unmute conversation', icon: icon(BellOff), shortcut: 'M', keywords: ['silence', 'ignore', 'notifications'], run: () => window.dispatchEvent(new Event(MUTE_EVENT)) },
       );
     }
+    out.push(
+      { id: 'go-calendar', group: 'Go to', label: 'Go to Calendar', icon: icon(CalendarDays), keywords: ['events', 'schedule', 'agenda'], run: () => navigate('/calendar') },
+      { id: 'new-event', group: 'Actions', label: 'New event', icon: icon(CalendarPlus), keywords: ['calendar', 'meeting', 'appointment', 'schedule'], run: () => navigate('/calendar?new=1') },
+      { id: 'go-contacts', group: 'Go to', label: 'Go to Contacts', icon: icon(BookUser), keywords: ['address book', 'people'], run: () => navigate('/contacts') },
+      { id: 'new-contact', group: 'Actions', label: 'New contact', icon: icon(UserPlus), keywords: ['address book', 'person', 'add'], run: () => navigate('/contacts/new') },
+    );
     const dark = document.documentElement.classList.contains('dark');
     out.push(
       { id: 'theme', group: 'Actions', label: 'Toggle theme', icon: icon(dark ? Sun : Moon), keywords: ['dark mode', 'light mode', 'appearance'], run: () => updatePrefs({ theme: dark ? 'light' : 'dark' }) },

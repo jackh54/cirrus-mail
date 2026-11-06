@@ -5,6 +5,7 @@ import { Button } from '../../components/Button';
 import { cn } from '../../lib/cn';
 import { displayName, longDate, smartTime } from '../../lib/format';
 import { Attachments } from './Attachments';
+import { InviteCard } from './InviteCard';
 import { MessageHeader } from './MessageHeader';
 import { TextBody } from './TextBody';
 
@@ -71,6 +72,8 @@ export function MessageCard(props: Props) {
       {m.spamScore >= 5 && m.direction === 'in' && (
         <Banner icon={<AlertTriangle size={15} strokeWidth={1.75} />} tone="warning" text="This message looks like spam. Be careful with links and attachments." />
       )}
+
+      <InviteCard message={m} mailboxId={header.mailboxId} myEmails={header.myEmails} />
 
       <div className="mt-4">
         {m.html ? (

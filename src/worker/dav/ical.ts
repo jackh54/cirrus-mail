@@ -1,5 +1,5 @@
 // iCalendar (RFC 5545) analysis for storage and calendar-query, plus the structured event view used by the JSON API.
-import type { EventInput } from '../../shared/api';
+import type { Address, EventInput } from '../../shared/api';
 import { escapeText, oneLine, parseLines, serialize, unescapeText, type Line } from './lines';
 
 export class IcsError extends Error {}
@@ -224,6 +224,26 @@ export function eventFields(text: string): EventFields & { recurring: boolean } 
     description: txt('DESCRIPTION'),
     rrule: prop(lines, m, 'RRULE')?.value ?? null,
     recurring: !!(prop(lines, m, 'RRULE') || prop(lines, m, 'RDATE')),
+  };
+}
+
+const mailto = (v: string) => v.trim().replace(/^mailto:/i, '').toLowerCase();
+
+/** What the mail reader shows for an invitation: the iTIP method, the master event and who is involved. */
+export function inviteFields(text: string): { method: string | null; uid: string; event: EventFields; organizer: Address | null; attendees: string[]; sequence: number } {
+  const lines = parseLines(text);
+  const comps = scan(lines);
+  const m = masterOf(lines, comps);
+  const event = eventFields(text);
+  const org = prop(lines, m, 'ORGANIZER');
+  const organizer = org && mailto(org.value).includes('@') ? { email: mailto(org.value), ...(org.params.CN ? { name: org.params.CN } : {}) } : null;
+  return {
+    method: lines.find((l) => l.name === 'METHOD')?.value.trim().toUpperCase() ?? null,
+    uid: prop(lines, m, 'UID')?.value.trim() ?? '',
+    event: { summary: event.summary, start: event.start, end: event.end, allDay: event.allDay, location: event.location, description: event.description, rrule: event.rrule },
+    organizer,
+    attendees: props(lines, m, 'ATTENDEE').map((l) => mailto(l.value)).filter((e) => e.includes('@')).slice(0, 100),
+    sequence: Number(prop(lines, m, 'SEQUENCE')?.value) || 0,
   };
 }
 

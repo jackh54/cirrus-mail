@@ -15,6 +15,8 @@ const MailPage = lazy(() => loadMail().then((m) => ({ default: m.MailPage })));
 const LoginPage = lazy(() => loadAuth().then((m) => ({ default: m.LoginPage })));
 const SetupPage = lazy(() => loadAuth().then((m) => ({ default: m.SetupPage })));
 const InvitePage = lazy(() => loadAuth().then((m) => ({ default: m.InvitePage })));
+const ContactsPage = lazy(() => import('./features/contacts/ContactsPage').then((m) => ({ default: m.ContactsPage })));
+const CalendarPage = lazy(() => import('./features/calendar/CalendarPage').then((m) => ({ default: m.CalendarPage })));
 const SettingsRoutes = lazy(() => import('./features/settings/SettingsRoutes'));
 const AdminRoutes = lazy(() => import('./features/admin/AdminRoutes'));
 
@@ -70,6 +72,8 @@ export function AppRoutes() {
           <Route path="mail" element={<HomeRedirect />} />
           <Route path="mail/:mailboxId" element={<Navigate to="inbox" replace />} />
           <Route path="mail/:mailboxId/:folder/:threadId?" element={<Lazy><MailPage /></Lazy>} />
+          <Route path="contacts/:contactId?" element={<Lazy><ContactsPage /></Lazy>} />
+          <Route path="calendar" element={<Lazy><CalendarPage /></Lazy>} />
           <Route path="settings/*" element={<Lazy><SettingsRoutes /></Lazy>} />
           <Route path="admin/*" element={<Lazy><AdminRoutes /></Lazy>} />
           <Route path="*" element={<NotFound />} />
