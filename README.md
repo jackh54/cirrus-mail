@@ -43,8 +43,11 @@
 **Mail**
 - Full mailboxes on your own domains, with conversation threading
 - Inbox, Sent, Drafts, Archive, Spam, Trash and Scheduled, plus your own folders
+- Labels: colour-coded tags, so one conversation can sit under several
+- Snooze and mute conversations, and unsubscribe from newsletters in one click
+- Optional inbox tabs and conversation summaries with Workers AI (off by default)
 - Attachments up to 25 MiB per message, with inline images
-- New-mail polling, an unread count in the tab title, and browser notifications
+- New-mail polling, an unread count in the tab title, browser notifications and Web Push
 - Installable PWA that works on phones, with light, dark and system themes
 
 **Compose**
@@ -53,21 +56,33 @@
 - Send from your mailbox address or any of its aliases
 - Drafts autosave as you type
 - Send later, and undo send
+- Reply templates
+- Optional end-to-end PGP: encrypt, sign and verify in the browser
 - Keyboard shortcuts for everything (`c`, `/`, `j`/`k`, `e`, `r`, `a`, `f`, `?`)
 
 **Search & organise**
 - Full-text search (D1 FTS5) with `from:`, `to:`, `subject:`, `has:attachment`, `is:unread` and `is:starred`
-- Filters that move, mark read, star, delete or forward
+- Filters that move, mark read, star, label, delete or forward
+- Search by label with `label:name`
 - Per-mailbox blocked senders
 - Built-in spam scoring based on SPF, DKIM and DMARC results
 - Vacation auto-reply with loop protection
 
 **Security & privacy**
 - PBKDF2 password hashing and optional TOTP 2FA with recovery codes
+- Passkeys for passwordless sign-in, or as a second factor
+- App passwords for sync clients, so your account password never leaves the web app
 - HTML mail sanitized and rendered in a sandboxed frame with no scripts
 - Remote images blocked by default, and proxied when you allow them
 - Signed, short-lived attachment URLs
 - No invocation logs, and message content is never logged
+
+**Calendar, contacts and apps**
+- Calendar and Contacts pages in the web app, with invite cards in the reader (accept, maybe or decline)
+- CalDAV and CardDAV sync for Apple and Android devices, with a downloadable Apple `.mobileconfig`
+- A JMAP server, so JMAP-capable mail apps can connect to your mailboxes
+- mbox import (for example from Gmail through Google Takeout) and mbox export
+- A native iOS app is in development
 
 **Admin**
 - Users, domains, mailboxes, aliases and catch-all addresses
@@ -75,6 +90,7 @@
 - Shared mailboxes with several members
 - A DNS health check for MX, SPF and DMARC
 - Instance stats: storage, and mail sent and received
+- An AI switch and daily budget for the optional Workers AI features
 
 **Self-hosting**
 - One Worker, one D1 database, one R2 bucket
@@ -111,7 +127,7 @@ Prices change, so check Cloudflare's pricing page before you rely on these numbe
 - **25 MiB** per message, attachments included
 - A **daily send quota** that starts conservative and grows over time
 - **Email Sending is in beta**, so expect changes
-- No IMAP or JMAP yet; it's web and PWA only for now ([roadmap](#roadmap))
+- No IMAP, because Workers can't accept inbound TCP connections. Mail apps connect over JMAP instead ([roadmap](#roadmap))
 
 > [!IMPORTANT]
 > **Acceptable use.** Cloudflare documents Email Sending as being for **transactional email**. Its documentation doesn't explicitly address person-to-person mail sent from your own mailbox, which is what Cirrus does. Cirrus has no bulk, mailing-list or marketing features, and never will. Review Cloudflare's terms for your use before you rely on it.
@@ -147,17 +163,13 @@ Found a vulnerability? Please report it privately; see [SECURITY.md](SECURITY.md
 
 ## Roadmap
 
-Not in v0.1, but planned or under consideration:
+Still open:
 
-- IMAP / JMAP access for desktop and mobile mail apps
-- Web Push notifications
-- Labels as a separate concept from folders
-- Calendar and contacts sync
-- PGP
-- Passkeys
-- Native mobile apps
-- Optional AI triage add-on (Workers AI)
-- mbox import
+- **Native mobile apps.** An iOS app is in development.
+- **IMAP.** Cloudflare Workers can't accept inbound TCP connections, so Cirrus can't run an IMAP server. Mail apps connect over JMAP instead. An optional IMAP bridge that you run somewhere else may come later.
+- **PGP extras:** publishing your own key over WKD, key expiry and subkey management, and changing a key's passphrase.
+- **Calendar scheduling:** free/busy, calendar sharing and iTIP over CalDAV.
+- **More JMAP:** push subscriptions, delayed sending and mailbox hierarchy.
 
 ## Contributing
 

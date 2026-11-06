@@ -12,6 +12,7 @@ This guide takes you from nothing to a working mailbox on your own domain. It ta
 - [8. Route all mail to the Worker (catch-all)](#8-route-all-mail-to-the-worker-catch-all)
 - [9. Verify DNS](#9-verify-dns)
 - [10. Send a test email both ways](#10-send-a-test-email-both-ways)
+- [Optional features](#optional-features): AI triage, app passwords and sync, JMAP, Gmail import, PGP, passkeys
 - [Upgrading](#upgrading) · [Backups](#backups) · [Troubleshooting](#troubleshooting)
 
 ---
@@ -187,6 +188,72 @@ Anything red comes with a hint. DNS changes can take a few minutes to show up.
 2. **Outbound:** reply from Cirrus. Check it arrives, and open the message source on the receiving side. You want `spf=pass`, `dkim=pass` and `dmarc=pass` in `Authentication-Results`.
 
 You're done. Install the web app from your browser's menu if you want it on your phone's home screen.
+
+---
+
+## Optional features
+
+### Turn on AI triage (admin)
+
+AI triage is off by default. It adds inbox tabs (Primary, Updates, Promotions, Social, Forums) and a Summarise button.
+
+1. Go to **Admin → Overview → AI** and switch it on. The switch is available once the Worker has its Workers AI binding.
+2. Set the daily budget (default 500 model calls a day).
+3. Each user can hide the tabs in **Settings → Appearance → Inbox tabs**.
+
+When it's on, the start of new inbox mail (about 1,500 characters, plus From and Subject) and any conversation someone summarises goes to Workers AI on your own Cloudflare account, and Cloudflare bills per use. Free header and sender rules run first, so the model runs only when those are unsure. If AI fails or the budget runs out, mail is still delivered.
+
+### Create an app password and sync calendars and contacts
+
+Sync apps never use your account password. They use an app password.
+
+1. Go to **Settings → Security → App passwords** and create one. Enter your account password when asked. The password is shown once, so copy it now.
+2. In **Settings → Security → Sync contacts & calendars**, find the server URL and your username (your login email).
+3. **iPhone, iPad or Mac:** download the `.mobileconfig` profile from the same section and open it. It sets up CardDAV and CalDAV but contains no password, so your device asks for the app password when it installs.
+4. **Android:** use any CardDAV/CalDAV sync app. Add an account with the server URL, your login email and the app password.
+5. Other CalDAV and CardDAV clients work with the same URL, email and app password. `/.well-known/caldav` and `/.well-known/carddav` point at `/dav/`.
+
+Changing your account password revokes all your app passwords by default, so create new ones afterwards. You can revoke any app password in the same list.
+
+### Connect a JMAP client
+
+IMAP isn't possible on Cloudflare Workers, so mail apps connect over JMAP.
+
+1. Create an app password as above.
+2. In a JMAP-capable client, set the server to `https://mail.example.com` (the session URL is `/.well-known/jmap`). Sign in with your login email and the app password, or use the app password as a bearer token.
+3. Each mailbox you belong to shows up as an account. Folders and labels both appear as mailboxes.
+
+Browser-based JMAP clients need their origin allowed first: an admin sets the `jmap_cors_origins` setting to a comma-separated list of exact origins. Native apps don't need this. JMAP hasn't been tested with a real client yet, so expect rough edges.
+
+### Import from Gmail with Google Takeout
+
+1. At takeout.google.com, export only **Mail**, choose the `.mbox` format, and download the archive. Unzip it to get the `.mbox` file.
+2. In Cirrus, open **Settings → Mailbox → Import mail** and choose the file. Pick a fallback folder (the default is Archive) and whether to mark everything read.
+3. The file uploads in parts. If your connection drops, reload and choose the same file again to resume.
+4. Import then runs in the background and can take many minutes for a large archive. Progress shows on the same screen.
+
+Gmail labels become Cirrus labels. Trash, Spam and Sent go to their folders, starred mail keeps its star, and drafts are skipped. Importing again is safe, because duplicates are skipped. Apple Mail and Thunderbird mbox files import too, into the fallback folder. **Export mail** in the same section downloads a mailbox, folder or label as `.mbox` (5 exports per user per hour).
+
+### Set up a PGP key
+
+PGP runs in your browser. The server never sees your passphrase or an unencrypted private key.
+
+1. Open **Settings → Security → Encryption (PGP)**, then generate a key or import one, and choose a PGP passphrase. It's separate from your login password, and nobody can recover it for you.
+2. Unlock the key when you want to read encrypted mail. **Lock now**, a reload or signing out locks it again.
+3. Add other people's public keys to your keyring by importing them. Cirrus also picks up keys from trustworthy Autocrypt headers on incoming mail, and can look up a key by address. If a key changes, Cirrus asks you to accept it and never swaps it silently.
+4. In compose, turn on Encrypt or Sign. Encrypted mail is plain text only, and attachments are blocked while either is on.
+
+Drafts are saved in plain text on the server while you write, and are replaced by the encrypted version when you send. Encrypted mail isn't searchable.
+
+**WKD:** Cirrus can look up other people's keys through Web Key Directory, but it can't publish your key for you. To let others find your key by your address, host your public key yourself at `https://openpgpkey.example.com/.well-known/openpgpkey/example.com/hu/<hash>` or `https://example.com/.well-known/openpgpkey/hu/<hash>`, where `<hash>` comes from your address with `gpg --list-keys --with-wkd-hash`.
+
+### Add a passkey
+
+1. Go to **Settings → Security → Passkeys** and choose **Add**. Enter your password when asked.
+2. Follow your browser or device prompt, and give the passkey a name.
+3. On the sign-in page, choose **Sign in with a passkey**. If you also use 2FA, you can choose **Use a passkey instead** of typing the code.
+
+The section is hidden when your browser doesn't support passkeys. Passkeys are tied to the domain you serve Cirrus from, so changing the domain means you sign in with your password again. You can have up to 20.
 
 ---
 

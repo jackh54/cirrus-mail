@@ -1,6 +1,6 @@
 # Cirrus Mail: design
 
-Status: v0.1 design, 2026-11-05. This is the contract for the initial build. The API section is binding for both the Worker and the client.
+Status: v0.1 design (2026-11-05), updated 2026-11-06 for labels, passkeys, PGP, app passwords with CardDAV/CalDAV, calendar and contacts pages, mbox import, JMAP, optional AI triage, and snooze, mute, unsubscribe and templates (§8). The API section is binding for both the Worker and the client.
 
 ## 1. What it is
 
@@ -116,6 +116,8 @@ The schema in `migrations/0001_init.sql` is authoritative. In summary:
 - `contacts` (per user, auto-collected), `filters`, `blocked_senders`, `autoreply_log`
 - `rate_limits`, `settings` (instance key/value)
 
+Later migrations add the tables described in §8: labels (`0009`), passkeys (`0010`), inline bodies (`0011`), snooze, mute and templates (`0013`), PGP (`0014`), DAV (`0015`), mbox (`0016`) and JMAP (`0017`).
+
 IDs are text ULIDs; `src/shared/ulid.ts` is the only generator. Timestamps are integer epoch milliseconds.
 
 ## 5. HTTP API (binding contract)
@@ -166,6 +168,32 @@ IDs are text ULIDs; `src/shared/ulid.ts` is the only generator. Timestamps are i
 | GET | `/api/files/:aid?e=&s=` | signed attachment download (`?inline=1` for images) |
 | POST | `/api/proxy/sign` | `{ urls: string[] }` (≤ 200, http/https only) → `{ signed: Record<url, proxyUrl> }` (session required) |
 | GET | `/api/proxy/image?u=&s=` | signed remote-image proxy |
+
+### Added since v0.1 (details in §8)
+| Method | Path | Notes |
+|---|---|---|
+| GET/POST/PATCH/DELETE | `/api/mailboxes/:mb/labels[/:id]` | label CRUD; `GET` includes unread counts |
+| POST | `/api/mailboxes/:mb/threads/labels` | `{ threadIds, add?, remove? }` |
+| GET | `/api/mailboxes/:mb/threads?label=<id>` | threads with a label |
+| POST | `/api/auth/passkey/options` · `/login` | passwordless sign-in |
+| GET/POST/PATCH/DELETE | `/api/me/passkeys[/:id]` | manage passkeys (password required to add or delete) |
+| GET/POST/DELETE | `/api/app-passwords[/:id]` | app passwords for DAV and JMAP |
+| GET/PUT/DELETE | `/api/pgp/key` | own PGP key (private key encrypted in the browser) |
+| GET/POST/DELETE | `/api/pgp/keyring[/:id]` | contacts' public keys; `/wkd`, `/:id/accept` and `/:id/pending` |
+| `snooze`, `unsnooze`, `mute`, `unmute` | `/api/mailboxes/:mb/threads/actions` | new actions; `GET /threads?folder=snoozed` |
+| POST | `/api/mailboxes/:mb/messages/:id/unsubscribe` | `{ blockSender? }` |
+| GET/POST/PATCH/DELETE | `/api/mailboxes/:mb/templates[/:id]` | reply templates |
+| GET/POST/DELETE | `/api/mailboxes/:mb/import[/:id]` | mbox import; `PUT .../parts/:n`, `POST .../complete` |
+| GET | `/api/mailboxes/:mb/export?scope=&id=` | streamed `.mbox` download |
+| GET/POST/PATCH | `/api/dav/collections[/:id]` | calendars and address books |
+| GET/POST/PUT/DELETE | `/api/dav/contacts[/:id]` · `/api/dav/events[/:id]` | JSON view of DAV data |
+| POST | `/api/dav/invite/parse` · `/accept` | invitation cards |
+| GET | `/api/ai/status` | `{ enabled }` |
+| GET/PATCH | `/api/admin/ai` | admin: switch and daily budget |
+| PUT, GET/POST | `/api/mailboxes/:mb/threads/:tid/category` · `.../summary` | set a tab; read or create a summary |
+| GET | `/api/mailboxes/:mb/categories` | unread conversations per tab |
+
+Outside `/api` (no session cookie, no CSRF header, app-password auth only): `/dav/*`, `/.well-known/caldav`, `/.well-known/carddav`, `/jmap/*` and `/.well-known/jmap`.
 
 ### Admin (`role=admin`)
 | Method | Path |
@@ -237,6 +265,75 @@ Cirrus is a tool people live in all day, so it should feel calm, fast and precis
 - **Speed is a feature:** opening a thread must feel instant. Prefetch on hover and j/k, render from cache first, update optimistically, and keep first-load JS small.
 - **Assets:** `brand/` holds the logo SVGs, favicon, PWA icons, social card and README banner. `site/` is the landing page. `docs/` holds the setup guide and architecture diagram.
 
-## 8. Out of scope for v0.1 (roadmap)
+## 8. Subsystems added after v0.1
 
-IMAP/JMAP access, labels as a separate concept from folders, calendar/contacts sync, PGP, passkeys, native mobile apps (the PWA has Web Push), an AI triage add-on (Workers AI) and mbox import.
+Each has a technical note in `docs/notes/`. This section summarises schema, routes and security decisions.
+
+### 8.1 Labels
+- **Schema:** `labels` (unique per mailbox, case-insensitive; `color` from a fixed palette checked by the API) and `message_labels`. Both cascade on delete.
+- **Behaviour:** labels sit on messages. Applying one to a thread labels its current messages, and later arrivals don't inherit it unless a filter says so. Search supports `label:name`, and the filter action `apply_label` is checked against the mailbox.
+- **Security:** every route is mailbox-scoped (non-members get 404), and writes also filter by `mailbox_id` on the label side. Limits: 100 labels per mailbox, 500 threads per request.
+
+### 8.2 Passkeys
+- **Schema:** `passkeys` (public key, sign count, per user, cascade) and `webauthn_challenges` (single-use, 5-minute TTL).
+- **Use:** passwordless sign-in with discoverable credentials, or a second factor in place of the TOTP code.
+- **Security:** verification is written on WebCrypto with no npm dependency (ES256, RS256, Ed25519; attestation `none`). The origin comes from the request URL, never a header. Passwordless sign-in requires user verification. Sign counts must increase when either side is non-zero. Adding or deleting a passkey needs the account password. The RP ID is the hostname, so a domain change invalidates passkeys. At most 20 per user.
+
+### 8.3 Inline bodies
+- `messages.body_inline` holds the `{html,text}` JSON for bodies up to 64 KB, so opening a message needs no R2 read. R2 is still written for every body and stays the source of truth. List queries never select the column. A cron backfill (200 rows a minute) fills old rows.
+
+### 8.4 Optional AI triage
+- **Off by default.** An admin turns it on under Admin > Overview > AI. It needs the `AI` (Workers AI) binding.
+- **Schema:** `sender_categories`, `thread_summaries`, `ai_usage`, plus `users.category_tabs` and the `ai_daily_budget` setting.
+- **Behaviour:** inbox tabs (Primary, Updates, Promotions, Social, Forums) and a Summarise button. Classification tries a remembered sender override, then free header rules, and calls the model only when both are unsure. A daily budget (default 500 calls) caps use.
+- **Privacy:** when on, up to about 1,500 characters of new inbox mail plus From and Subject, and the text of conversations someone chooses to summarise, go to Workers AI in the same account. Content is never logged. If the binding is missing, the model errors or the budget is spent, delivery carries on without AI.
+
+### 8.5 Snooze, mute, unsubscribe and templates
+- **Schema:** `threads.snoozed_until`, `threads.muted`, `messages.unsub_json`, `reply_templates`.
+- **Snooze:** hides a thread from the Inbox until a time at most 366 days away. The minute cron wakes due threads (100 per tick), marks the latest inbound message unread and sends a push. Each wake is claimed with a guarded update, so overlapping runs can't wake a thread twice.
+- **Mute:** new mail for a muted thread goes to Archive, read, with no push.
+- **One-click unsubscribe:** the unsubscribe target is stored only for mail with aligned authentication, and only for https URLs on public-looking hosts or mailto addresses. The request body never carries a URL. The server POSTs (https, no redirects, 5 s timeout), or sends a mailto email, or tells the browser to open the link. 30 requests per user per hour.
+- **Templates:** per mailbox, up to 100, cleaned on the way in with `HTMLRewriter` (scripts, forms, event handlers and resource-loading styles stripped).
+
+### 8.6 PGP
+- **Schema:** `pgp_keys` (one per user), `pgp_keyring` (per user, with `pending_*` columns for changed keys) and `messages.pgp_mode`.
+- **Security:** all crypto runs in the browser with `openpgp` v6, loaded on demand. The server stores only the public key and a private key already encrypted with a PGP passphrase that is separate from the login password. The unlocked key lives in one JS variable and is dropped on lock, reload or sign-out.
+- **Keys:** a changed key from Autocrypt or WKD never replaces the stored one silently. It waits as pending until the user accepts it. Autocrypt headers are stored only from non-spam mail with an aligned DMARC pass whose `addr` matches From. WKD lookups run on the server with strict URL rules: https only, same-host redirects, 5 s timeout, 64 KB cap, 30 per 10 minutes.
+- **Sending:** encrypted mail goes out as PGP/MIME through a raw `EmailMessage`, one envelope per recipient. Sign-only uses inline PGP. Attachments are blocked when Encrypt or Sign is on. Drafts stay plaintext on the server until Send.
+
+### 8.7 App passwords, CardDAV and CalDAV
+- **Schema:** app passwords, plus `dav_collections` (its `rev` is the CTag), `dav_changes` and the stored calendar and contact objects (migration `0015`).
+- **App passwords:** 24 random base32 characters, shown once, stored only as a SHA-256. Up to 25 per user. Creating one needs the account password. Changing the account password revokes them by default.
+- **Server (`/dav/`):** HTTP Basic with the login email and an app password; the account password and session cookie are never read. 30 failures per 15 minutes per IP return 429. Per-username failures are only counted, never blocking, so nobody can lock out a user's sync. The XML parser is strict and rejects DOCTYPE and entities. Writes honour `If-Match`/`If-None-Match` atomically. Limits: 50 collections per user, 10,000 objects per collection, 256 KB per object.
+- **Sync:** sync tokens are `urn:cirrus:sync:<collection>:<rev>`. Change rows are pruned after 30 days, and older tokens trigger a full resync.
+- **Not covered:** scheduling (iTIP), free/busy, ACL and sharing, VJOURNAL and `addressbook-query` filters.
+
+### 8.8 Calendar and Contacts pages, and invite cards
+- The web app has Calendar (month, week, day and agenda) and Contacts pages, reached from an app switcher. They use the `/api/dav/*` JSON routes over the same data that DAV syncs.
+- The reader shows an invite card for inbound `METHOD:REQUEST` mail. The server parses the `.ics`. Accept, Maybe and Decline send a reply through the normal draft path, and Accept adds the event.
+- The client expands common recurrence rules only. Unsupported rules show the first occurrence. Repeating events are edited as a series.
+
+### 8.9 mbox import and export
+- **Schema:** `mbox_imports` (one active import per mailbox) and a content-hash index on `messages` for deduping.
+- **Import:** the browser uploads in 16 MB parts to a multipart upload in R2 (up to 20 GB, resumable). The minute cron processes one import per tick within a 20 s or 500-message budget. Mail is stored like inbound mail but without filters, auto-reply, push or spam scoring. Dedupe is by Message-ID, then content hash. Gmail labels from `X-Gmail-Labels` become folders, stars and Cirrus labels, and Gmail drafts are skipped.
+- **Export:** a streamed mboxrd download of a mailbox, folder or label, limited to 5 per user per hour. Sent mail without a stored original is rebuilt, not byte-identical, and Bcc is not exported.
+- **Security:** mailbox-scoped; only the member who started an import can upload parts. Errors keep byte offsets and reason codes, never content.
+
+### 8.10 JMAP
+- **Why not IMAP:** Workers can't accept inbound TCP connections, so IMAP is impossible. JMAP runs over HTTPS and fits.
+- **Endpoints:** `/.well-known/jmap`, `/jmap/session`, `/jmap/api`, `/jmap/download/...`, `/jmap/upload/...` and `/jmap/eventsource/`. They sit outside `/api`.
+- **Auth:** Basic (email and app password) or `Bearer <app password>`, sharing the DAV failure counters. No CORS unless an admin lists origins in `settings.jmap_cors_origins`.
+- **Model:** one account per mailbox the user belongs to. Folders and labels both appear as JMAP mailboxes, and labels are marked with a vendor capability. Supported: Mailbox, Email, Thread, SearchSnippet, Identity, EmailSubmission and VacationResponse methods. Submission reuses the normal send path, so quotas and logs still apply.
+- **State:** triggers in migration `0017` keep per-mailbox state counters and tombstones current, so no write path knows about JMAP. A cron prunes tombstones after 30 days.
+- **Limits:** 16 calls per request, 500 objects per get or set, 10 MB requests, 50 MB uploads. `queryChanges` always answers `cannotCalculateChanges`.
+- **Not done:** Email/parse, Email/copy, Identity/set, push subscriptions and delayed sending. It hasn't been tried with a real client yet.
+
+## 9. Out of scope and open work
+
+- **IMAP:** impossible on Workers (no inbound TCP). Use JMAP. An optional bridge run elsewhere is possible later.
+- **Native mobile apps:** an iOS app is in development in a separate repository.
+- **PGP:** publishing your own key over WKD, Autocrypt prefer-encrypt, key expiry and subkeys, passphrase change, and searching encrypted mail.
+- **DAV and calendar:** scheduling (iTIP), free/busy, sharing, per-event exceptions in the web app.
+- **JMAP:** see §8.10.
+- **Snooze:** the Inbox unread badge still counts snoozed threads.
+- **Unverified in real use:** the Calendar, Contacts, labels, import and passkey UIs were checked by type and build, not in a live browser. mbox import hasn't run against a multi-GB Takeout on a deployed Worker, and JMAP hasn't met a real client.

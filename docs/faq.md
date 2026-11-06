@@ -9,6 +9,8 @@
 - [Can I use more than one domain?](#can-i-use-more-than-one-domain)
 - [Can several people share a mailbox?](#can-several-people-share-a-mailbox)
 - [Can I import my old mail?](#can-i-import-my-old-mail)
+- [Is there a native app?](#is-there-a-native-app)
+- [Does the AI feature send my mail anywhere?](#does-the-ai-feature-send-my-mail-anywhere)
 
 ## What does it cost?
 
@@ -41,7 +43,9 @@ What Cirrus does for privacy:
 - Remote images in mail are blocked by default. When you load them, they're fetched through your own Worker, so senders don't see your IP address or exactly when you opened the message.
 - HTML mail is sanitized and rendered in a sandboxed frame with no scripts.
 
-What it doesn't do: mail is not end-to-end encrypted. Like any email provider, your Cloudflare account processes and stores the messages, and Cloudflare's own terms and privacy policy apply. Anyone with admin access to that Cloudflare account can reach the data. Protect it with strong credentials and 2FA. PGP support is on the roadmap.
+What it doesn't do: mail is not end-to-end encrypted by default. Like any email provider, your Cloudflare account processes and stores the messages, and Cloudflare's own terms and privacy policy apply. Anyone with admin access to that Cloudflare account can reach the data. Protect it with strong credentials, 2FA or passkeys.
+
+PGP is available if you want end-to-end encryption. Encryption, signing and decryption happen in your browser, and the server stores only your public key and a private key that your PGP passphrase has already encrypted. Limits: drafts sit on the server as plain text until you press Send, attachments can't be encrypted or signed, encrypted mail is plain text only and can't be searched, and subject and recipients stay visible, as in any PGP mail. Cirrus can't publish your key over Web Key Directory yet.
 
 ## Is this allowed? (acceptable use)
 
@@ -55,9 +59,9 @@ Whether your use fits is between you and Cloudflare. Review Cloudflare's terms f
 
 ## Can I use IMAP, Apple Mail, Outlook or Thunderbird?
 
-Not yet. Cirrus v0.1 is web-only. The web app works well on phones, and you can install it to your home screen as a PWA.
+Not over IMAP, and that can't change inside Cirrus. IMAP needs a server that accepts inbound TCP connections, and Cloudflare Workers can't do that. Cirrus has a JMAP server instead, which runs over HTTPS. Mail apps that speak JMAP can connect with your login email and an app password (see the [setup guide](setup.md#connect-a-jmap-client)). JMAP hasn't been tested with a real client yet. Apps that only speak IMAP can't connect. Use the web app, which you can install to your home screen as a PWA, or a JMAP-capable app.
 
-IMAP and JMAP access are on the roadmap.
+Calendars and contacts do sync with Apple and Android devices over CalDAV and CardDAV, using app passwords. An optional IMAP bridge that you run somewhere else is on the roadmap.
 
 ## Does it use SMTP?
 
@@ -81,4 +85,12 @@ Aliases (for example `hello@` delivering into `you@`) are separate: they're extr
 
 ## Can I import my old mail?
 
-Not yet. mbox import is on the roadmap.
+Yes, from an mbox file. Export your Gmail with Google Takeout, or export from Apple Mail or Thunderbird, then use **Settings → Mailbox → Import mail**. Gmail labels, stars and read state carry over, and drafts are skipped. Importing the same file twice doesn't create duplicates. Large archives import slowly in the background. The [setup guide](setup.md#import-from-gmail-with-google-takeout) has the steps. You can also export a mailbox, folder or label back to mbox. There is no live sync from other providers.
+
+## Is there a native app?
+
+An iOS app is in development and isn't public yet. Until then, use the web app as a PWA, or connect a JMAP client.
+
+## Does the AI feature send my mail anywhere?
+
+AI triage is off by default, and only an admin can turn it on. When it's on, the text of new inbox mail (about the first 1,500 characters, plus From and Subject) and of any conversation someone chooses to summarise goes to Workers AI. That runs in the same Cloudflare account as the rest of Cirrus, so nothing goes to another service, and Cloudflare bills you per use. Cirrus never logs message content. Many messages are sorted by free header rules without calling the model. If the feature is off, no message text is sent to Workers AI.
