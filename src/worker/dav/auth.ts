@@ -6,7 +6,7 @@ import { hit } from '../lib/ratelimit';
 
 export const FAIL_WINDOW_MS = 15 * 60 * 1000;
 export const MAX_FAILS_PER_IP = 30;
-const LAST_USED_EVERY_MS = 60 * 60 * 1000;
+export const LAST_USED_EVERY_MS = 60 * 60 * 1000;
 
 /** App passwords are shown in groups; accept any case and ignore separators. */
 export function normalizeAppPassword(s: string): string {
@@ -33,7 +33,7 @@ function parseBasic(header: string | null): { user: string; pass: string } | nul
   }
 }
 
-async function overLimit(db: D1Database, keys: [string, number][], now: number): Promise<boolean> {
+export async function overLimit(db: D1Database, keys: [string, number][], now: number): Promise<boolean> {
   const { results } = await db.prepare(`SELECT key, count FROM rate_limits WHERE key IN (${keys.map(() => '?').join(',')}) AND window_end >= ?`)
     .bind(...keys.map(([k]) => k), now).all<{ key: string; count: number }>();
   return results.some((r) => r.count >= (keys.find(([k]) => k === r.key)?.[1] ?? Infinity));
