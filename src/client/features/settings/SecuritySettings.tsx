@@ -9,13 +9,15 @@ import { useToast } from '../../components/Toast';
 import { errorMessage } from '../../lib/api';
 import { relativeAgo } from '../../lib/format';
 import { useChangePassword, useRevokeSession, useSessions } from '../../lib/queries/me';
+import { PasskeySection } from './PasskeySection';
 import { TotpSection } from './TotpSection';
 
 export function SecuritySettings() {
   return (
     <>
-      <PageTitle title="Security" description="Password, two-factor authentication and signed-in devices." />
+      <PageTitle title="Security" description="Password, passkeys, two-factor authentication and signed-in devices." />
       <PasswordSection />
+      <PasskeySection />
       <TotpSection />
       <SessionsSection />
     </>

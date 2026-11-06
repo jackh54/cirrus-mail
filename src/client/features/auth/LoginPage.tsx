@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Navigate, useNavigate, useSearchParams } from 'react-router';
-import { ArrowLeft, KeyRound } from 'lucide-react';
+import { ArrowLeft, Fingerprint, KeyRound } from 'lucide-react';
 import { Button } from '../../components/Button';
 import { Field, Input } from '../../components/Field';
 import { FullScreenSpinner } from '../../components/Spinner';
 import { isApiError } from '../../lib/api';
 import { useLogin, useSetupStatus } from '../../lib/queries/me';
+import { requestPasskeyAssertion, usePasskeyLogin } from '../../lib/queries/passkeys';
+import { conditionalUiSupported, isPasskeyCancel, passkeysSupported } from '../../lib/webauthn';
 import { AuthLayout, FormError } from './AuthLayout';
 
 function safeNext(next: string | null): string {
@@ -23,6 +25,31 @@ export function LoginPage() {
   const [totp, setTotp] = useState('');
   const [error, setError] = useState<string | null>(null);
   const totpRef = useRef<HTMLInputElement>(null);
+  const autofill = usePasskeyLogin();
+  const passkey = usePasskeyLogin();
+  const autofillCtl = useRef<AbortController | null>(null);
+  const hasPasskeys = passkeysSupported();
+  const ready = !!setup.data && !setup.data.needsSetup;
+
+  const done = () => navigate(safeNext(params.get('next')), { replace: true });
+  const passkeyError = (err: unknown) => {
+    if (isPasskeyCancel(err)) return;
+    if (isApiError(err) && err.status === 429) setError('Too many attempts. Wait 15 minutes and try again.');
+    else if (isApiError(err) && err.code === 'ACCOUNT_DISABLED') setError(err.message);
+    else setError('Passkey sign-in failed. Try again, or use your password.');
+  };
+
+  // Conditional UI: the browser offers saved passkeys in the email field's autofill list.
+  useEffect(() => {
+    if (!ready || step !== 'password') return;
+    const ctl = new AbortController();
+    autofillCtl.current = ctl;
+    void conditionalUiSupported().then((ok) => {
+      if (ok && !ctl.signal.aborted) autofill.mutate({ conditional: true, signal: ctl.signal }, { onSuccess: done, onError: passkeyError });
+    });
+    return () => ctl.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, step]);
 
   useEffect(() => {
     if (step === 'totp') totpRef.current?.focus();
@@ -34,6 +61,7 @@ export function LoginPage() {
   const submit = (e: FormEvent) => {
     e.preventDefault();
     setError(null);
+    autofillCtl.current?.abort();
     login.mutate(
       { email: email.trim(), password, totp: step === 'totp' ? totp.replace(/\s/g, '') : undefined },
       {
@@ -54,6 +82,23 @@ export function LoginPage() {
     );
   };
 
+  const signInWithPasskey = () => {
+    setError(null);
+    autofillCtl.current?.abort();
+    passkey.mutate({}, { onSuccess: done, onError: passkeyError });
+  };
+
+  // A passkey can stand in for the authentication code once the password has been accepted.
+  const passkeyAsSecondFactor = async () => {
+    setError(null);
+    try {
+      const assertion = await requestPasskeyAssertion({ mfa: true });
+      login.mutate({ email: email.trim(), password, passkey: assertion }, { onSuccess: done, onError: passkeyError });
+    } catch (err) {
+      passkeyError(err);
+    }
+  };
+
   return (
     <AuthLayout
       title={step === 'password' ? 'Sign in to Cirrus' : 'Two-factor authentication'}
@@ -65,7 +110,7 @@ export function LoginPage() {
           <>
             <Field label="Email">
               {(id) => (
-                <Input id={id} type="email" autoComplete="username" required autoFocus value={email} onChange={(e) => setEmail(e.target.value)} />
+                <Input id={id} type="email" autoComplete="username webauthn" required autoFocus value={email} onChange={(e) => setEmail(e.target.value)} />
               )}
             </Field>
             <Field label="Password">
@@ -93,6 +138,11 @@ export function LoginPage() {
         <Button type="submit" variant="primary" size="lg" className="mt-1 w-full" loading={login.isPending} icon={step === 'totp' ? <KeyRound size={15} /> : undefined}>
           {step === 'password' ? 'Sign in' : 'Verify'}
         </Button>
+        {hasPasskeys && (
+          <Button type="button" variant="secondary" size="lg" className="w-full" loading={passkey.isPending} icon={<Fingerprint size={15} />} onClick={step === 'totp' ? passkeyAsSecondFactor : signInWithPasskey}>
+            {step === 'totp' ? 'Use a passkey instead' : 'Sign in with a passkey'}
+          </Button>
+        )}
         {step === 'totp' && (
           <button
             type="button"

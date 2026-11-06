@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { dummyVerify, sha256Hex, verifyPassword, verifyTotpStep } from '../lib/crypto';
 import { rowToUser, type UserRow } from '../lib/db';
 import { HttpError } from '../lib/errors';
+import { completeAssertion, loginFailed, PasskeyAssertionSchema, prepareAssertion, relyingParty } from '../lib/passkeys';
 import { clear, hit, unhit } from '../lib/ratelimit';
 import { jsonBody } from '../lib/validate';
 import { createSession, destroySession } from '../middleware/session';
@@ -19,6 +20,7 @@ const LoginSchema = z.object({
   email: z.string().trim().toLowerCase().min(1).max(254),
   password: z.string().min(1).max(256),
   totp: z.string().trim().max(32).optional(),
+  passkey: PasskeyAssertionSchema.optional(),
 });
 
 export function normalizeRecoveryCode(code: string): string {
@@ -63,7 +65,16 @@ auth.post('/login', async (c) => {
   if (!(await verifyPassword(body.password, user.password_hash))) {
     throw new HttpError(401, 'INVALID_CREDENTIALS', 'Email or password is incorrect');
   }
-  if (user.totp_secret) {
+  if (user.totp_secret && body.passkey) {
+    // A passkey stands in for the TOTP code. Its attempts share the TOTP failure budget.
+    const totpKey = `totp:${user.id}`;
+    if ((await hit(db, totpKey, LOGIN_WINDOW_MS, now)) > TOTP_MAX_FAILURES) throw tooMany();
+    const rp = relyingParty(c.req.url);
+    const prepared = await prepareAssertion(db, body.passkey, rp, now);
+    if (prepared.pk.user_id !== user.id) throw loginFailed();
+    await completeAssertion(db, prepared, rp, false, now);
+    await clear(db, totpKey);
+  } else if (user.totp_secret) {
     if (!body.totp) {
       // The password was right: this attempt is not a guess, so give the hits back.
       await Promise.all([unhit(db, ipKey), unhit(db, emailKey)]);

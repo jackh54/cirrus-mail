@@ -79,7 +79,7 @@ export function useCommands(query: string): Command[] {
     }
     const settings: [string, string, LucideIcon][] = [['profile', 'Profile', User], ['security', 'Security', Shield], ['mailbox', 'Mailbox', Inbox], ['appearance', 'Appearance', Palette]];
     for (const [path, label, I] of settings) {
-      out.push({ id: `set-${path}`, group: 'Settings', label: `${label} settings`, icon: icon(I), keywords: ['settings', 'preferences', label], run: () => navigate(`/settings/${path}`) });
+      out.push({ id: `set-${path}`, group: 'Settings', label: `${label} settings`, icon: icon(I), keywords: ['settings', 'preferences', label, ...(path === 'security' ? ['passkey', 'password', '2fa'] : [])], run: () => navigate(`/settings/${path}`) });
     }
     if (user.role === 'admin') {
       const admin: [string, string, LucideIcon][] = [['', 'Overview', LayoutDashboard], ['users', 'Users', Users], ['domains', 'Domains', Globe], ['mailboxes', 'Mailboxes', Inbox], ['aliases', 'Aliases', AtSign]];
