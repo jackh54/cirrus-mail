@@ -1,7 +1,6 @@
-import { useState, type ReactNode } from 'react';
-import { Bell, BellOff, Monitor, Moon, Rows3, Rows4, Sun } from 'lucide-react';
+import type { ReactNode } from 'react';
+import { Monitor, Moon, Rows3, Rows4, Sun } from 'lucide-react';
 import type { Density, Theme } from '@shared/api';
-import { Button } from '../../components/Button';
 import { PageTitle, Section } from '../../components/PageShell';
 import { useToast } from '../../components/Toast';
 import { cn } from '../../lib/cn';
@@ -50,31 +49,6 @@ export function AppearanceSettings() {
           <Choice name="density" value="compact" current={user.density} onChange={setDensity} icon={<Rows4 size={20} />} label="Compact" />
         </fieldset>
       </Section>
-      <NotificationsSection />
     </>
-  );
-}
-
-function NotificationsSection() {
-  const supported = typeof Notification !== 'undefined';
-  const [permission, setPermission] = useState<NotificationPermission | 'unsupported'>(supported ? Notification.permission : 'unsupported');
-  const ask = async () => {
-    const p = await Notification.requestPermission();
-    setPermission(p);
-    if (p === 'granted') new Notification('Notifications are on', { body: 'Cirrus Mail will tell you about new mail while this tab is open.', icon: '/icons/icon-192.png' });
-  };
-  return (
-    <Section title="Desktop notifications" description="Get a notification for new mail while Cirrus Mail is open in a tab but not in focus.">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="flex items-center gap-2 text-[13px]">
-          {permission === 'granted' ? <Bell size={16} className="text-success" /> : <BellOff size={16} className="text-faint" />}
-          {permission === 'granted' && 'Notifications are on for this browser.'}
-          {permission === 'denied' && 'Blocked. Allow notifications for this site in your browser settings.'}
-          {permission === 'default' && 'Not enabled yet.'}
-          {permission === 'unsupported' && 'This browser does not support notifications.'}
-        </p>
-        {permission === 'default' && <Button variant="primary" onClick={() => void ask()}>Enable notifications</Button>}
-      </div>
-    </Section>
   );
 }

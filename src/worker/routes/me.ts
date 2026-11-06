@@ -79,13 +79,15 @@ const UpdateMeSchema = z.object({
   name: zName.optional(),
   theme: z.enum(['system', 'light', 'dark']).optional(),
   density: z.enum(['comfortable', 'compact']).optional(),
+  pushPreview: z.boolean().optional(),
 });
 
 me.patch('/', async (c) => {
   const body = await jsonBody(c, UpdateMeSchema);
   const u = c.get('user');
-  await c.env.DB.prepare('UPDATE users SET name = ?, theme = ?, density = ?, updated_at = ? WHERE id = ?')
-    .bind(body.name ?? u.name, body.theme ?? u.theme, body.density ?? u.density, Date.now(), u.id).run();
+  const pushPreview = body.pushPreview === undefined ? u.push_preview : body.pushPreview ? 1 : 0;
+  await c.env.DB.prepare('UPDATE users SET name = ?, theme = ?, density = ?, push_preview = ?, updated_at = ? WHERE id = ?')
+    .bind(body.name ?? u.name, body.theme ?? u.theme, body.density ?? u.density, pushPreview, Date.now(), u.id).run();
   const user = await c.env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(u.id).first<UserRow>();
   return c.json({ user: rowToUser(user!) });
 });

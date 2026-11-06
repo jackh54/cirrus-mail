@@ -68,7 +68,7 @@ function PasswordSection() {
   );
 }
 
-function deviceLabel(ua: string | null): { name: string; mobile: boolean } {
+export function deviceLabel(ua: string | null): { name: string; mobile: boolean } {
   if (!ua) return { name: 'Unknown device', mobile: false };
   const mobile = /iPhone|Android|Mobile/i.test(ua);
   const browser = /Edg\//.test(ua) ? 'Edge' : /Firefox\//.test(ua) ? 'Firefox' : /Chrome\//.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : 'Browser';

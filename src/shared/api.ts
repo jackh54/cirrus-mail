@@ -34,6 +34,8 @@ export interface User {
   density: Density;
   mustChangePassword: boolean;
   createdAt: Millis;
+  /** Push notifications show the sender and subject (true) or only "New mail" and the mailbox address. */
+  pushPreview: boolean;
 }
 
 export interface SessionInfo {
@@ -65,7 +67,7 @@ export interface Identity {
 }
 
 export interface MeResponse { user: User; mailboxes: MailboxSummary[] }
-export interface UpdateMeInput { name?: string; theme?: Theme; density?: Density }
+export interface UpdateMeInput { name?: string; theme?: Theme; density?: Density; pushPreview?: boolean }
 export interface ChangePasswordInput { current: string; next: string }
 export interface TotpBeginResponse { secret: string; otpauthUrl: string }
 export interface TotpEnableResponse { recoveryCodes: string[] }
@@ -232,6 +234,42 @@ export interface PollResponse { newCount: number; latest: ThreadSummary[] }
 /** POST /api/proxy/sign: the client asks for signed proxy URLs for remote images (max 200 urls). */
 export interface ProxySignInput { urls: string[] }
 export interface ProxySignResponse { signed: Record<string, string> } // original url -> /api/proxy/image?u=..&s=..
+
+// ---------- web push ----------
+
+/** GET /api/push/public-key: the VAPID key for `pushManager.subscribe({ applicationServerKey })`. */
+export interface PushPublicKeyResponse { publicKey: string } // base64url, uncompressed P-256
+
+/** POST /api/push/subscriptions: the browser's `PushSubscription.toJSON()`. */
+export interface PushSubscriptionInput {
+  endpoint: string;
+  expirationTime?: number | null;
+  keys: { p256dh: string; auth: string };
+}
+
+/** DELETE /api/push/subscriptions */
+export interface PushUnsubscribeInput { endpoint: string }
+
+/** GET /api/push/subscriptions: the caller's own devices. */
+export interface PushDevice {
+  id: ID;
+  userAgent: string | null;
+  createdAt: Millis;
+  lastSuccessAt: Millis | null;
+}
+
+/** POST /api/push/test */
+export interface PushTestResponse { sent: number; failed: number }
+
+/** The decrypted push message the service worker receives. */
+export interface PushPayload {
+  type: 'mail' | 'test';
+  mailboxId?: ID;
+  threadId?: ID;
+  title: string;
+  body: string;
+  tag: string;
+}
 
 // ---------- admin ----------
 

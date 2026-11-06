@@ -6,7 +6,7 @@ import { signFileUrl } from './sign';
 export interface UserRow {
   id: string; email: string; name: string; password_hash: string; role: 'admin' | 'member';
   totp_secret: string | null; totp_pending: string | null; totp_last_step: number; theme: User['theme']; density: User['density'];
-  disabled: number; must_change_password: number; created_at: number; updated_at: number;
+  disabled: number; must_change_password: number; created_at: number; updated_at: number; push_preview: number;
 }
 
 export interface MessageRow {
@@ -48,6 +48,7 @@ export function rowToUser(r: UserRow): User {
   return {
     id: r.id, email: r.email, name: r.name, role: r.role, totpEnabled: !!r.totp_secret,
     theme: r.theme, density: r.density, mustChangePassword: !!r.must_change_password, createdAt: r.created_at,
+    pushPreview: r.push_preview !== 0,
   };
 }
 

@@ -6,6 +6,7 @@ import { dedupeAddresses, domainOf, fromParsed, normalizeEmail } from '../lib/ad
 import { sha256Hex } from '../lib/crypto';
 import { addressesForFts, folderIdsByRole, ftsInsertStmts, recomputeThreadStmts } from '../lib/db';
 import { htmlToText, makeSnippet } from '../lib/html';
+import { notifyNewMail } from '../push';
 import { maybeAutoreply, type AutoreplyMailbox } from './autoreply';
 import { evaluateFilters, rowToFilter, type FilterRow } from './filters';
 import { resolveRecipient } from './resolve';
@@ -61,7 +62,8 @@ async function contentHash(raw: Uint8Array, fields: unknown[]): Promise<string> 
   return sha256Hex(buf);
 }
 
-export async function processInbound(message: ForwardableEmailMessage, env: Env): Promise<InboundOutcome> {
+/** `ctx`, when given, carries the new-mail push (waitUntil); without it no push is sent. */
+export async function processInbound(message: ForwardableEmailMessage, env: Env, ctx?: ExecutionContext): Promise<InboundOutcome> {
   const db = env.DB;
   // 1. The raw stream is single-use: buffer it exactly once.
   if (message.rawSize > LIMITS.maxMessageBytes) {
@@ -249,6 +251,12 @@ export async function processInbound(message: ForwardableEmailMessage, env: Env)
     throw e;
   }
 
+  // Web Push for unread mail stored in the Inbox (not spam, trash, another folder, or filtered to read).
+  // Off the delivery path: notifyNewMail never throws and the email handler does not wait for it.
+  if (ctx && !spam.isSpam && folderId === roles.inbox && !isRead) {
+    ctx.waitUntil(notifyNewMail(env, { mailboxId, mailboxAddress: mbRow.address, threadId, from, subject }, now));
+  }
+
   // Filter forwards: must be verified Email Routing destinations; failures are logged, not fatal.
   for (const addr of forwards) {
     try {
@@ -272,6 +280,6 @@ export async function processInbound(message: ForwardableEmailMessage, env: Env)
   return { accepted: true, mailboxId, messageId: id, threadId, folderId };
 }
 
-export async function handleEmail(message: ForwardableEmailMessage, env: Env, _ctx: ExecutionContext): Promise<void> {
-  await processInbound(message, env);
+export async function handleEmail(message: ForwardableEmailMessage, env: Env, ctx: ExecutionContext): Promise<void> {
+  await processInbound(message, env, ctx);
 }

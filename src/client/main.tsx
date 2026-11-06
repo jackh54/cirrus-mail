@@ -15,10 +15,19 @@ createRoot(document.getElementById('root') as HTMLElement).render(
   </StrictMode>,
 );
 
-if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+// Registered in dev too, so Web Push can be tried on localhost.
+if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js').catch(() => {
       /* offline shell is optional */
     });
+  });
+  // A notification click in the service worker asks an open window to show the thread, without a reload.
+  navigator.serviceWorker.addEventListener('message', (e: MessageEvent<{ type?: string; url?: string }>) => {
+    if (e.data?.type !== 'cirrus:navigate' || typeof e.data.url !== 'string') return;
+    const url = new URL(e.data.url, location.origin);
+    if (url.origin !== location.origin || url.pathname + url.search === location.pathname + location.search) return;
+    history.pushState(null, '', url.pathname + url.search);
+    dispatchEvent(new PopStateEvent('popstate'));
   });
 }

@@ -13,6 +13,7 @@ import { mail, mailReads } from './routes/mail';
 import { mailboxSettings } from './routes/mailbox-settings';
 import { me } from './routes/me';
 import { proxy } from './routes/proxy';
+import { push } from './routes/push';
 import { setup } from './routes/setup';
 import type { AppEnv } from './types';
 
@@ -47,6 +48,7 @@ app.route('/me', me);
 app.route('/contacts', contacts);
 app.route('/files', files);
 app.route('/proxy', proxy);
+app.route('/push', push);
 app.route('/admin', admin);
 app.route('/mailboxes/:mb', mailbox);
 
