@@ -9,6 +9,7 @@ import { useToast } from '../../components/Toast';
 import { errorMessage } from '../../lib/api';
 import { relativeAgo } from '../../lib/format';
 import { useChangePassword, useRevokeSession, useSessions } from '../../lib/queries/me';
+import { AppPasswordsSection, SyncHelpSection } from './AppPasswordsSection';
 import { PasskeySection } from './PasskeySection';
 import { TotpSection } from './TotpSection';
 
@@ -19,6 +20,8 @@ export function SecuritySettings() {
       <PasswordSection />
       <PasskeySection />
       <TotpSection />
+      <AppPasswordsSection />
+      <SyncHelpSection />
       <SessionsSection />
     </>
   );

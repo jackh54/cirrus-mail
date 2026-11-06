@@ -549,6 +549,69 @@ export interface ReplyTemplate {
 }
 export interface ReplyTemplateInput { name: string; subject: string; bodyHtml: string }
 
+// ---------- app passwords, contacts & calendars (DAV) ----------
+
+/** GET /api/app-passwords. The secret is never returned again after creation. */
+export interface AppPassword { id: ID; name: string; createdAt: Millis; lastUsedAt: Millis | null }
+/** POST /api/app-passwords (reauth with the account password) */
+export interface AppPasswordCreateInput { name: string; password: string }
+export interface AppPasswordCreateResponse { appPassword: AppPassword; secret: string }
+
+/** GET /api/dav/collections */
+export interface DavCollectionInfo {
+  id: ID;
+  kind: 'addressbook' | 'calendar';
+  name: string;
+  color: string | null;
+  components: string[];
+  ctag: string;
+}
+
+export interface ContactField { value: string; types: string[] }
+
+/** Body of POST/PUT /api/dav/contacts. Properties not listed here are kept untouched in the stored vCard. */
+export interface ContactInput {
+  fn: string;
+  emails: ContactField[];
+  phones: ContactField[];
+  org: string;
+  note: string;
+  /** POST only: the address book (default: the first one). */
+  addressBookId?: ID;
+}
+
+export interface ContactView extends Omit<ContactInput, 'addressBookId'> {
+  id: ID;
+  addressBookId: ID;
+  etag: string;
+  updatedAt: Millis;
+}
+
+/**
+ * Body of POST/PUT /api/dav/events. All-day: `start` and `end` are dates (YYYY-MM-DD, `end` exclusive).
+ * Timed: ISO 8601 instants. `rrule` is the raw RRULE value (for example FREQ=WEEKLY;BYDAY=MO).
+ */
+export interface EventInput {
+  summary: string;
+  start: string;
+  end: string | null;
+  allDay: boolean;
+  location: string;
+  description: string;
+  rrule: string | null;
+  /** POST only: the calendar (default: the first one). */
+  calendarId?: ID;
+}
+
+export interface EventView extends Omit<EventInput, 'calendarId'> {
+  id: ID;
+  calendarId: ID;
+  uid: string;
+  etag: string;
+  recurring: boolean;
+  updatedAt: Millis;
+}
+
 // ---------- limits shared by both sides ----------
 
 export const MAX_TEMPLATES_PER_MAILBOX = 100;

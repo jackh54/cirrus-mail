@@ -5,11 +5,11 @@
   "compatibility_date": "2026-11-01",
   "compatibility_flags": ["nodejs_compat"],
 
-  // The SPA is served from static assets. Only /api/* runs the Worker first.
+  // The SPA is served from static assets. Only /api/* and the CardDAV/CalDAV paths run the Worker first.
   "assets": {
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*"]
+    "run_worker_first": ["/api/*", "/dav", "/dav/*", "/.well-known/caldav", "/.well-known/carddav"]
   },
 
   // Run the Worker near D1 (ENAM): /api requests make several D1 round trips, assets still come from the edge.

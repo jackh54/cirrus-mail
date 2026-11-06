@@ -10,7 +10,7 @@ import { useToast } from '../../components/Toast';
 import { errorMessage } from '../../lib/api';
 import { useMeData, useTotpBegin, useTotpDisable, useTotpEnable } from '../../lib/queries/me';
 
-function CopyButton({ text, label }: { text: string; label: string }) {
+export function CopyButton({ text, label }: { text: string; label: string }) {
   const [done, setDone] = useState(false);
   return (
     <Button

@@ -12,6 +12,7 @@ export const qk = {
   blocked: (mb: string) => ['blocked', mb] as const,
   templates: (mb: string) => ['templates', mb] as const,
   sessions: ['sessions'] as const,
+  appPasswords: ['app-passwords'] as const,
   passkeys: ['passkeys'] as const,
   sending: ['sending'] as const,
   ai: ['ai'] as const,
