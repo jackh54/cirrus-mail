@@ -12,6 +12,7 @@ import { filters } from './routes/filters';
 import { mail, mailReads } from './routes/mail';
 import { mailboxSettings } from './routes/mailbox-settings';
 import { invites } from './routes/invites';
+import { labels, labelReads } from './routes/labels';
 import { me } from './routes/me';
 import { proxy } from './routes/proxy';
 import { push } from './routes/push';
@@ -23,11 +24,13 @@ const mailbox = new Hono<AppEnv>();
 // Hot reads authorize themselves (authorizeMailbox): the session + membership check rides in the same D1 batch
 // as their queries. They are registered before the guard and never call next(), so the guard does not repeat it.
 mailbox.route('/', mailReads);
+mailbox.route('/', labelReads);
 mailbox.use('*', requireMailbox);
 mailbox.route('/', mail);
 mailbox.route('/', drafts);
 mailbox.route('/', mailboxSettings);
 mailbox.route('/', filters);
+mailbox.route('/', labels);
 mailbox.route('/', blocked);
 
 export const app = new Hono<AppEnv>().basePath('/api');

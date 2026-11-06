@@ -17,6 +17,7 @@ import { useCompose } from '../compose/ComposeProvider';
 import { draftApi } from '../compose/draftApi';
 import { identitiesOf } from '../compose/identities';
 import type { ResolvedView } from './folderMeta';
+import { ReaderLabels } from './labelMeta';
 import { MessageCard } from './MessageCard';
 import { ReaderActionBar, ReaderToolbar } from './ReaderToolbar';
 import type { MailController } from './useMailController';
@@ -142,6 +143,7 @@ export function ReaderPane({ mailbox, threadId, view, folders, ctl, showBack, mo
         onBack={back}
         onAction={act}
         onStep={ctl.threads.length > 1 ? step : undefined}
+        onLabels={() => ctl.openLabels([threadId])}
         mobile={mobile}
       />
       <div ref={scroller} tabIndex={-1} className={cn('min-h-0 flex-1 overflow-y-auto outline-none', mobile && 'overscroll-contain')}>
@@ -152,6 +154,7 @@ export function ReaderPane({ mailbox, threadId, view, folders, ctl, showBack, mo
         ) : (
           <div className={cn('mx-auto max-w-[800px] px-4 sm:px-8', mobile ? 'pt-4 pb-8' : 'pt-6 pb-16')}>
             <h1 className={cn('text-[18px] leading-7 font-semibold tracking-[-0.01em] text-balance text-fg', mobile ? 'mb-2 break-words' : 'mb-4')}>{data.thread.subject || '(no subject)'}</h1>
+            <ReaderLabels ids={data.thread.labels} />
             <div className="divide-y divide-border border-y border-border">
               {messages.map((m) => (
                 <MessageCard
@@ -184,7 +187,7 @@ export function ReaderPane({ mailbox, threadId, view, folders, ctl, showBack, mo
           </div>
         )}
       </div>
-      {mobile && <ReaderActionBar role={view?.role} folders={folders} onAction={act} onReply={(mode) => reply(mode)} canReply={!!latest} />}
+      {mobile && <ReaderActionBar role={view?.role} folders={folders} onAction={act} onReply={(mode) => reply(mode)} onLabels={() => ctl.openLabels([threadId])} canReply={!!latest} />}
     </section>
   );
 }

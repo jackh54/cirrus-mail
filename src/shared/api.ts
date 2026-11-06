@@ -96,6 +96,7 @@ export interface ThreadSummary {
   isStarred: boolean;
   lastMessageAt: Millis;
   folderIds: ID[];              // folders that contain at least one message of this thread
+  labels: ID[];                 // labels carried by at least one message of this thread (see Label)
 }
 
 export type MessageStatus = 'received' | 'draft' | 'scheduled' | 'sending' | 'sent' | 'failed';
@@ -165,6 +166,34 @@ export interface ThreadActionInput {
   folderId?: ID;                // required for 'move'
 }
 
+// ---------- labels ----------
+
+/** The fixed label palette (cobalt/graphite friendly). The client maps each name to a colour token. */
+export const LABEL_COLORS = ['cobalt', 'sky', 'teal', 'green', 'amber', 'orange', 'red', 'pink', 'violet', 'graphite'] as const;
+export type LabelColor = (typeof LABEL_COLORS)[number];
+
+export const LABEL_LIMITS = { maxPerMailbox: 100, maxName: 40 } as const;
+
+/** Labels are per mailbox; names are unique ignoring case. `unread` counts unread messages with the label outside Trash and Spam. */
+export interface Label {
+  id: ID;
+  name: string;
+  color: LabelColor;
+  unread: number;
+}
+
+export interface LabelInput { name: string; color: LabelColor }
+
+/**
+ * POST /api/mailboxes/:mb/threads/labels: adds and/or removes labels on every message of the given threads.
+ * An unknown thread or label id is a 404 and nothing is written.
+ */
+export interface ThreadLabelsInput {
+  threadIds: ID[];
+  add?: ID[];
+  remove?: ID[];
+}
+
 export interface DraftInput {
   from: string;                 // identity email
   to: Address[];
@@ -210,6 +239,7 @@ export interface FilterCondition {
 
 export type FilterAction =
   | { type: 'move_to'; folderId: ID }
+  | { type: 'apply_label'; labelId: ID }
   | { type: 'mark_read' }
   | { type: 'star' }
   | { type: 'delete' }

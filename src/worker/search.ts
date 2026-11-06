@@ -1,4 +1,4 @@
-// Search query parser: `from:x to:x subject:"multi word" has:attachment is:unread is:starred` + free text.
+// Search query parser: `from:x to:x subject:"multi word" label:name has:attachment is:unread is:starred` + free text.
 // Structured operators become parameterised SQL on `messages m`; free text becomes a quoted FTS5 MATCH.
 
 export interface Term { value: string; phrase: boolean }
@@ -7,6 +7,7 @@ export interface ParsedQuery {
   from: string[];
   to: string[];
   subject: string[];
+  labels: string[];
   hasAttachment: boolean;
   isUnread: boolean;
   isRead: boolean;
@@ -15,7 +16,7 @@ export interface ParsedQuery {
 }
 
 export function parseSearch(q: string): ParsedQuery {
-  const out: ParsedQuery = { from: [], to: [], subject: [], hasAttachment: false, isUnread: false, isRead: false, isStarred: false, text: [] };
+  const out: ParsedQuery = { from: [], to: [], subject: [], labels: [], hasAttachment: false, isUnread: false, isRead: false, isStarred: false, text: [] };
   const re = /(?:([a-zA-Z]+):)?(?:"([^"]*)"?|(\S+))/g;
   let m: RegExpExecArray | null;
   const input = q.slice(0, 500);
@@ -28,6 +29,7 @@ export function parseSearch(q: string): ParsedQuery {
       case 'from': if (value) out.from.push(value); break;
       case 'to': if (value) out.to.push(value); break;
       case 'subject': if (value) out.subject.push(value); break;
+      case 'label': if (value) out.labels.push(value); break;
       case 'has':
         if (/^attachments?$/i.test(value)) out.hasAttachment = true;
         else if (value) out.text.push({ value: `has:${value}`, phrase: false });
@@ -86,6 +88,11 @@ export function buildSearchSql(p: ParsedQuery): { where: string[]; params: unkno
   for (const s of p.subject) {
     where.push("lower(m.subject) LIKE ? ESCAPE '\\'");
     params.push(likeEscape(s));
+  }
+  for (const l of p.labels) {
+    // labels.name is COLLATE NOCASE, so the comparison ignores case; the label must belong to this message's mailbox.
+    where.push('EXISTS (SELECT 1 FROM message_labels sl JOIN labels sx ON sx.id = sl.label_id WHERE sl.message_id = m.id AND sx.mailbox_id = m.mailbox_id AND sx.name = ?)');
+    params.push(l);
   }
   if (p.hasAttachment) where.push('m.has_attachments = 1');
   if (p.isUnread) where.push('m.is_read = 0');

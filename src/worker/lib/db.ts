@@ -92,7 +92,7 @@ export async function recomputeThreads(db: D1Database, threadIds: Iterable<strin
   if (stmts.length) await db.batch(stmts);
 }
 
-export function threadRowToSummary(t: ThreadRow, folderIds: string[], lastMessageAt?: number): ThreadSummary {
+export function threadRowToSummary(t: ThreadRow, folderIds: string[], lastMessageAt?: number, labels: string[] = []): ThreadSummary {
   let participants: Address[] = [];
   try {
     participants = (JSON.parse(t.participants) as Address[]).map((p) => (p.name ? p : { email: p.email }));
@@ -100,15 +100,21 @@ export function threadRowToSummary(t: ThreadRow, folderIds: string[], lastMessag
   return {
     id: t.id, subject: t.subject, snippet: t.snippet, participants, messageCount: t.message_count,
     unreadCount: t.unread_count, hasAttachments: !!t.has_attachments, isStarred: !!t.is_starred,
-    lastMessageAt: lastMessageAt ?? t.last_message_at, folderIds,
+    lastMessageAt: lastMessageAt ?? t.last_message_at, folderIds, labels,
   };
 }
 
-export type PageRow = ThreadRow & { tid: string; k: number; folder_ids: string };
+export type PageRow = ThreadRow & { tid: string; k: number; folder_ids: string; label_ids: string };
+
+/** Scalar subquery: a JSON array of the label ids on a thread's messages. Binds the mailbox id once; `tid` is the thread id expression. */
+export function threadLabelsSql(tid: string): string {
+  return `(SELECT json_group_array(DISTINCT ml.label_id) FROM messages lx JOIN message_labels ml ON ml.message_id = lx.id WHERE +lx.mailbox_id = ? AND lx.thread_id = ${tid})`;
+}
 
 /**
  * Wraps a page query that returns `(tid, k)` so the same statement also returns each thread row and its
- * folder ids, in `orderBy` order. Bind: the page query's params, the mailbox id, `extraCols` params, the mailbox id.
+ * folder ids and label ids, in `orderBy` order. Bind: the page query's params, the mailbox id twice (folders, labels),
+ * `extraCols` params, the mailbox id.
  * Everything outside the page query runs per page row, so an access condition in the page query covers it all.
  * Rows whose thread is gone have a NULL `id`. (A unary `+` on mailbox_id keeps SQLite on the thread index
  * instead of scanning every message in the mailbox.)
@@ -116,14 +122,15 @@ export type PageRow = ThreadRow & { tid: string; k: number; folder_ids: string }
 export function pageSummariesSql(pageSql: string, orderBy: string, extraCols = ''): string {
   return `WITH page AS (${pageSql})
     SELECT page.tid, page.k, t.*,
-           (SELECT json_group_array(DISTINCT x.folder_id) FROM messages x WHERE +x.mailbox_id = ? AND x.thread_id = page.tid) AS folder_ids${extraCols}
+           (SELECT json_group_array(DISTINCT x.folder_id) FROM messages x WHERE +x.mailbox_id = ? AND x.thread_id = page.tid) AS folder_ids,
+           ${threadLabelsSql('page.tid')} AS label_ids${extraCols}
       FROM page LEFT JOIN threads t ON t.id = page.tid AND t.mailbox_id = ?
      ORDER BY ${orderBy}`;
 }
 
 /** Summaries from `pageSummariesSql` rows, skipping vanished threads. `lastMessageAt` is the page key. */
 export function pageRowsToSummaries(rows: PageRow[]): ThreadSummary[] {
-  return rows.filter((r) => r.id).map((r) => threadRowToSummary(r, JSON.parse(r.folder_ids) as string[], r.k));
+  return rows.filter((r) => r.id).map((r) => threadRowToSummary(r, JSON.parse(r.folder_ids) as string[], r.k, JSON.parse(r.label_ids) as string[]));
 }
 
 export async function loadBody(env: Env, key: string | null): Promise<StoredBody> {

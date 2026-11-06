@@ -1,14 +1,16 @@
 import { createElement, useMemo, type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 import {
-  AtSign, Globe, Inbox, Keyboard, LayoutDashboard, Mail, Moon, Palette, PenLine, Search, Shield, Sun, User, Users,
+  AtSign, Globe, Inbox, Keyboard, LayoutDashboard, Mail, Moon, Palette, PenLine, Search, Shield, Sun, Tag, User, Users,
   type LucideIcon,
 } from 'lucide-react';
+import { useLabels } from '../../lib/queries/labels';
 import { useFolders } from '../../lib/queries/mail';
 import { useMeData, useUpdateMe } from '../../lib/queries/me';
 import { getLastMailbox } from '../../lib/storage';
 import { useCompose } from '../compose/ComposeProvider';
 import { SYSTEM_ORDER, VIEW_META } from '../mail/folderMeta';
+import { OPEN_LABEL_PICKER_EVENT } from '../mail/labelMeta';
 import { OPEN_SHORTCUTS_EVENT } from '../mail/ShortcutsOverlay';
 
 export type Group = 'Search' | 'Actions' | 'Go to' | 'Mailboxes' | 'Settings' | 'Admin';
@@ -36,12 +38,18 @@ export function useCommands(query: string): Command[] {
   const mailbox = mailboxes.find((m) => m.id === fromUrl) ?? mailboxes.find((m) => m.id === getLastMailbox()) ?? mailboxes[0];
   const mb = mailbox?.id ?? '';
   const folders = useFolders(mb || undefined).data;
+  const labels = useLabels(mb || undefined).data;
+  const inMail = !!fromUrl;
   const q = query.trim();
 
   const base = useMemo(() => {
     const out: Command[] = [];
     if (mb) {
       out.push({ id: 'compose', group: 'Actions', label: 'Compose', icon: icon(PenLine), shortcut: 'C', keywords: ['new message', 'write', 'email'], run: () => compose.open({ mailboxId: mb, mode: 'new' }) });
+      // Acts on the selection, the open conversation or the focused row, so it only makes sense in the mail view.
+      if (inMail) {
+        out.push({ id: 'label-as', group: 'Actions', label: 'Label as…', icon: icon(Tag), shortcut: 'L', keywords: ['label', 'tag', 'categorize'], run: () => window.dispatchEvent(new Event(OPEN_LABEL_PICKER_EVENT)) });
+      }
     }
     const dark = document.documentElement.classList.contains('dark');
     out.push(
@@ -56,6 +64,11 @@ export function useCommands(query: string): Command[] {
       }
       for (const f of folders?.filter((x) => !x.role) ?? []) {
         out.push({ id: `go-${f.id}`, group: 'Go to', label: `Go to ${f.name}`, icon: VIEW_META.custom.icon(16), keywords: [f.name, 'folder'], run: () => navigate(`/mail/${mb}/${f.id}`) });
+      }
+    }
+    if (mb) {
+      for (const l of labels ?? []) {
+        out.push({ id: `go-label-${l.id}`, group: 'Go to', label: `Go to label ${l.name}`, icon: icon(Tag), keywords: [l.name, 'label', 'tag'], run: () => navigate(`/mail/${mb}/label:${l.id}`) });
       }
     }
     if (mailboxes.length > 1) {
@@ -75,7 +88,7 @@ export function useCommands(query: string): Command[] {
       }
     }
     return out;
-  }, [mb, folders, mailboxes, user.role, compose, navigate, updatePrefs]);
+  }, [mb, folders, labels, inMail, mailboxes, user.role, compose, navigate, updatePrefs]);
 
   return useMemo(() => {
     if (!q || !mb) return base;
