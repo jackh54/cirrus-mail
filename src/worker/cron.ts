@@ -1,5 +1,6 @@
 // scheduled(): every minute send due scheduled messages; at minute 0 purge and prune.
 import { deleteMessagesForever } from './lib/db';
+import { pruneUploads } from './jmap/blob';
 import { backfillInlineBodies } from './lib/inline-backfill';
 import { utcDay } from './lib/sendcount';
 import { wakeDueSnoozed } from './snooze';
@@ -58,6 +59,14 @@ export async function hourlyMaintenance(env: Env, now = Date.now()): Promise<voi
       `UPDATE dav_collections SET pruned_rev = MAX(pruned_rev, COALESCE((SELECT MAX(rev) FROM dav_changes WHERE collection_id = dav_collections.id AND created_at < ?1), 0))`,
     ).bind(now - 30 * DAY),
     db.prepare('DELETE FROM dav_changes WHERE created_at < ?').bind(now - 30 * DAY),
+    // JMAP: tombstones are kept 30 days; record how far they were pruned so older sinceStates get cannotCalculateChanges.
+    db.prepare(
+      `UPDATE jmap_state SET pruned = MAX(pruned, COALESCE((SELECT MAX(modseq) FROM jmap_tombstones WHERE mailbox_id = jmap_state.mailbox_id AND created_at < ?1), 0))`,
+    ).bind(now - 30 * DAY),
+    db.prepare('DELETE FROM jmap_tombstones WHERE created_at < ?').bind(now - 30 * DAY),
+    // Rows left behind by deleted mailboxes (the triggers have no foreign key, so a cascade cannot remove them).
+    db.prepare('DELETE FROM jmap_tombstones WHERE mailbox_id NOT IN (SELECT id FROM mailboxes)'),
+    db.prepare('DELETE FROM jmap_state WHERE mailbox_id NOT IN (SELECT id FROM mailboxes)'),
     // A send interrupted mid-flight (isolate killed) would stay 'sending' forever; surface it as failed.
     db.prepare(
       `UPDATE messages SET status = 'failed', error_code = 'E_INTERRUPTED', error_message = 'Sending was interrupted. Try again.',
@@ -84,6 +93,11 @@ export async function runCron(env: Env, scheduledTime: number): Promise<void> {
     console.error('cron inline backfill error', (e as Error).name);
   }
   if (new Date(scheduledTime).getUTCMinutes() === 0) {
+    try {
+      await pruneUploads(env, Date.now());
+    } catch (e) {
+      console.error('cron upload cleanup error', (e as Error).name);
+    }
     try {
       await hourlyMaintenance(env);
     } catch (e) {
