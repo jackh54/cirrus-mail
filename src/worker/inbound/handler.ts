@@ -3,8 +3,9 @@ import PostalMime, { type Email } from 'postal-mime';
 import { LIMITS, type Address } from '../../shared/api';
 import { ulid } from '../../shared/ulid';
 import { dedupeAddresses, domainOf, fromParsed, normalizeEmail } from '../lib/addresses';
+import { categorizeInbound } from '../lib/ai';
 import { sha256Hex } from '../lib/crypto';
-import { addressesForFts, folderIdsByRole, ftsInsertStmts, recomputeThreadStmts } from '../lib/db';
+import { addressesForFts, folderIdsByRole, ftsInsertStmts, inlineBodyJson, recomputeThreadStmts } from '../lib/db';
 import { htmlToText, makeSnippet } from '../lib/html';
 import { notifyNewMail } from '../push';
 import { maybeAutoreply, type AutoreplyMailbox } from './autoreply';
@@ -180,6 +181,7 @@ export async function processInbound(message: ForwardableEmailMessage, env: Env,
   let isRead = 0;
   let isStarred = 0;
   let forwards: string[] = [];
+  let labelIds: string[] = [];
   if (!spam.isSpam && filterRows.results.length) {
     const rules = filterRows.results.map((r) => {
       const f = rowToFilter(r);
@@ -197,6 +199,7 @@ export async function processInbound(message: ForwardableEmailMessage, env: Env,
     if (outcome.markRead) isRead = 1;
     if (outcome.star) isStarred = 1;
     forwards = outcome.forwards;
+    labelIds = outcome.labelIds.slice(0, 10);
   }
 
   // 4. Store raw, body and attachments in R2.
@@ -230,15 +233,19 @@ export async function processInbound(message: ForwardableEmailMessage, env: Env,
   }
   stmts.push(db.prepare(
     `INSERT INTO messages (id, mailbox_id, thread_id, folder_id, direction, status, message_id_hdr, in_reply_to, references_hdr,
-       from_email, from_name, to_json, cc_json, bcc_json, reply_to, subject, snippet, body_key, raw_key, size, has_attachments,
+       from_email, from_name, to_json, cc_json, bcc_json, reply_to, subject, snippet, body_key, body_inline, raw_key, size, has_attachments,
        is_read, is_starred, spam_score, auth_json, list_id, date, display_date, content_hash, created_at, updated_at, folder_changed_at)
-     VALUES (?, ?, ?, ?, 'in', 'received', ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, 'in', 'received', ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).bind(id, mailboxId, threadId, folderId, msgIdHdr, inReplyTo[0] ?? null, references.length ? references.join(' ').slice(0, 8000) : null,
-    from.email, from.name ?? '', JSON.stringify(to), JSON.stringify(cc), replyTo, subject, makeSnippet(text), bodyKey, rawKey, size,
+    from.email, from.name ?? '', JSON.stringify(to), JSON.stringify(cc), replyTo, subject, makeSnippet(text), bodyKey, inlineBodyJson(html, text), rawKey, size,
     hasAttachments ? 1 : 0, isRead, isStarred, spam.score, auth ? JSON.stringify(auth) : null, listId, date, shownDate, hash, now, now, now));
   for (const a of atts) {
     stmts.push(db.prepare('INSERT INTO attachments (id, message_id, mailbox_id, filename, mime_type, size, content_id, inline, r2_key, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
       .bind(a.id, id, mailboxId, a.filename, a.mime, a.bytes.byteLength, a.contentId, a.inline, a.key, now));
+  }
+  // A label that was deleted since the filter was saved matches no row, so the insert is skipped.
+  for (const labelId of labelIds) {
+    stmts.push(db.prepare('INSERT OR IGNORE INTO message_labels (message_id, label_id) SELECT ?, id FROM labels WHERE id = ? AND mailbox_id = ?').bind(id, labelId, mailboxId));
   }
   stmts.push(...ftsInsertStmts(db, { id, mailboxId, subject, addresses: addressesForFts(from, to, cc), body: text }));
   stmts.push(...recomputeThreadStmts(db, threadId));
@@ -255,6 +262,12 @@ export async function processInbound(message: ForwardableEmailMessage, env: Env,
   // Off the delivery path: notifyNewMail never throws and the email handler does not wait for it.
   if (ctx && !spam.isSpam && folderId === roles.inbox && !isRead) {
     ctx.waitUntil(notifyNewMail(env, { mailboxId, mailboxAddress: mbRow.address, threadId, from, subject }, now));
+  }
+
+  // Inbox category (optional AI triage): after the message is stored, off the delivery path. It does nothing unless
+  // an admin has enabled the feature, and never throws.
+  if (ctx && !spam.isSpam && folderId === roles.inbox) {
+    ctx.waitUntil(categorizeInbound(env, { mailboxId, threadId, fromEmail: from.email, fromName: from.name, subject, text, header }, now));
   }
 
   // Filter forwards: must be verified Email Routing destinations; failures are logged, not fatal.

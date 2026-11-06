@@ -5,6 +5,7 @@ interface __BaseEnv_Env {
 	BUCKET: R2Bucket;
 	DB: D1Database;
 	EMAIL: SendEmail;
+	AI?: Ai;
 	ASSETS: Fetcher;
 	APP_NAME: "Cirrus Mail";
 	SETUP_TOKEN: string;

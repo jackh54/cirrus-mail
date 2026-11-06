@@ -1,12 +1,12 @@
 // Row types, mappers and shared D1 helpers.
-import type { Address, Attachment, AuthResults, FolderRole, MessageFull, ThreadSummary, User } from '../../shared/api';
+import type { Address, Attachment, AuthResults, FolderRole, MessageFull, ThreadCategory, ThreadSummary, User } from '../../shared/api';
 import { parseJsonAddresses } from './addresses';
 import { signFileUrl } from './sign';
 
 export interface UserRow {
   id: string; email: string; name: string; password_hash: string; role: 'admin' | 'member';
   totp_secret: string | null; totp_pending: string | null; totp_last_step: number; theme: User['theme']; density: User['density'];
-  disabled: number; must_change_password: number; created_at: number; updated_at: number; push_preview: number;
+  disabled: number; must_change_password: number; created_at: number; updated_at: number; push_preview: number; category_tabs: number;
 }
 
 export interface MessageRow {
@@ -14,7 +14,7 @@ export interface MessageRow {
   status: MessageFull['status']; message_id_hdr: string | null; in_reply_to: string | null; references_hdr: string | null;
   parent_id: string | null; compose_mode: MessageFull['composeMode']; from_email: string; from_name: string;
   to_json: string; cc_json: string; bcc_json: string; reply_to: string | null; subject: string; snippet: string;
-  body_key: string | null; raw_key: string | null; size: number; has_attachments: number; is_read: number;
+  body_key: string | null; body_inline: string | null; raw_key: string | null; size: number; has_attachments: number; is_read: number;
   is_starred: number; spam_score: number; auth_json: string | null; list_id: string | null; send_at: number | null;
   sent_at: number | null; error_code: string | null; error_message: string | null; date: number; scheduled_by: string | null;
   created_at: number; updated_at: number; folder_changed_at: number; fts_rowid: number | null;
@@ -29,7 +29,7 @@ export interface AttachmentRow {
 export interface ThreadRow {
   id: string; mailbox_id: string; subject: string; subject_norm: string; snippet: string; participants: string;
   message_count: number; unread_count: number; has_attachments: number; is_starred: number;
-  last_message_at: number; created_at: number;
+  last_message_at: number; created_at: number; category: ThreadCategory | null;
 }
 
 export interface StoredBody { html: string | null; text: string | null }
@@ -48,7 +48,7 @@ export function rowToUser(r: UserRow): User {
   return {
     id: r.id, email: r.email, name: r.name, role: r.role, totpEnabled: !!r.totp_secret,
     theme: r.theme, density: r.density, mustChangePassword: !!r.must_change_password, createdAt: r.created_at,
-    pushPreview: r.push_preview !== 0,
+    pushPreview: r.push_preview !== 0, categoryTabs: r.category_tabs !== 0,
   };
 }
 
@@ -92,7 +92,7 @@ export async function recomputeThreads(db: D1Database, threadIds: Iterable<strin
   if (stmts.length) await db.batch(stmts);
 }
 
-export function threadRowToSummary(t: ThreadRow, folderIds: string[], lastMessageAt?: number): ThreadSummary {
+export function threadRowToSummary(t: ThreadRow, folderIds: string[], lastMessageAt?: number, labels: string[] = []): ThreadSummary {
   let participants: Address[] = [];
   try {
     participants = (JSON.parse(t.participants) as Address[]).map((p) => (p.name ? p : { email: p.email }));
@@ -100,15 +100,21 @@ export function threadRowToSummary(t: ThreadRow, folderIds: string[], lastMessag
   return {
     id: t.id, subject: t.subject, snippet: t.snippet, participants, messageCount: t.message_count,
     unreadCount: t.unread_count, hasAttachments: !!t.has_attachments, isStarred: !!t.is_starred,
-    lastMessageAt: lastMessageAt ?? t.last_message_at, folderIds,
+    lastMessageAt: lastMessageAt ?? t.last_message_at, folderIds, labels, category: t.category ?? 'primary',
   };
 }
 
-export type PageRow = ThreadRow & { tid: string; k: number; folder_ids: string };
+export type PageRow = ThreadRow & { tid: string; k: number; folder_ids: string; label_ids: string };
+
+/** Scalar subquery: a JSON array of the label ids on a thread's messages. Binds the mailbox id once; `tid` is the thread id expression. */
+export function threadLabelsSql(tid: string): string {
+  return `(SELECT json_group_array(DISTINCT ml.label_id) FROM messages lx JOIN message_labels ml ON ml.message_id = lx.id WHERE +lx.mailbox_id = ? AND lx.thread_id = ${tid})`;
+}
 
 /**
  * Wraps a page query that returns `(tid, k)` so the same statement also returns each thread row and its
- * folder ids, in `orderBy` order. Bind: the page query's params, the mailbox id, `extraCols` params, the mailbox id.
+ * folder ids and label ids, in `orderBy` order. Bind: the page query's params, the mailbox id twice (folders, labels),
+ * `extraCols` params, the mailbox id.
  * Everything outside the page query runs per page row, so an access condition in the page query covers it all.
  * Rows whose thread is gone have a NULL `id`. (A unary `+` on mailbox_id keeps SQLite on the thread index
  * instead of scanning every message in the mailbox.)
@@ -116,14 +122,35 @@ export type PageRow = ThreadRow & { tid: string; k: number; folder_ids: string }
 export function pageSummariesSql(pageSql: string, orderBy: string, extraCols = ''): string {
   return `WITH page AS (${pageSql})
     SELECT page.tid, page.k, t.*,
-           (SELECT json_group_array(DISTINCT x.folder_id) FROM messages x WHERE +x.mailbox_id = ? AND x.thread_id = page.tid) AS folder_ids${extraCols}
+           (SELECT json_group_array(DISTINCT x.folder_id) FROM messages x WHERE +x.mailbox_id = ? AND x.thread_id = page.tid) AS folder_ids,
+           ${threadLabelsSql('page.tid')} AS label_ids${extraCols}
       FROM page LEFT JOIN threads t ON t.id = page.tid AND t.mailbox_id = ?
      ORDER BY ${orderBy}`;
 }
 
 /** Summaries from `pageSummariesSql` rows, skipping vanished threads. `lastMessageAt` is the page key. */
 export function pageRowsToSummaries(rows: PageRow[]): ThreadSummary[] {
-  return rows.filter((r) => r.id).map((r) => threadRowToSummary(r, JSON.parse(r.folder_ids) as string[], r.k));
+  return rows.filter((r) => r.id).map((r) => threadRowToSummary(r, JSON.parse(r.folder_ids) as string[], r.k, JSON.parse(r.label_ids) as string[]));
+}
+
+/** Bodies up to this many bytes (html + text) are also kept inline on the message row (messages.body_inline). */
+export const INLINE_BODY_MAX = 64 * 1024;
+
+/** The `body_inline` value for a body: its {html,text} JSON when small enough, else null (R2 only). */
+export function inlineBodyJson(html: string | null, text: string | null): string | null {
+  const enc = new TextEncoder();
+  const size = (html ? enc.encode(html).byteLength : 0) + (text ? enc.encode(text).byteLength : 0);
+  return size <= INLINE_BODY_MAX ? JSON.stringify({ html, text }) : null;
+}
+
+/** A message's body: the inline copy when present, else R2. */
+export async function loadRowBody(env: Env, r: Pick<MessageRow, 'body_key' | 'body_inline'>): Promise<StoredBody> {
+  if (r.body_inline) {
+    try {
+      return JSON.parse(r.body_inline) as StoredBody;
+    } catch { /* fall back to R2 */ }
+  }
+  return loadBody(env, r.body_key);
 }
 
 export async function loadBody(env: Env, key: string | null): Promise<StoredBody> {
@@ -190,11 +217,11 @@ export function messageRowToFull(r: MessageRow, body: StoredBody, attachments: A
   };
 }
 
-/** Full API shape for one message row (body from R2, signed attachment URLs). */
+/** Full API shape for one message row (body inline or from R2, signed attachment URLs). */
 export async function loadMessageFull(env: Env, origin: string, r: MessageRow): Promise<MessageFull> {
   const [{ results }, body] = await Promise.all([
     env.DB.prepare('SELECT * FROM attachments WHERE message_id = ? ORDER BY created_at, id').bind(r.id).all<AttachmentRow>(),
-    loadBody(env, r.body_key),
+    loadRowBody(env, r),
   ]);
   const atts = await Promise.all(results.map((a) => attachmentToApi(env, origin, a)));
   return messageRowToFull(r, body, atts, origin);

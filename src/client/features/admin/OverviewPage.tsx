@@ -1,14 +1,15 @@
-import { AlertTriangle, Database, Globe, Inbox, Mail, Send, ShieldX, Users } from 'lucide-react';
+import { AlertTriangle, Database, Globe, Inbox, Mail, Send, ShieldX, Sparkles, Users } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import { SEND_WARN_RATIO } from '@shared/api';
 import { Button } from '../../components/Button';
-import { Field, Input } from '../../components/Field';
+import { Field, Input, Switch } from '../../components/Field';
 import { PageTitle, Section } from '../../components/PageShell';
 import { Skeleton } from '../../components/Skeleton';
 import { useToast } from '../../components/Toast';
 import { errorMessage } from '../../lib/api';
 import { formatBytes } from '../../lib/format';
 import { useAdminStats } from '../../lib/queries/admin';
+import { useAdminAi, useUpdateAdminAi } from '../../lib/queries/ai';
 import { useAdminSettings, useUpdateAdminSettings } from '../../lib/queries/sending';
 import { DailyChart } from './DailyChart';
 
@@ -111,6 +112,61 @@ function SendingSettings() {
   );
 }
 
+/** Optional AI triage. Off by default: message text goes to Workers AI on this account, billed per use by Cloudflare. */
+function AiSettings() {
+  const ai = useAdminAi();
+  const save = useUpdateAdminAi();
+  const { toast } = useToast();
+  const [draft, setDraft] = useState<string | null>(null);
+  const saved = ai.data?.dailyBudget;
+  const value = draft ?? (saved == null ? '' : String(saved));
+  const parsed = value.trim() === '' ? NaN : Number(value);
+  const valid = Number.isInteger(parsed) && parsed >= 0 && parsed <= 100_000;
+  const dirty = draft !== null && parsed !== saved;
+  const onError = (e: unknown) => toast({ tone: 'error', title: 'Not saved', description: errorMessage(e) });
+
+  return (
+    <Section title="AI" description="Sorts the Inbox into tabs and summarises long conversations. Off by default.">
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <p className="text-[13px] font-medium">Turn on AI triage</p>
+          <p className="text-[12px] leading-4 text-muted">
+            When on, the text of new mail and of conversations people choose to summarise is sent to Workers AI on this same Cloudflare account, and Cloudflare bills it per use. Nothing goes to any other service.
+          </p>
+        </div>
+        <Switch checked={!!ai.data?.enabled} label="Turn on AI triage" disabled={ai.isPending || save.isPending} onChange={(enabled) => save.mutate({ enabled }, { onError })} />
+      </div>
+      {ai.data && !ai.data.available && (
+        <p className="mt-2 text-[12px] text-warning">This deployment has no AI binding, so nothing will run. Add the Workers AI binding to wrangler.jsonc and deploy.</p>
+      )}
+      <form
+        className="mt-5 flex items-end gap-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!valid || !dirty) return;
+          save.mutate({ dailyBudget: parsed }, { onSuccess: () => { setDraft(null); toast({ tone: 'success', title: 'AI budget saved', duration: 2500 }); }, onError });
+        }}
+      >
+        <Field label="Daily AI calls" className="min-w-0 flex-1 sm:max-w-xs sm:flex-none" error={valid ? null : 'Enter a whole number from 0 to 100,000.'}>
+          {(id, d) => (
+            <Input id={id} aria-describedby={d ? `${d} ai-budget-help` : 'ai-budget-help'} type="number" inputMode="numeric" min={0} max={100_000} step={1} disabled={ai.isPending} value={value} onChange={(e) => setDraft(e.target.value)} />
+          )}
+        </Field>
+        <Button type="submit" variant="primary" disabled={!valid || !dirty} loading={save.isPending}>Save</Button>
+      </form>
+      {ai.data && (
+        <div className="mt-3 max-w-xs">
+          <p className="tnum flex items-center gap-1.5 text-[13px]"><Sparkles size={14} strokeWidth={1.75} className="text-faint" /> {ai.data.usedToday.toLocaleString()} / {ai.data.dailyBudget.toLocaleString()} calls used today (UTC)</p>
+          {ai.data.dailyBudget > 0 && <UsageBar label="AI calls today" value={ai.data.usedToday} max={ai.data.dailyBudget} />}
+        </div>
+      )}
+      <p id="ai-budget-help" className="mt-1.5 text-[12px] leading-4 text-muted">
+        Caps AI calls per UTC day, one per message sorted or summary written. Over the cap, sorting stops quietly and Summarise says the limit was reached. Obvious mail (newsletters, notifications) is sorted without AI and costs nothing.
+      </p>
+    </Section>
+  );
+}
+
 const n = (x: number) => x.toLocaleString();
 
 export function OverviewPage() {
@@ -150,6 +206,7 @@ export function OverviewPage() {
             <DailyChart data={stats.data.daily} />
           </Section>
           <SendingSettings />
+          <AiSettings />
         </>
       )}
     </>

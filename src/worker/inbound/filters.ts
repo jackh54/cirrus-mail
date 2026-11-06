@@ -17,6 +17,7 @@ export interface FilterOutcome {
   star: boolean;
   trash: boolean;
   forwards: string[];
+  labelIds: string[];
   matched: string[];       // ids of filters that matched
 }
 
@@ -150,7 +151,7 @@ export function conditionMatches(cond: FilterCondition, s: FilterSubject): boole
 
 /** Runs enabled filters in `sort` order. All matching filters apply; a later move_to wins; delete wins over move. */
 export function evaluateFilters(filters: Filter[], s: FilterSubject): FilterOutcome {
-  const out: FilterOutcome = { folderId: null, markRead: false, star: false, trash: false, forwards: [], matched: [] };
+  const out: FilterOutcome = { folderId: null, markRead: false, star: false, trash: false, forwards: [], labelIds: [], matched: [] };
   for (const f of [...filters].sort((a, b) => a.sort - b.sort)) {
     if (!f.enabled || !f.conditions.length) continue;
     const hit = f.match === 'any' ? f.conditions.some((c) => conditionMatches(c, s)) : f.conditions.every((c) => conditionMatches(c, s));
@@ -161,6 +162,7 @@ export function evaluateFilters(filters: Filter[], s: FilterSubject): FilterOutc
       else if (a.type === 'mark_read') out.markRead = true;
       else if (a.type === 'star') out.star = true;
       else if (a.type === 'delete') out.trash = true;
+      else if (a.type === 'apply_label' && !out.labelIds.includes(a.labelId)) out.labelIds.push(a.labelId);
       else if (a.type === 'forward_to' && !out.forwards.includes(a.email)) out.forwards.push(a.email);
     }
   }

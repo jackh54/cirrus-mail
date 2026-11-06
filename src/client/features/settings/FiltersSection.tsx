@@ -7,6 +7,7 @@ import { Switch } from '../../components/Field';
 import { Section } from '../../components/PageShell';
 import { useToast } from '../../components/Toast';
 import { errorMessage } from '../../lib/api';
+import { useLabels } from '../../lib/queries/labels';
 import { useFolders } from '../../lib/queries/mail';
 import { useFilterMutations, useFilters } from '../../lib/queries/settings';
 import { describeFilter, FilterEditor } from './FilterEditor';
@@ -14,6 +15,7 @@ import { describeFilter, FilterEditor } from './FilterEditor';
 export function FiltersSection({ mb }: { mb: string }) {
   const filters = useFilters(mb);
   const folders = useFolders(mb);
+  const labels = useLabels(mb);
   const { create, update, remove } = useFilterMutations(mb);
   const confirm = useConfirm();
   const { toast } = useToast();
@@ -40,7 +42,7 @@ export function FiltersSection({ mb }: { mb: string }) {
               <Switch checked={f.enabled} label={`${f.name} enabled`} onChange={(enabled) => update.mutate({ ...f, enabled }, { onError })} />
               <div className="min-w-0 flex-1">
                 <p className="truncate text-[13px] font-medium">{f.name}</p>
-                <p className="truncate text-[12px] text-muted">{describeFilter(f, folders.data ?? [])}</p>
+                <p className="truncate text-[12px] text-muted">{describeFilter(f, folders.data ?? [], labels.data ?? [])}</p>
               </div>
               <IconButton label={`Edit ${f.name}`} size="sm" onClick={() => setEditing(f)}><Pencil size={14} /></IconButton>
               <IconButton
@@ -64,6 +66,7 @@ export function FiltersSection({ mb }: { mb: string }) {
         <FilterEditor
           initial={editing === 'new' ? null : editing}
           folders={folders.data ?? []}
+          labels={labels.data ?? []}
           saving={create.isPending || update.isPending}
           onCancel={() => setEditing(null)}
           onSave={save}

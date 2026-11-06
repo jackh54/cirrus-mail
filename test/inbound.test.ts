@@ -116,13 +116,13 @@ describe('inbound handler', () => {
     const spam = await deliver(addr, {
       from: 'Billing <billing@lookalike.test>', to: addr, subject: 'Invoice overdue', body: 'pay now',
       headers: { 'Authentication-Results': 'mx.cloudflare.net; dkim=fail; spf=fail; dmarc=fail header.from=lookalike.test' },
-      messageId: '<dup-1@lookalike.test>',
+      messageId: '<dup-1@lookalike.test>', date: new Date(0), // a fixed Date header: a second boundary between the two builds would change the hash
     });
     expect(spam.out.accepted && spam.out.folderId).toBe(mb.folders.spam);
     const again = await deliver(addr, {
       from: 'Billing <billing@lookalike.test>', to: addr, subject: 'Invoice overdue', body: 'pay now',
       headers: { 'Authentication-Results': 'mx.cloudflare.net; dkim=fail; spf=fail; dmarc=fail header.from=lookalike.test' },
-      messageId: '<dup-1@lookalike.test>',
+      messageId: '<dup-1@lookalike.test>', date: new Date(0), // a fixed Date header: a second boundary between the two builds would change the hash
     });
     expect(again.out.accepted && again.out.duplicate).toBe(true);
 
