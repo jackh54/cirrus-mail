@@ -18,3 +18,10 @@ describe('htmlToText', () => {
     expect(htmlToText('a'.repeat(HTML_TO_TEXT_MAX + 1000)).length).toBe(HTML_TO_TEXT_MAX);
   });
 });
+
+describe('htmlToText table cells', () => {
+  it('separates adjacent cells', async () => {
+    const { htmlToText } = await import('../src/worker/lib/html');
+    expect(htmlToText('<table><tr><td>Active mailboxes</td><td>1,284</td></tr></table>')).toContain('Active mailboxes 1,284');
+  });
+});

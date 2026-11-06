@@ -64,6 +64,7 @@ export function htmlToText(html: string): string {
     if (name === 'br') emit('\n');
     else if (name === 'li' && !closing) emit('\n- ');
     else if (BLOCK_ELEMENTS.has(name) || name === 'li') emit('\n');
+    else if ((name === 'td' || name === 'th') && closing) emit(' ');
     else if (name === 'a') {
       if (!closing) {
         const href = tag.length <= 4096 ? tag.match(/\bhref\s*=\s*["']([^"']*)["']/i)?.[1] ?? '' : '';
