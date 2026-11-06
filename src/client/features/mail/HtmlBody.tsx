@@ -30,7 +30,9 @@ export function HtmlBody({ html }: { html: string }) {
     const doc = measureFrame.current?.contentDocument;
     if (!doc?.documentElement) return;
     const root = doc.documentElement;
-    const h = Math.max(root.scrollHeight, doc.body?.scrollHeight ?? 0);
+    // scrollHeight rounds down; a fractional body height would otherwise leave a 1px inner scrollbar.
+    const rect = doc.body ? Math.ceil(doc.body.getBoundingClientRect().height) : 0;
+    const h = Math.max(root.scrollHeight, doc.body?.scrollHeight ?? 0, rect) + 1;
     const hScroll = root.scrollWidth > root.clientWidth + 1 ? 18 : 0;
     setHeight(Math.max(40, h + hScroll));
   }, []);

@@ -62,8 +62,8 @@ export const ThreadRow = memo(function ThreadRow({
     >
       <div className="relative mt-0.5 size-8 shrink-0 compact:size-6">
         <span className={cn('absolute inset-0 transition-opacity duration-100', (selecting || selected) ? 'opacity-0' : 'group-hover:opacity-0')}>
-          <Avatar address={first} size={32} className="compact:hidden" />
-          <Avatar address={first} size={24} className="hidden compact:inline-flex" />
+          <span className="block compact:hidden"><Avatar address={first} size={32} /></span>
+          <span className="hidden compact:block"><Avatar address={first} size={24} /></span>
         </span>
         <label
           className={cn(
