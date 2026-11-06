@@ -1,0 +1,68 @@
+name: Bug report
+description: Something in Cirrus Mail doesn't work as it should.
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. **Security problems go through [private reporting](https://github.com/jackh54/cirrus-mail/security/advisories/new), not here.**
+        Please don't paste real email content, addresses, tokens or secrets.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What went wrong, and what did you expect instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Go to ...
+        2. Click ...
+        3. See ...
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Receiving mail (Email Routing / inbound)
+        - Sending mail (Email Sending / outbound)
+        - Web client
+        - Search
+        - Admin
+        - Setup or deploy
+        - Docs
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: deploy
+    attributes:
+      label: How did you deploy?
+      options:
+        - Deploy to Cloudflare button
+        - CLI (npm run deploy)
+        - Local development (npm run dev)
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: "v0.1.0 or a commit SHA"
+  - type: input
+    id: browser
+    attributes:
+      label: Browser and OS
+      placeholder: "Safari 19 on iOS, Firefox 140 on Windows, ..."
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error messages or logs
+      description: API error codes (for example `E_SENDER_NOT_VERIFIED`), browser console errors, or `wrangler tail` output. Remove anything private first.
+      render: text
