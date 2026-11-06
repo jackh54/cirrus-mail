@@ -56,6 +56,7 @@
     "dompurify": "^3.4.17",
     "hono": "^4.13.16",
     "lucide-react": "^1.69.0",
+    "openpgp": "^6.3.2",
     "postal-mime": "^4.2.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",

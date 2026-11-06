@@ -24,6 +24,7 @@ import { AttachmentList } from './AttachmentList';
 import { ComposeFields } from './ComposeFields';
 import { RichEditor } from './RichEditor';
 import { SendButton } from './SendButton';
+import { usePgpCompose } from '../pgp/ComposePgp';
 import type { ComposeDraft } from './types';
 
 type Mode = 'normal' | 'min' | 'max';
@@ -92,6 +93,11 @@ export function ComposeSheet({ initial }: { initial: ComposeDraft }) {
     setError(null);
   }, []);
 
+  const pgp = usePgpCompose(draft, update, files.attachments.length);
+  // After "undo send" the server copy still holds the sealed (encrypted/signed) body: save the editor's text over it.
+  useEffect(() => {
+    if (initial.pgpSealed) setRev((r) => r + 1);
+  }, [initial.pgpSealed]);
   const templates = useTemplates(draft.mailboxId).data ?? [];
   const insertTemplate = (t: ReplyTemplate) => {
     editor.current?.chain().focus().insertContent(t.bodyHtml).run();
@@ -106,12 +112,16 @@ export function ComposeSheet({ initial }: { initial: ComposeDraft }) {
     if (invalid.length) return setError(`Fix the invalid address${invalid.length > 1 ? 'es' : ''}: ${invalid.map((a) => a.email).join(', ')}`);
     if (recipients.length > LIMITS.maxRecipients) return setError(`A message can have at most ${LIMITS.maxRecipients} recipients.`);
     if (files.busy) return setError('Wait for attachments to finish uploading.');
+    const pgpError = pgp.check();
+    if (pgpError) return setError(pgpError);
     if (!draft.subject.trim() && !(await confirm({ title: 'Send without a subject?', confirmLabel: 'Send anyway' }))) return;
     setSending(true);
     try {
       const draftId = await autosave.flush();
+      const sealed = await pgp.seal(draftId);
+      if (sealed === null) return setSending(false);
       autosave.stop();
-      compose.queueSend({ ...draft, draftId, attachments: files.attachments }, sendAt);
+      compose.queueSend({ ...draft, draftId, attachments: files.attachments, pgpSealed: sealed || draft.pgpSealed }, sendAt);
     } catch (e) {
       setError(errorMessage(e));
       setSending(false);
@@ -216,6 +226,7 @@ export function ComposeSheet({ initial }: { initial: ComposeDraft }) {
               {error}
             </p>
           )}
+          {pgp.notice}
           <SendingNotice className="mx-4 mb-2 shrink-0 group-data-keyboard/sheet:hidden" />
           {/* With the keyboard up it covers the home indicator, so the safe-area padding goes away. */}
           <footer className="flex shrink-0 items-center gap-1 px-3 pt-1 pb-[max(0.75rem,env(safe-area-inset-bottom))] group-data-keyboard/sheet:pb-2 max-md:gap-2">
@@ -233,6 +244,7 @@ export function ComposeSheet({ initial }: { initial: ComposeDraft }) {
                 e.target.value = '';
               }}
             />
+            {pgp.toggles}
             <Menu
               label="Insert template"
               align="start"
@@ -254,6 +266,7 @@ export function ComposeSheet({ initial }: { initial: ComposeDraft }) {
         </>
       )}
 
+      {pgp.dialog}
       {dragging && (
         <div className="pointer-events-none absolute inset-2 top-12 flex items-center justify-center rounded-md border border-dashed border-primary bg-elevated/95 text-[13px] font-medium text-selected-fg">
           Drop files to attach

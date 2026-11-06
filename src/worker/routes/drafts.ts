@@ -10,6 +10,7 @@ import {
 import { HttpError, notFound } from '../lib/errors';
 import { htmlToText, makeSnippet } from '../lib/html';
 import { jsonBody, zAddress, zHeaderText, zId } from '../lib/validate';
+import { checkPgpPayload } from '../lib/pgp';
 import { normalizeSubject } from '../inbound/thread';
 import { claimForSend, performSend, sendErrorStatus, validateDraft } from '../outbound/send';
 import type { AppEnv } from '../types';
@@ -30,6 +31,7 @@ const DraftSchema = z.object({
   text: z.string().max(10 * 1024 * 1024).optional(),
   parentId: zId.nullable().optional(),
   composeMode: z.enum(['new', 'reply', 'reply_all', 'forward']).optional(),
+  pgp: z.enum(['mime', 'inline']).nullable().optional(),
 });
 type DraftBody = z.infer<typeof DraftSchema>;
 
@@ -78,6 +80,7 @@ async function loadDraft(db: D1Database, mb: string, id: string): Promise<Messag
 
 drafts.post('/drafts', async (c) => {
   const b = await jsonBody(c, DraftSchema);
+  if (b.pgp) throw new HttpError(400, 'INVALID_PGP', 'Set the OpenPGP mode when saving the draft, not when creating it');
   const mb = c.get('mailbox').id;
   const db = c.env.DB;
   const fromName = await identityName(db, mb, b.from, c.get('user').name);
@@ -145,6 +148,7 @@ drafts.put('/drafts/:id', async (c) => {
   const db = c.env.DB;
   const id = c.req.param('id');
   if (!zId.safeParse(id).success) throw notFound('Draft not found');
+  checkPgpPayload(b.pgp, b.html, b.text);
   const text = b.text ?? htmlToText(b.html);
   // Every save uploads a new body object, so the row only ever points at a complete upload; the object it
   // replaces is deleted once the row has moved on. The upload overlaps the reads.
@@ -178,9 +182,9 @@ drafts.put('/drafts/:id', async (c) => {
     db.prepare(
       `UPDATE messages SET status = 'draft', error_code = NULL, error_message = NULL, from_email = ?, from_name = ?, to_json = ?, cc_json = ?,
          bcc_json = ?, subject = ?, snippet = ?, body_key = ?, body_inline = ?, size = ? + (SELECT COALESCE(SUM(size), 0) FROM attachments WHERE message_id = ?),
-         date = ?, updated_at = ? WHERE id = ? AND status IN ('draft','failed')`,
-    ).bind(b.from, fromName, JSON.stringify(to), JSON.stringify(cc), JSON.stringify(bcc), b.subject, makeSnippet(text), key, inlineBodyJson(b.html, text),
-      bytes(b.html) + bytes(text), row.id, now, now, row.id),
+         date = ?, updated_at = ?, pgp_mode = ? WHERE id = ? AND status IN ('draft','failed')`,
+    ).bind(b.from, fromName, JSON.stringify(to), JSON.stringify(cc), JSON.stringify(bcc), b.subject, b.pgp === 'mime' ? 'Encrypted message' : makeSnippet(text), key, inlineBodyJson(b.html, text),
+      bytes(b.html) + bytes(text), row.id, now, now, b.pgp ?? null, row.id),
     ...ftsDeleteStmts(db, [row.id], applied),
     ...ftsInsertStmts(db, { id: row.id, mailboxId: mb, subject: b.subject, addresses: addressesForFts({ email: b.from, name: fromName }, to, cc, bcc), body: text }, applied),
     db.prepare(`UPDATE threads SET subject_norm = ? WHERE id = ? AND NOT EXISTS (SELECT 1 FROM messages WHERE thread_id = ? AND status IN ('received','sent')) AND ${applied.sql}`)

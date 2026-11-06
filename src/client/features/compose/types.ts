@@ -14,6 +14,11 @@ export interface ComposeDraft {
   parentId: string | null;
   composeMode: ComposeMode;
   attachments: Attachment[];
+  /** OpenPGP toggles. Only held in the client; the body is sealed at send time. */
+  pgpEncrypt?: boolean;
+  pgpSign?: boolean;
+  /** The server copy was replaced by an encrypted/signed body, so the next save must write plaintext back. */
+  pgpSealed?: boolean;
 }
 
 export function toDraftInput(d: ComposeDraft): DraftInput {

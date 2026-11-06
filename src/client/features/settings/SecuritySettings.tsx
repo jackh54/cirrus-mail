@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { lazy, Suspense, useState, type FormEvent } from 'react';
 import { Laptop, Smartphone } from 'lucide-react';
 import { Button } from '../../components/Button';
 import { useConfirm } from '../../components/Confirm';
@@ -13,15 +13,19 @@ import { AppPasswordsSection, SyncHelpSection } from './AppPasswordsSection';
 import { PasskeySection } from './PasskeySection';
 import { TotpSection } from './TotpSection';
 
+// OpenPGP key management loads openpgp.js on demand, so it stays out of the settings chunk until used.
+const PgpSettings = lazy(() => import('../pgp/PgpSettings'));
+
 export function SecuritySettings() {
   return (
     <>
-      <PageTitle title="Security" description="Password, passkeys, two-factor authentication and signed-in devices." />
+      <PageTitle title="Security" description="Password, passkeys, two-factor authentication, PGP encryption and signed-in devices." />
       <PasswordSection />
       <PasskeySection />
       <TotpSection />
       <AppPasswordsSection />
       <SyncHelpSection />
+      <Suspense fallback={null}><PgpSettings /></Suspense>
       <SessionsSection />
     </>
   );
