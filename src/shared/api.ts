@@ -227,6 +227,10 @@ export interface BlockedSender { id: ID; pattern: string; createdAt: Millis }
 
 export interface PollResponse { newCount: number; latest: ThreadSummary[] }
 
+/** POST /api/proxy/sign: the client asks for signed proxy URLs for remote images (max 200 urls). */
+export interface ProxySignInput { urls: string[] }
+export interface ProxySignResponse { signed: Record<string, string> } // original url -> /api/proxy/image?u=..&s=..
+
 // ---------- admin ----------
 
 export interface AdminUser extends User {

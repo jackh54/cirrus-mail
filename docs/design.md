@@ -160,6 +160,7 @@ IDs are text ULIDs; `src/shared/ulid.ts` is the only generator. Timestamps are i
 | GET/POST/DELETE | `/api/mailboxes/:mb/blocked[/:id]` | blocked senders |
 | GET | `/api/mailboxes/:mb/poll?since=<ms>` | `{ newCount, latest: ThreadSummary[] }`, polled by the client every 30 s |
 | GET | `/api/files/:aid?e=&s=` | signed attachment download (`?inline=1` for images) |
+| POST | `/api/proxy/sign` | `{ urls: string[] }` (≤ 200, http/https only) → `{ signed: Record<url, proxyUrl> }` (session required) |
 | GET | `/api/proxy/image?u=&s=` | signed remote-image proxy |
 
 ### Admin (`role=admin`)
