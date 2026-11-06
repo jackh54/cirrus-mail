@@ -193,16 +193,43 @@ IDs are text ULIDs; `src/shared/ulid.ts` is the only generator. Timestamps are i
 - **PWA:** `manifest.webmanifest`, icons, and a minimal service worker that caches the app shell only, never mail.
 - **Screens:** Setup, Login (with TOTP step), Mail, Settings (Profile, Security/2FA/sessions, Mailbox: signature/vacation/filters/blocked, Appearance), Admin (Overview stats, Users, Domains with DNS check and setup guide, Mailboxes, Aliases).
 
-## 7. Brand
+## 7. Brand and visual system (v0.2 "Cobalt")
 
-- **Name:** Cirrus Mail. **Mark:** a soft cirrus-cloud stroke that forms an envelope flap.
-- **Colours:**
-  - primary `#4F6BFF` (iris)
-  - accent `#38D6C4` (mint)
-  - ink `#0E1424`
-  - paper `#F7F8FC`
-- **Type:** Inter for UI, JetBrains Mono for code.
-- **Assets:** `brand/` holds the logo SVGs (mark, wordmark, light and dark), favicon, PWA icons, social card and README banner. `site/` is the landing page. `docs/` holds the setup guide and architecture diagram.
+Cirrus is a tool people live in all day, so it should feel calm, fast and precise, like a well-made instrument, not a landing page. One colour does the work, and everything else is neutral graphite.
+
+- **Name:** Cirrus Mail. **Mark:** an envelope whose flap curls into a cirrus wisp, drawn in the cobalt→sky gradient.
+- **Cobalt (the one accent):** used only for the primary action, selection, focus, unread and links. Never as a large fill.
+
+| Token | Light | Dark |
+|---|---|---|
+| primary | `#2B63E8` | `#4C82FF` |
+| primary-hover | `#2456CF` | `#6A97FF` |
+| primary-soft / selected bg | `#ECF2FF` | `rgb(76 130 255 / 0.14)` |
+| selected-fg / link | `#1E4FC2` | `#8EB1FF` |
+| sky (gradient end, brand only) | `#5CC8F5` | `#5CC8F5` |
+
+- **Neutrals (graphite, hue-neutral, never navy):**
+
+| Token | Light | Dark |
+|---|---|---|
+| bg (list, reader) | `#FFFFFF` | `#131417` |
+| sidebar | `#F7F7F8` | `#0F1013` |
+| surface-2 / input | `#F3F4F6` | `#1B1C20` |
+| elevated (menus, compose) | `#FFFFFF` | `#1E1F24` |
+| border (hairline) | `#E7E8EB` | `#25272D` |
+| border-strong | `#D6D8DD` | `#33353C` |
+| fg | `#15171C` | `#ECEDEF` |
+| muted | `#5F6470` | `#9A9EA8` |
+| faint | `#8D919B` | `#6D717B` |
+| hover | `#F2F3F5` | `#1C1D21` |
+
+- **Status colours are muted and used sparingly:** danger `#D03A3A`/`#FF6B6B`, success `#1A8F5C`/`#4CC38A`, warning `#B26B00`/`#F5B14C`.
+- **Type:** Inter Variable with `cv11`, `ss01` and `tnum` for times. The UI base is 13px/20px, metadata 12px, the reader body 14.5px/1.6, and the thread subject 18px/600 with −0.01em tracking. No all-caps labels, no letter-spaced eyebrows.
+- **Shape:** radius 6px on controls, 10px on floating surfaces (menus, compose, dialogs), 0 on panes. Hairline 1px borders separate panes. No cards inside cards. Shadows only on floating layers.
+- **Density:** sidebar items 28px, thread rows two lines (about 58px comfortable, 40px compact), icon buttons 28px with 16px icons at stroke 1.75.
+- **Motion:** at most 120ms, only in response to an action (open, close, confirm). No entrance animations, no shimmer beyond skeletons. Respect `prefers-reduced-motion`.
+- **Speed is a feature:** opening a thread must feel instant. Prefetch on hover and j/k, render from cache first, update optimistically, and keep first-load JS small.
+- **Assets:** `brand/` holds the logo SVGs, favicon, PWA icons, social card and README banner. `site/` is the landing page. `docs/` holds the setup guide and architecture diagram.
 
 ## 8. Out of scope for v0.1 (roadmap)
 
