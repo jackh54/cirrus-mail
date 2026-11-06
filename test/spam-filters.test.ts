@@ -62,9 +62,13 @@ describe('spam scoring', () => {
     // Sender-supplied headers with another authserv-id (or a look-alike) are ignored; the topmost trusted one wins.
     const fake = 'mx.cloudflare.net.evil.test; dmarc=pass header.from=bank.test';
     const real = 'mx.cloudflare.net; dkim=none; spf=none smtp.helo=x; dmarc=fail header.from=bank.test';
-    expect(trustedAuthResults([fake, real])?.dmarc).toBe('fail');
+    expect(trustedAuthResults([real, fake])?.dmarc).toBe('fail');
+    expect(trustedAuthResults([fake, real])).toBeNull();
     expect(trustedAuthResults(['evil.test; dmarc=pass header.from=bank.test'])).toBeNull();
     expect(trustedAuthResults([real, 'mx.cloudflare.net; dmarc=pass header.from=bank.test'])?.dmarc).toBe('fail');
+    // Only the very first header counts: a planted Cloudflare-looking one below a non-Cloudflare first header is ignored.
+    expect(trustedAuthResults(['mx.google.com; dmarc=fail header.from=bank.test', 'mx.cloudflare.net; dmarc=pass header.from=bank.test'])).toBeNull();
+    expect(trustedAuthResults([])).toBeNull();
   });
 
   it('matches blocklist patterns', () => {

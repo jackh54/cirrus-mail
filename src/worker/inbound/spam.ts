@@ -118,15 +118,13 @@ export function parseAuthResults(header: string | null | undefined): ParsedAuth 
 }
 
 /**
- * The topmost Authentication-Results header stamped by Cloudflare (authserv-id exactly mx.cloudflare.net).
- * Headers with any other authserv-id, and ARC-Authentication-Results, are sender-controlled and ignored.
+ * The first Authentication-Results header in document order, and only when Cloudflare stamped it (authserv-id
+ * exactly mx.cloudflare.net). Cloudflare prepends its own, so anything below it, ARC-Authentication-Results
+ * included, is sender-controlled and ignored; a non-Cloudflare first header means no verdict at all.
  */
 export function trustedAuthResults(headerValues: string[]): ParsedAuth | null {
-  for (const v of headerValues) {
-    const p = parseAuthResults(v);
-    if (p?.authservId === TRUSTED_AUTHSERV_ID) return p;
-  }
-  return null;
+  const p = parseAuthResults(headerValues[0]);
+  return p?.authservId === TRUSTED_AUTHSERV_ID ? p : null;
 }
 
 /**

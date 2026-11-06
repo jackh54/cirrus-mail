@@ -253,9 +253,37 @@ describe('inbound handler', () => {
     if (!evil.out.accepted) throw new Error('rejected');
     expect(evil.out.threadId).not.toBe(sentThread);
     expect(await env.DB.prepare('SELECT message_id_hdr FROM messages WHERE id = ?').bind(evil.out.messageId).first<string | null>('message_id_hdr')).toBeNull();
+    // A redelivery of that same copy is still recognised as a duplicate, though its Message-ID was not stored.
+    const evilRaw = buildEml({ from: 'vendor@shady.test', to: addr, subject: 'Updated bank details for Q3', body: 'x', messageId: '<sent-1@cirrus.test>', date: new Date(0) });
+    const once = await processInbound(fakeEmail('vendor@shady.test', addr, evilRaw), env);
+    const twice = await processInbound(fakeEmail('vendor@shady.test', addr, evilRaw), env);
+    expect(twice.accepted && twice.duplicate).toBe(true);
+    expect(twice.accepted && once.accepted && twice.messageId).toBe(once.accepted ? once.messageId : null);
     const reply = await deliver(addr, { from: 'cfo@client.test', to: addr, subject: 'Re: Q3 invoices', body: 'ok', inReplyTo: '<sent-1@cirrus.test>' });
     expect(reply.out.accepted && reply.out.threadId).toBe(sentThread);
     expect(await env.DB.prepare('SELECT subject FROM threads WHERE id = ?').bind(sentThread).first<string>('subject')).toBe('Q3 invoices');
+  });
+
+  it('replies to our sent mail thread from any address; an unrelated reference falls back to the subject rule', async () => {
+    const addr = `${randomLocal()}@inbound.test`;
+    const mb = await createMailbox(addr);
+    const now = Date.now();
+    const sentThread = ulid();
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO threads (id, mailbox_id, subject, subject_norm, last_message_at, created_at) VALUES (?, ?, 'Refund', 'refund', ?, ?)").bind(sentThread, mb.id, now, now),
+      env.DB.prepare(`INSERT INTO messages (id, mailbox_id, thread_id, folder_id, direction, status, message_id_hdr, from_email, to_json, subject, date, created_at, updated_at, folder_changed_at)
+                      VALUES (?, ?, ?, ?, 'out', 'sent', '<sent-help@cirrus.test>', ?, '[{"email":"support@shop.test"}]', 'Refund', ?, ?, ?, ?)`)
+        .bind(ulid(), mb.id, sentThread, mb.folders.sent, addr, now, now, now, now),
+    ]);
+    const agent = await deliver(addr, { from: 'agent.kim@shop.test', to: addr, subject: 'Re: Refund [#4411]', body: 'x', inReplyTo: '<sent-help@cirrus.test>' });
+    expect(agent.out.accepted && agent.out.threadId).toBe(sentThread);
+
+    const first = await deliver(addr, { from: 'alice@team.test', to: addr, subject: 'Budget', body: 'x', messageId: '<budget-1@team.test>' });
+    const carol = await deliver(addr, { from: 'carol@team.test', to: addr, subject: 'Re: Budget', body: 'x', references: '<budget-1@team.test>', headers: { Cc: 'alice@team.test' } });
+    expect(carol.out.accepted && carol.out.threadId).toBe(first.out.accepted ? first.out.threadId : '');
+    // carol is now in the thread; her reply referencing only alice's message (no shared participant) still lands there by subject.
+    const again = await deliver(addr, { from: 'carol@team.test', to: addr, subject: 'Re: Budget', body: 'y', inReplyTo: '<budget-1@team.test>' });
+    expect(again.out.accepted && again.out.threadId).toBe(first.out.accepted ? first.out.threadId : '');
   });
 
   it('#7 a planted Message-ID neither drops the genuine message nor captures its replies', async () => {
@@ -323,6 +351,12 @@ describe('inbound handler', () => {
     await env.DB.prepare('UPDATE users SET disabled = 1 WHERE id = ?').bind(owner).run();
     expect((await send()).msg.forwarded).toEqual([]);
     await env.DB.prepare('UPDATE users SET disabled = 0 WHERE id = ?').bind(owner).run();
+    // Demoted to a plain member: no longer allowed to forward; an admin who is a plain member still is.
+    await env.DB.prepare("UPDATE mailbox_members SET role = 'member' WHERE mailbox_id = ? AND user_id = ?").bind(mb.id, owner).run();
+    expect((await send()).msg.forwarded).toEqual([]);
+    await env.DB.prepare("UPDATE users SET role = 'admin' WHERE id = ?").bind(owner).run();
+    expect((await send()).msg.forwarded).toEqual(['out@forward.test']);
+    await env.DB.prepare("UPDATE users SET role = 'member' WHERE id = ?").bind(owner).run();
     await env.DB.prepare('DELETE FROM mailbox_members WHERE mailbox_id = ? AND user_id = ?').bind(mb.id, owner).run();
     expect((await send()).msg.forwarded).toEqual([]);
   });

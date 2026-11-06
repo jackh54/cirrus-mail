@@ -105,11 +105,16 @@ export async function processInbound(message: ForwardableEmailMessage, env: Env)
   const hash = await contentHash(raw, [msgIdHdr, from.email, from.name ?? '', to.map((a) => a.email), cc.map((a) => a.email), subject, email.date ?? '', auth]);
 
   // The same message delivered twice (retries, alias + mailbox): keep the first copy. Only an identical copy
-  // counts, so a planted message reusing the Message-ID cannot make us drop a genuine one.
+  // counts, so a planted message reusing the Message-ID cannot make us drop a genuine one. A copy whose
+  // Message-ID collided with a sent one was stored with a NULL Message-ID; the hash (which covers the original
+  // id) still finds it, through the same (mailbox_id, message_id_hdr) index.
   if (msgIdHdr) {
     const seen = await db.prepare(
-      `SELECT (SELECT json_object('id', id, 'thread_id', thread_id, 'folder_id', folder_id) FROM messages
-                WHERE mailbox_id = ?1 AND message_id_hdr = ?2 AND direction = 'in' AND content_hash = ?3 LIMIT 1) AS dup,
+      `SELECT COALESCE(
+                (SELECT json_object('id', id, 'thread_id', thread_id, 'folder_id', folder_id) FROM messages
+                  WHERE mailbox_id = ?1 AND message_id_hdr = ?2 AND direction = 'in' AND content_hash = ?3 LIMIT 1),
+                (SELECT json_object('id', id, 'thread_id', thread_id, 'folder_id', folder_id) FROM messages
+                  WHERE mailbox_id = ?1 AND message_id_hdr IS NULL AND direction = 'in' AND content_hash = ?3 LIMIT 1)) AS dup,
               EXISTS (SELECT 1 FROM messages WHERE mailbox_id = ?1 AND message_id_hdr = ?2 AND direction = 'out') AS sent`,
     ).bind(mailboxId, msgIdHdr, hash).first<{ dup: string | null; sent: number }>();
     if (seen?.dup) {
@@ -126,10 +131,12 @@ export async function processInbound(message: ForwardableEmailMessage, env: Env)
     db.prepare('SELECT address FROM mailboxes WHERE id = ?1 UNION SELECT address FROM aliases WHERE mailbox_id = ?1').bind(mailboxId).all<{ address: string }>(),
     db.prepare('SELECT pattern FROM blocked_senders WHERE mailbox_id = ?').bind(mailboxId).all<{ pattern: string }>(),
     folderIdsByRole(db, mailboxId),
-    // creator_active: forward_to actions only run while their creator is an active member of the mailbox.
+    // creator_active: forward_to actions only run while their creator is an active member of the mailbox who is
+    // still allowed to create them (a mailbox owner or an admin).
     db.prepare(
       `SELECT f.*, EXISTS (SELECT 1 FROM mailbox_members mm JOIN users u ON u.id = mm.user_id
-                            WHERE mm.mailbox_id = f.mailbox_id AND mm.user_id = f.created_by AND u.disabled = 0) AS creator_active
+                            WHERE mm.mailbox_id = f.mailbox_id AND mm.user_id = f.created_by AND u.disabled = 0
+                              AND (mm.role = 'owner' OR u.role = 'admin')) AS creator_active
          FROM filters f WHERE f.mailbox_id = ? AND f.enabled = 1 ORDER BY f.sort`,
     ).bind(mailboxId).all<FilterRow & { creator_active: number }>(),
   ]);
