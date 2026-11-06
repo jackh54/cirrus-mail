@@ -1,0 +1,15 @@
+export const qk = {
+  me: ['me'] as const,
+  setup: ['setup'] as const,
+  folders: (mb: string) => ['folders', mb] as const,
+  threadsAll: (mb: string) => ['threads', mb] as const,
+  threads: (mb: string, folder: string, q: string) => ['threads', mb, folder, q] as const,
+  thread: (mb: string, tid: string) => ['thread', mb, tid] as const,
+  contacts: (q: string) => ['contacts', q] as const,
+  mailboxSettings: (mb: string) => ['mailbox-settings', mb] as const,
+  filters: (mb: string) => ['filters', mb] as const,
+  blocked: (mb: string) => ['blocked', mb] as const,
+  sessions: ['sessions'] as const,
+  admin: (what: 'users' | 'domains' | 'mailboxes' | 'aliases' | 'stats') => ['admin', what] as const,
+  domainCheck: (id: string) => ['admin', 'domain-check', id] as const,
+};
