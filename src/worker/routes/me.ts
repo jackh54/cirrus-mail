@@ -1,0 +1,137 @@
+import { Hono } from 'hono';
+import { z } from 'zod';
+import type { Identity, MailboxSummary, SessionInfo } from '../../shared/api';
+import { ulid } from '../../shared/ulid';
+import { base32Encode, hashPassword, randomBytes, sha256Hex, verifyPassword, verifyTotp } from '../lib/crypto';
+import { rowToUser, type UserRow } from '../lib/db';
+import { HttpError } from '../lib/errors';
+import { jsonBody, zPassword } from '../lib/validate';
+import { requireAuth } from '../middleware/session';
+import type { AppEnv } from '../types';
+import { normalizeRecoveryCode } from './auth';
+
+export const me = new Hono<AppEnv>();
+me.use('*', requireAuth);
+
+export async function mailboxSummaries(db: D1Database, user: UserRow): Promise<MailboxSummary[]> {
+  const [boxes, aliases] = await db.batch([
+    db.prepare(
+      `SELECT m.id, m.address, m.display_name, mm.role,
+              (SELECT COUNT(*) FROM messages x JOIN folders f ON f.id = x.folder_id
+                WHERE x.mailbox_id = m.id AND f.role = 'inbox' AND x.is_read = 0) AS unread
+         FROM mailboxes m JOIN mailbox_members mm ON mm.mailbox_id = m.id
+        WHERE mm.user_id = ? ORDER BY mm.role = 'member', m.address`,
+    ).bind(user.id),
+    db.prepare(
+      `SELECT a.address, a.mailbox_id FROM aliases a JOIN mailbox_members mm ON mm.mailbox_id = a.mailbox_id
+        WHERE mm.user_id = ? AND a.can_send = 1 ORDER BY a.address`,
+    ).bind(user.id),
+  ]);
+  const aliasMap = new Map<string, string[]>();
+  for (const a of aliases.results as { address: string; mailbox_id: string }[]) {
+    aliasMap.set(a.mailbox_id, [...(aliasMap.get(a.mailbox_id) ?? []), a.address]);
+  }
+  return (boxes.results as { id: string; address: string; display_name: string; role: 'owner' | 'member'; unread: number }[]).map((b) => {
+    const name = b.display_name || user.name;
+    const identities: Identity[] = [
+      { email: b.address, name, isAlias: false },
+      ...(aliasMap.get(b.id) ?? []).map((email) => ({ email, name, isAlias: true })),
+    ];
+    return { id: b.id, address: b.address, displayName: b.display_name, role: b.role, unread: b.unread, identities };
+  });
+}
+
+me.get('/', async (c) => {
+  const user = c.get('user');
+  return c.json({ user: rowToUser(user), mailboxes: await mailboxSummaries(c.env.DB, user) });
+});
+
+const UpdateMeSchema = z.object({
+  name: z.string().trim().min(1).max(120).optional(),
+  theme: z.enum(['system', 'light', 'dark']).optional(),
+  density: z.enum(['comfortable', 'compact']).optional(),
+});
+
+me.patch('/', async (c) => {
+  const body = await jsonBody(c, UpdateMeSchema);
+  const u = c.get('user');
+  await c.env.DB.prepare('UPDATE users SET name = ?, theme = ?, density = ?, updated_at = ? WHERE id = ?')
+    .bind(body.name ?? u.name, body.theme ?? u.theme, body.density ?? u.density, Date.now(), u.id).run();
+  const user = await c.env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(u.id).first<UserRow>();
+  return c.json({ user: rowToUser(user!) });
+});
+
+me.post('/password', async (c) => {
+  const body = await jsonBody(c, z.object({ current: z.string().min(1).max(256), next: zPassword }));
+  const u = c.get('user');
+  if (!(await verifyPassword(body.current, u.password_hash))) throw new HttpError(400, 'INVALID_PASSWORD', 'Current password is incorrect');
+  await c.env.DB.batch([
+    c.env.DB.prepare('UPDATE users SET password_hash = ?, must_change_password = 0, updated_at = ? WHERE id = ?')
+      .bind(await hashPassword(body.next), Date.now(), u.id),
+    // Changing the password signs out every other session.
+    c.env.DB.prepare('DELETE FROM sessions WHERE user_id = ? AND id != ?').bind(u.id, c.get('sessionId')),
+  ]);
+  return c.json({ ok: true });
+});
+
+me.post('/totp/begin', async (c) => {
+  const u = c.get('user');
+  if (u.totp_secret) throw new HttpError(409, 'TOTP_ALREADY_ENABLED', 'Two-factor authentication is already enabled');
+  const secret = base32Encode(randomBytes(20));
+  await c.env.DB.prepare('UPDATE users SET totp_pending = ?, updated_at = ? WHERE id = ?').bind(secret, Date.now(), u.id).run();
+  const issuer = c.env.APP_NAME || 'Cirrus Mail';
+  const label = encodeURIComponent(`${issuer}:${u.email}`);
+  const otpauthUrl = `otpauth://totp/${label}?secret=${secret}&issuer=${encodeURIComponent(issuer)}&algorithm=SHA1&digits=6&period=30`;
+  return c.json({ secret, otpauthUrl });
+});
+
+function recoveryCode(): string {
+  const s = base32Encode(randomBytes(7)).toLowerCase().slice(0, 10);
+  return `${s.slice(0, 5)}-${s.slice(5, 10)}`;
+}
+
+me.post('/totp/enable', async (c) => {
+  const body = await jsonBody(c, z.object({ code: z.string().trim().min(6).max(10) }));
+  const u = c.get('user');
+  if (u.totp_secret) throw new HttpError(409, 'TOTP_ALREADY_ENABLED', 'Two-factor authentication is already enabled');
+  if (!u.totp_pending) throw new HttpError(400, 'TOTP_NOT_STARTED', 'Start enrolment first');
+  if (!(await verifyTotp(u.totp_pending, body.code))) throw new HttpError(400, 'INVALID_CODE', 'That code is not valid');
+  const codes = Array.from({ length: 10 }, recoveryCode);
+  const now = Date.now();
+  await c.env.DB.batch([
+    c.env.DB.prepare('UPDATE users SET totp_secret = totp_pending, totp_pending = NULL, updated_at = ? WHERE id = ?').bind(now, u.id),
+    c.env.DB.prepare('DELETE FROM recovery_codes WHERE user_id = ?').bind(u.id),
+    ...(await Promise.all(codes.map(async (code) =>
+      c.env.DB.prepare('INSERT INTO recovery_codes (id, user_id, code_hash) VALUES (?, ?, ?)')
+        .bind(ulid(now), u.id, await sha256Hex(normalizeRecoveryCode(code)))))),
+  ]);
+  return c.json({ recoveryCodes: codes });
+});
+
+me.post('/totp/disable', async (c) => {
+  const body = await jsonBody(c, z.object({ password: z.string().min(1).max(256) }));
+  const u = c.get('user');
+  if (!(await verifyPassword(body.password, u.password_hash))) throw new HttpError(400, 'INVALID_PASSWORD', 'Password is incorrect');
+  await c.env.DB.batch([
+    c.env.DB.prepare('UPDATE users SET totp_secret = NULL, totp_pending = NULL, updated_at = ? WHERE id = ?').bind(Date.now(), u.id),
+    c.env.DB.prepare('DELETE FROM recovery_codes WHERE user_id = ?').bind(u.id),
+  ]);
+  return c.json({ ok: true });
+});
+
+me.get('/sessions', async (c) => {
+  const { results } = await c.env.DB.prepare(
+    'SELECT id, user_agent, created_at, last_seen_at FROM sessions WHERE user_id = ? AND expires_at > ? ORDER BY last_seen_at DESC',
+  ).bind(c.get('user').id, Date.now()).all<{ id: string; user_agent: string | null; created_at: number; last_seen_at: number }>();
+  const current = c.get('sessionId');
+  const items: SessionInfo[] = results.map((s) => ({
+    id: s.id, userAgent: s.user_agent, createdAt: s.created_at, lastSeenAt: s.last_seen_at, current: s.id === current,
+  }));
+  return c.json(items);
+});
+
+me.delete('/sessions/:id', async (c) => {
+  const res = await c.env.DB.prepare('DELETE FROM sessions WHERE id = ? AND user_id = ?').bind(c.req.param('id'), c.get('user').id).run();
+  if (!res.meta.changes) throw new HttpError(404, 'NOT_FOUND', 'Session not found');
+  return c.json({ ok: true });
+});
