@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type DragEvent } from 'react';
-import { Check, CloudOff, Maximize2, Minimize2, Minus, Paperclip, Trash2, X } from 'lucide-react';
-import type { Address } from '@shared/api';
+import { Check, CloudOff, FileText, Maximize2, Minimize2, Minus, Paperclip, Trash2, X } from 'lucide-react';
+import type { Editor } from '@tiptap/react';
+import type { Address, ReplyTemplate } from '@shared/api';
 import { LIMITS } from '@shared/api';
 import { IconButton } from '../../components/Button';
+import { Menu } from '../../components/Menu';
 import { SendingNotice } from '../../components/SendingNotice';
 import { Spinner } from '../../components/Spinner';
 import { useToast } from '../../components/Toast';
@@ -11,6 +13,7 @@ import { cn } from '../../lib/cn';
 import { errorMessage } from '../../lib/api';
 import { isValidEmail } from '../../lib/format';
 import { useMeData } from '../../lib/queries/me';
+import { useTemplates } from '../../lib/queries/templates';
 import { useMediaQuery } from '../mail/useMailRoute';
 import { identitiesOf } from './identities';
 import { useCompose } from './ComposeProvider';
@@ -74,6 +77,7 @@ export function ComposeSheet({ initial }: { initial: ComposeDraft }) {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const editor = useRef<Editor | null>(null);
   const mobile = useMediaQuery('(max-width: 767px)');
   const viewport = useVisualViewport(mobile && mode !== 'min');
 
@@ -87,6 +91,12 @@ export function ComposeSheet({ initial }: { initial: ComposeDraft }) {
     setRev((r) => r + 1);
     setError(null);
   }, []);
+
+  const templates = useTemplates(draft.mailboxId).data ?? [];
+  const insertTemplate = (t: ReplyTemplate) => {
+    editor.current?.chain().focus().insertContent(t.bodyHtml).run();
+    if (t.subject && !draft.subject.trim()) update({ subject: t.subject });
+  };
 
   const recipients: Address[] = [...draft.to, ...draft.cc, ...draft.bcc];
   const invalid = recipients.filter((a) => !isValidEmail(a.email));
@@ -192,6 +202,7 @@ export function ComposeSheet({ initial }: { initial: ComposeDraft }) {
             initialHtml={initial.html}
             onChange={(html) => update({ html })}
             autofocus={draft.composeMode !== 'new' && draft.to.length > 0}
+            onReady={(e) => (editor.current = e)}
             className="min-h-0 flex-1"
           />
           <AttachmentList
@@ -221,6 +232,19 @@ export function ComposeSheet({ initial }: { initial: ComposeDraft }) {
                 if (e.target.files?.length) void files.addFiles(Array.from(e.target.files));
                 e.target.value = '';
               }}
+            />
+            <Menu
+              label="Insert template"
+              align="start"
+              width={260}
+              items={templates.length
+                ? templates.map((t) => ({ label: t.name, icon: <FileText />, onSelect: () => insertTemplate(t) }))
+                : [{ kind: 'heading', label: 'No templates yet. Add them in Settings → Mailbox.' }]}
+              trigger={(p) => (
+                <IconButton {...p} label="Insert template" tipSide="top">
+                  <FileText size={16} />
+                </IconButton>
+              )}
             />
             <span className="flex-1" />
             <IconButton label="Discard draft" tipSide="top" tipAlign="end" onClick={() => void discard()}>

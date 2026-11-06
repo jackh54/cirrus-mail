@@ -2,6 +2,7 @@
 import type { Address, Attachment, AuthResults, FolderRole, MessageFull, ThreadSummary, User } from '../../shared/api';
 import { parseJsonAddresses } from './addresses';
 import { signFileUrl } from './sign';
+import { unsubscribeInfo } from './unsubscribe';
 
 export interface UserRow {
   id: string; email: string; name: string; password_hash: string; role: 'admin' | 'member';
@@ -18,7 +19,7 @@ export interface MessageRow {
   is_starred: number; spam_score: number; auth_json: string | null; list_id: string | null; send_at: number | null;
   sent_at: number | null; error_code: string | null; error_message: string | null; date: number; scheduled_by: string | null;
   created_at: number; updated_at: number; folder_changed_at: number; fts_rowid: number | null;
-  display_date: number | null; content_hash: string | null;
+  display_date: number | null; content_hash: string | null; unsub_json: string | null;
 }
 
 export interface AttachmentRow {
@@ -29,7 +30,7 @@ export interface AttachmentRow {
 export interface ThreadRow {
   id: string; mailbox_id: string; subject: string; subject_norm: string; snippet: string; participants: string;
   message_count: number; unread_count: number; has_attachments: number; is_starred: number;
-  last_message_at: number; created_at: number;
+  last_message_at: number; created_at: number; snoozed_until: number | null; muted: number;
 }
 
 export interface StoredBody { html: string | null; text: string | null }
@@ -100,7 +101,7 @@ export function threadRowToSummary(t: ThreadRow, folderIds: string[], lastMessag
   return {
     id: t.id, subject: t.subject, snippet: t.snippet, participants, messageCount: t.message_count,
     unreadCount: t.unread_count, hasAttachments: !!t.has_attachments, isStarred: !!t.is_starred,
-    lastMessageAt: lastMessageAt ?? t.last_message_at, folderIds,
+    lastMessageAt: lastMessageAt ?? t.last_message_at, folderIds, snoozedUntil: t.snoozed_until ?? null, muted: !!t.muted,
   };
 }
 
@@ -185,7 +186,7 @@ export function messageRowToFull(r: MessageRow, body: StoredBody, attachments: A
     to: parseJsonAddresses(r.to_json), cc: parseJsonAddresses(r.cc_json), bcc: parseJsonAddresses(r.bcc_json),
     replyTo: r.reply_to, subject: r.subject, snippet: r.snippet,
     html: html ? rewriteCids(html, attachments) : html, text: body.text, attachments,
-    isRead: !!r.is_read, isStarred: !!r.is_starred, spamScore: r.spam_score, auth, listId: r.list_id,
+    isRead: !!r.is_read, isStarred: !!r.is_starred, spamScore: r.spam_score, auth, listId: r.list_id, unsubscribe: unsubscribeInfo(r.unsub_json),
     sendAt: r.send_at, sentAt: r.sent_at, errorCode: r.error_code, errorMessage: r.error_message, date: r.display_date ?? r.date,
   };
 }

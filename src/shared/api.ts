@@ -96,6 +96,8 @@ export interface ThreadSummary {
   isStarred: boolean;
   lastMessageAt: Millis;
   folderIds: ID[];              // folders that contain at least one message of this thread
+  snoozedUntil: Millis | null;  // hidden from the Inbox until then (listed under Snoozed)
+  muted: boolean;               // new messages skip the Inbox (Archive, read, no push)
 }
 
 export type MessageStatus = 'received' | 'draft' | 'scheduled' | 'sending' | 'sent' | 'failed';
@@ -143,6 +145,8 @@ export interface MessageFull {
   spamScore: number;
   auth: AuthResults | null;
   listId: string | null;
+  /** How this message can be unsubscribed from; null unless it carried List-Unsubscribe and passed aligned authentication. */
+  unsubscribe: UnsubscribeInfo | null;
   sendAt: Millis | null;
   sentAt: Millis | null;
   errorCode: string | null;
@@ -157,12 +161,14 @@ export interface ThreadDetail {
 
 export type ThreadAction =
   | 'read' | 'unread' | 'star' | 'unstar' | 'archive' | 'trash'
-  | 'spam' | 'not_spam' | 'move' | 'delete_forever';
+  | 'spam' | 'not_spam' | 'move' | 'delete_forever'
+  | 'snooze' | 'unsnooze' | 'mute' | 'unmute';
 
 export interface ThreadActionInput {
   threadIds: ID[];
   action: ThreadAction;
   folderId?: ID;                // required for 'move'
+  until?: Millis;               // required for 'snooze': a future time, at most a year away
 }
 
 export interface DraftInput {
@@ -428,7 +434,43 @@ export const SEND_WARN_RATIO = 0.8;
 /** GET/PATCH /api/admin/settings */
 export interface AdminSettings { dailySendLimit: number | null } // PATCH: 1..1,000,000, or null to clear
 
+// ---------- unsubscribe ----------
+
+/** What the reader needs to offer "Unsubscribe". The action itself only takes a message id. */
+export interface UnsubscribeInfo {
+  /** one_click: the server POSTs; mailto: the server sends the email; link: the browser opens `url`. */
+  method: 'one_click' | 'mailto' | 'link';
+  host: string;                 // hostname of the https URL, or the domain of the mailto address, for the confirmation
+  url: string | null;           // https only; opened by the browser for `link`
+}
+
+/** POST /api/mailboxes/:mb/messages/:id/unsubscribe */
+export interface UnsubscribeInput { blockSender?: boolean }
+export interface UnsubscribeResponse {
+  method: UnsubscribeInfo['method'];
+  /** one_click and mailto: whether the request or the email went out. link: always true (the browser opens it). */
+  ok: boolean;
+  blocked: boolean;
+  url: string | null;
+}
+
+// ---------- reply templates ----------
+
+/** GET/POST /api/mailboxes/:mb/templates, PATCH/DELETE /api/mailboxes/:mb/templates/:id. Shared by the mailbox's members. */
+export interface ReplyTemplate {
+  id: ID;
+  name: string;
+  subject: string;              // optional: fills an empty subject
+  bodyHtml: string;             // sanitised on the way in
+  updatedAt: Millis;
+}
+export interface ReplyTemplateInput { name: string; subject: string; bodyHtml: string }
+
 // ---------- limits shared by both sides ----------
+
+export const MAX_TEMPLATES_PER_MAILBOX = 100;
+export const MAX_SNOOZE_MS = 366 * 24 * 3600 * 1000;
+
 
 export const LIMITS = {
   maxRecipients: 50,

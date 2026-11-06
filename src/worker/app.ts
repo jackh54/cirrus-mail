@@ -17,6 +17,8 @@ import { proxy } from './routes/proxy';
 import { push } from './routes/push';
 import { sending } from './routes/sending';
 import { setup } from './routes/setup';
+import { templates } from './routes/templates';
+import { unsubscribe } from './routes/unsubscribe';
 import type { AppEnv } from './types';
 
 const mailbox = new Hono<AppEnv>();
@@ -29,6 +31,8 @@ mailbox.route('/', drafts);
 mailbox.route('/', mailboxSettings);
 mailbox.route('/', filters);
 mailbox.route('/', blocked);
+mailbox.route('/', templates);
+mailbox.route('/', unsubscribe);
 
 export const app = new Hono<AppEnv>().basePath('/api');
 

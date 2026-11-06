@@ -1,7 +1,7 @@
 import { createElement, useMemo, type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 import {
-  AtSign, Globe, Inbox, Keyboard, LayoutDashboard, Mail, Moon, Palette, PenLine, Search, Shield, Sun, User, Users,
+  AlarmClock, AtSign, BellOff, Globe, Inbox, Keyboard, LayoutDashboard, Mail, Moon, Palette, PenLine, Search, Shield, Sun, User, Users,
   type LucideIcon,
 } from 'lucide-react';
 import { useFolders } from '../../lib/queries/mail';
@@ -10,6 +10,7 @@ import { getLastMailbox } from '../../lib/storage';
 import { useCompose } from '../compose/ComposeProvider';
 import { SYSTEM_ORDER, VIEW_META } from '../mail/folderMeta';
 import { OPEN_SHORTCUTS_EVENT } from '../mail/ShortcutsOverlay';
+import { MUTE_EVENT, SNOOZE_EVENT } from './events';
 
 export type Group = 'Search' | 'Actions' | 'Go to' | 'Mailboxes' | 'Settings' | 'Admin';
 
@@ -43,6 +44,12 @@ export function useCommands(query: string): Command[] {
     if (mb) {
       out.push({ id: 'compose', group: 'Actions', label: 'Compose', icon: icon(PenLine), shortcut: 'C', keywords: ['new message', 'write', 'email'], run: () => compose.open({ mailboxId: mb, mode: 'new' }) });
     }
+    if (mb && pathname.startsWith('/mail/')) {
+      out.push(
+        { id: 'snooze', group: 'Actions', label: 'Snooze conversation…', icon: icon(AlarmClock), shortcut: 'B', keywords: ['later', 'remind', 'defer'], run: () => window.dispatchEvent(new Event(SNOOZE_EVENT)) },
+        { id: 'mute', group: 'Actions', label: 'Mute or unmute conversation', icon: icon(BellOff), shortcut: 'M', keywords: ['silence', 'ignore', 'notifications'], run: () => window.dispatchEvent(new Event(MUTE_EVENT)) },
+      );
+    }
     const dark = document.documentElement.classList.contains('dark');
     out.push(
       { id: 'theme', group: 'Actions', label: 'Toggle theme', icon: icon(dark ? Sun : Moon), keywords: ['dark mode', 'light mode', 'appearance'], run: () => updatePrefs({ theme: dark ? 'light' : 'dark' }) },
@@ -50,7 +57,7 @@ export function useCommands(query: string): Command[] {
     );
     if (mb) {
       for (const role of SYSTEM_ORDER) {
-        if (role !== 'starred' && !folders?.some((f) => f.role === role)) continue;
+        if (role !== 'starred' && role !== 'snoozed' && !folders?.some((f) => f.role === role)) continue;
         const meta = VIEW_META[role];
         out.push({ id: `go-${role}`, group: 'Go to', label: `Go to ${meta.label}`, icon: meta.icon(16), keywords: [meta.label], run: () => navigate(`/mail/${mb}/${role}`) });
       }
@@ -75,7 +82,7 @@ export function useCommands(query: string): Command[] {
       }
     }
     return out;
-  }, [mb, folders, mailboxes, user.role, compose, navigate, updatePrefs]);
+  }, [mb, pathname, folders, mailboxes, user.role, compose, navigate, updatePrefs]);
 
   return useMemo(() => {
     if (!q || !mb) return base;

@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
-import type { Folder, FolderRole, ThreadSummary } from '../../shared/api';
+import { MAX_SNOOZE_MS, type Folder, type FolderRole, type ThreadSummary } from '../../shared/api';
 import { ulid } from '../../shared/ulid';
 import {
   attachmentToApi, decodeCursor, deleteMessagesForever, encodeCursor, loadBody, loadMessageFull, messageRowToFull,
@@ -96,6 +96,7 @@ mail.delete('/folders/:id', async (c) => {
 
 const INBOX_SQL = "(SELECT id FROM folders WHERE mailbox_id = ? AND role = 'inbox')";
 const TRASH_SPAM_SQL = "(SELECT id FROM folders WHERE mailbox_id = ? AND role IN ('trash','spam'))";
+const SNOOZED_SQL = '(SELECT id FROM threads WHERE mailbox_id = ? AND snoozed_until IS NOT NULL)';
 
 type ListRow = PageRow & { draft?: string | null };
 
@@ -114,15 +115,19 @@ export function listThreadsStmts(
   if (opts.folder === 'starred') {
     where.push('m.is_starred = 1', `m.folder_id NOT IN ${TRASH_SPAM_SQL}`);
     params.push(mb);
+  } else if (opts.folder === 'snoozed') {
+    where.push(`m.thread_id IN ${SNOOZED_SQL}`, `m.folder_id NOT IN ${TRASH_SPAM_SQL}`);
+    params.push(mb, mb);
   } else if (opts.folder) {
-    where.push('m.folder_id = ?');
-    params.push(opts.folder);
+    // Snoozed threads leave the Inbox view (their other messages elsewhere stay put).
+    where.push('m.folder_id = ?', `NOT (m.folder_id = ${INBOX_SQL} AND m.thread_id IN ${SNOOZED_SQL})`);
+    params.push(opts.folder, mb, mb);
   } else if (opts.q) {
     where.push(`m.folder_id NOT IN ${TRASH_SPAM_SQL}`);
     params.push(mb);
   } else {
-    where.push(`m.folder_id = ${INBOX_SQL}`);
-    params.push(mb);
+    where.push(`m.folder_id = ${INBOX_SQL}`, `m.thread_id NOT IN ${SNOOZED_SQL}`);
+    params.push(mb, mb);
   }
   if (opts.q) {
     const s = buildSearchSql(parseSearch(opts.q));
@@ -139,7 +144,7 @@ export function listThreadsStmts(
   const pageSql = `SELECT m.thread_id AS tid, MAX(m.date) AS k FROM ${authz.from} messages m WHERE ${where.join(' AND ')}
       GROUP BY m.thread_id ${having} ORDER BY k DESC, tid DESC LIMIT ?`;
   // In Drafts, a row shows the latest draft itself: its subject, snippet and recipients.
-  const draftCol = opts.folder && opts.folder !== 'starred'
+  const draftCol = opts.folder && opts.folder !== 'starred' && opts.folder !== 'snoozed'
     ? `, CASE WHEN EXISTS (SELECT 1 FROM folders WHERE id = ? AND mailbox_id = ? AND role = 'drafts') THEN (
          SELECT json_object('subject', d.subject, 'snippet', d.snippet, 'to', d.to_json) FROM messages d
           WHERE +d.mailbox_id = ? AND +d.folder_id = ? AND d.thread_id = page.tid ORDER BY d.date DESC LIMIT 1) END AS draft`
@@ -201,8 +206,9 @@ mailReads.get('/threads/:tid', async (c) => {
 
 const ActionSchema = z.object({
   threadIds: z.array(zId).min(1).max(500),
-  action: z.enum(['read', 'unread', 'star', 'unstar', 'archive', 'trash', 'spam', 'not_spam', 'move', 'delete_forever']),
+  action: z.enum(['read', 'unread', 'star', 'unstar', 'archive', 'trash', 'spam', 'not_spam', 'move', 'delete_forever', 'snooze', 'unsnooze', 'mute', 'unmute']),
   folderId: zId.optional(),
+  until: z.number().int().optional(),
 });
 
 mail.post('/threads/actions', async (c) => {
@@ -229,6 +235,9 @@ mail.post('/threads/actions', async (c) => {
     return c.json({ ok: true });
   }
 
+  if (body.action === 'snooze' && (body.until === undefined || body.until <= now || body.until > now + MAX_SNOOZE_MS)) {
+    throw new HttpError(400, 'INVALID_SNOOZE', 'Pick a time in the future, within a year');
+  }
   let target: { id: string; role: FolderRole | null } | null = null;
   if (body.action === 'move') {
     const [owned, folder] = await db.batch([
@@ -246,6 +255,9 @@ mail.post('/threads/actions', async (c) => {
     db.prepare(`UPDATE messages SET folder_id = ?, folder_changed_at = ?, updated_at = ? WHERE ${scope} AND folder_id != ? ${extra}`)
       .bind(to, now, now, mb, ...ids, to, ...extraParams);
   const NOT_OUTBOX = "AND status NOT IN ('draft','scheduled','sending')";
+  const threadsIn = `mailbox_id = ? AND id IN (${ph})`;
+  // Moving a thread out of where it was ends its snooze.
+  const unsnooze = db.prepare(`UPDATE threads SET snoozed_until = NULL WHERE ${threadsIn}`).bind(mb, ...ids);
   let writes: D1PreparedStatement[];
   switch (body.action) {
     case 'read':
@@ -257,23 +269,34 @@ mail.post('/threads/actions', async (c) => {
       writes = [db.prepare(`UPDATE messages SET is_starred = ?, updated_at = ? WHERE ${scope} ${NOT_OUTBOX}`).bind(body.action === 'star' ? 1 : 0, now, mb, ...ids)];
       break;
     case 'archive':
-      writes = [move(roles.archive, 'AND folder_id = ?', [roles.inbox])];
+      writes = [move(roles.archive, 'AND folder_id = ?', [roles.inbox]), unsnooze];
       break;
     case 'trash':
       // Trashing cancels any scheduled send in the thread so the cron cannot deliver it from Trash.
       writes = [
         db.prepare(`UPDATE messages SET status = 'draft', send_at = NULL WHERE ${scope} AND status = 'scheduled'`).bind(mb, ...ids),
         move(roles.trash),
+        unsnooze,
       ];
       break;
     case 'spam':
-      writes = [move(roles.spam, "AND direction = 'in' AND folder_id != ?", [roles.trash])];
+      writes = [move(roles.spam, "AND direction = 'in' AND folder_id != ?", [roles.trash]), unsnooze];
       break;
     case 'not_spam':
-      writes = [move(roles.inbox, 'AND folder_id = ?', [roles.spam])];
+      writes = [move(roles.inbox, 'AND folder_id = ?', [roles.spam]), unsnooze];
       break;
     case 'move':
-      writes = [move(target!.id, NOT_OUTBOX)];
+      writes = [move(target!.id, NOT_OUTBOX), unsnooze];
+      break;
+    case 'snooze':
+      writes = [db.prepare(`UPDATE threads SET snoozed_until = ? WHERE ${threadsIn}`).bind(body.until, mb, ...ids)];
+      break;
+    case 'unsnooze':
+      writes = [unsnooze];
+      break;
+    case 'mute':
+    case 'unmute':
+      writes = [db.prepare(`UPDATE threads SET muted = ? WHERE ${threadsIn}`).bind(body.action === 'mute' ? 1 : 0, mb, ...ids)];
       break;
   }
   // One round trip: the ownership check (read before the writes in the same transaction), the writes and the

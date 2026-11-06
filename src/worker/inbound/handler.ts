@@ -6,6 +6,7 @@ import { dedupeAddresses, domainOf, fromParsed, normalizeEmail } from '../lib/ad
 import { sha256Hex } from '../lib/crypto';
 import { addressesForFts, folderIdsByRole, ftsInsertStmts, recomputeThreadStmts } from '../lib/db';
 import { htmlToText, makeSnippet } from '../lib/html';
+import { mayStoreUnsub, parseListUnsubscribe } from '../lib/unsubscribe';
 import { notifyNewMail } from '../push';
 import { maybeAutoreply, type AutoreplyMailbox } from './autoreply';
 import { evaluateFilters, rowToFilter, type FilterRow } from './filters';
@@ -172,6 +173,13 @@ export async function processInbound(message: ForwardableEmailMessage, env: Env,
   const inReplyTo = parseMessageIds(email.inReplyTo);
   const existingThread = await findThread(db, { mailboxId, inReplyTo, references, subjectNorm, participants, ownAddresses, now });
 
+  // A muted thread's new mail skips the Inbox; a snoozed one is brought back by a reply.
+  const threadFlags = existingThread
+    ? await db.prepare('SELECT muted, snoozed_until FROM threads WHERE id = ? AND mailbox_id = ?').bind(existingThread, mailboxId).first<{ muted: number; snoozed_until: number | null }>()
+    : null;
+  // One-click unsubscribe data is only trusted from authenticated senders.
+  const unsub = mayStoreUnsub(auth) ? parseListUnsubscribe(header('list-unsubscribe'), header('list-unsubscribe-post')) : null;
+
   // 7. Filters (skipped for spam so a rule cannot pull spam back into the inbox).
   const attachmentsAll = email.attachments.slice(0, 100);
   const isInlinePart = (a: (typeof attachmentsAll)[number]) => !!a.contentId && (a.disposition === 'inline' || !!a.related);
@@ -197,6 +205,11 @@ export async function processInbound(message: ForwardableEmailMessage, env: Env,
     if (outcome.markRead) isRead = 1;
     if (outcome.star) isStarred = 1;
     forwards = outcome.forwards;
+  }
+
+  if (threadFlags?.muted && folderId === roles.inbox) {
+    folderId = roles.archive;
+    isRead = 1;
   }
 
   // 4. Store raw, body and attachments in R2.
@@ -231,16 +244,20 @@ export async function processInbound(message: ForwardableEmailMessage, env: Env,
   stmts.push(db.prepare(
     `INSERT INTO messages (id, mailbox_id, thread_id, folder_id, direction, status, message_id_hdr, in_reply_to, references_hdr,
        from_email, from_name, to_json, cc_json, bcc_json, reply_to, subject, snippet, body_key, raw_key, size, has_attachments,
-       is_read, is_starred, spam_score, auth_json, list_id, date, display_date, content_hash, created_at, updated_at, folder_changed_at)
-     VALUES (?, ?, ?, ?, 'in', 'received', ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       is_read, is_starred, spam_score, auth_json, list_id, date, display_date, content_hash, created_at, updated_at, folder_changed_at, unsub_json)
+     VALUES (?, ?, ?, ?, 'in', 'received', ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).bind(id, mailboxId, threadId, folderId, msgIdHdr, inReplyTo[0] ?? null, references.length ? references.join(' ').slice(0, 8000) : null,
     from.email, from.name ?? '', JSON.stringify(to), JSON.stringify(cc), replyTo, subject, makeSnippet(text), bodyKey, rawKey, size,
-    hasAttachments ? 1 : 0, isRead, isStarred, spam.score, auth ? JSON.stringify(auth) : null, listId, date, shownDate, hash, now, now, now));
+    hasAttachments ? 1 : 0, isRead, isStarred, spam.score, auth ? JSON.stringify(auth) : null, listId, date, shownDate, hash, now, now, now,
+    unsub ? JSON.stringify(unsub) : null));
   for (const a of atts) {
     stmts.push(db.prepare('INSERT INTO attachments (id, message_id, mailbox_id, filename, mime_type, size, content_id, inline, r2_key, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
       .bind(a.id, id, mailboxId, a.filename, a.mime, a.bytes.byteLength, a.contentId, a.inline, a.key, now));
   }
   stmts.push(...ftsInsertStmts(db, { id, mailboxId, subject, addresses: addressesForFts(from, to, cc), body: text }));
+  if (threadFlags?.snoozed_until && folderId === roles.inbox) {
+    stmts.push(db.prepare('UPDATE threads SET snoozed_until = NULL WHERE id = ?').bind(threadId));
+  }
   stmts.push(...recomputeThreadStmts(db, threadId));
   stmts.push(db.prepare('INSERT INTO receive_log (id, mailbox_id, accepted, reason, size, created_at) VALUES (?, ?, 1, ?, ?, ?)')
     .bind(ulid(now), mailboxId, spam.isSpam ? 'spam' : null, size, now));

@@ -1,9 +1,10 @@
 import { memo, useRef, type ReactNode } from 'react';
-import { Archive, Clock, Mail, MailOpen, Paperclip, Star, Trash2 } from 'lucide-react';
+import { AlarmClock, Archive, BellOff, Clock, Mail, MailOpen, Paperclip, Star, Trash2 } from 'lucide-react';
 import type { ThreadAction, ThreadSummary } from '@shared/api';
 import { IconButton } from '../../components/Button';
 import { cn } from '../../lib/cn';
 import { displayName, longDate, smartTime } from '../../lib/format';
+import { snoozeLabel } from '../../lib/snooze';
 
 /** ThreadSummary may carry `sendAt` for Scheduled items (not in the v0.1 contract yet). */
 type Row = ThreadSummary & { sendAt?: number | null };
@@ -68,6 +69,7 @@ export const ThreadRow = memo(function ThreadRow({
   );
   const marks = (
     <>
+      {t.muted && <BellOff size={13} strokeWidth={1.75} className="text-faint" aria-label="Muted" />}
       {t.hasAttachments && <Paperclip size={13} strokeWidth={1.75} className="text-faint" aria-label="Has attachments" />}
       {t.isStarred && <Star size={13} strokeWidth={1.75} className="fill-amber-400 text-amber-400" aria-label="Starred" />}
     </>
@@ -78,6 +80,11 @@ export const ThreadRow = memo(function ThreadRow({
     </span>
   ) : (
     <span className="min-w-0 truncate">
+      {t.snoozedUntil && (
+        <span className="mr-1.5 inline-flex items-center gap-1 text-selected-fg" title={longDate(t.snoozedUntil)}>
+          <AlarmClock size={12} strokeWidth={1.75} className="shrink-0" /> until {snoozeLabel(t.snoozedUntil)}
+        </span>
+      )}
       <span className={cn('text-fg', unread && 'font-medium')}>{subject}</span>
       {t.snippet && <span className="text-muted"> — {t.snippet}</span>}
     </span>
@@ -157,7 +164,14 @@ export const ThreadRow = memo(function ThreadRow({
             <div className="mt-0.5 flex text-[14px] leading-5">{line2}</div>
           ) : (
             <>
-              <div className={cn('mt-0.5 truncate text-[14px] leading-5 text-fg', unread && 'font-medium')}>{subject}</div>
+              <div className={cn('mt-0.5 truncate text-[14px] leading-5 text-fg', unread && 'font-medium')}>
+                {t.snoozedUntil && (
+                  <span className="mr-1.5 inline-flex items-center gap-1 font-normal text-selected-fg">
+                    <AlarmClock size={13} strokeWidth={1.75} className="shrink-0" /> until {snoozeLabel(t.snoozedUntil)}
+                  </span>
+                )}
+                {subject}
+              </div>
               {t.snippet && <div className="truncate text-[14px] leading-5 text-muted compact:hidden">{t.snippet}</div>}
             </>
           )}

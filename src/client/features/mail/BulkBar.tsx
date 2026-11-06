@@ -1,4 +1,4 @@
-import { Archive, FolderInput, Mail, MailOpen, ShieldAlert, ShieldCheck, Star, StarOff, Trash2, X } from 'lucide-react';
+import { AlarmClock, Archive, FolderInput, Mail, MailOpen, ShieldAlert, ShieldCheck, Star, StarOff, Trash2, X } from 'lucide-react';
 import type { Folder, ThreadAction } from '@shared/api';
 import { IconButton } from '../../components/Button';
 import { Menu } from '../../components/Menu';
@@ -11,9 +11,10 @@ interface Props {
   folders: Folder[];
   onAction: (a: ThreadAction, folderId?: string) => void;
   onSelectAll: (on: boolean) => void;
+  onSnooze: () => void;
 }
 
-export function BulkBar({ count, total, role, folders, onAction, onSelectAll }: Props) {
+export function BulkBar({ count, total, role, folders, onAction, onSelectAll, onSnooze }: Props) {
   const trashLike = role === 'trash' || role === 'spam';
   const movable = folders.filter((f) => f.role === 'inbox' || f.role === 'archive' || !f.role);
   return (
@@ -38,6 +39,7 @@ export function BulkBar({ count, total, role, folders, onAction, onSelectAll }: 
       ) : (
         <IconButton label="Mark as spam" onClick={() => onAction('spam')}><ShieldAlert size={16} /></IconButton>
       )}
+      <IconButton label="Snooze" shortcut="B" onClick={onSnooze}><AlarmClock size={16} /></IconButton>
       <IconButton label="Mark as read" shortcut="⇧I" onClick={() => onAction('read')}><MailOpen size={16} /></IconButton>
       <IconButton label="Mark as unread" shortcut="⇧U" onClick={() => onAction('unread')}><Mail size={16} /></IconButton>
       <IconButton label="Star" onClick={() => onAction('star')}><Star size={16} /></IconButton>

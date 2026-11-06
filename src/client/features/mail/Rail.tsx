@@ -60,8 +60,9 @@ export function Rail({ mailbox, folders, onNavigate }: Props) {
         <ul className="space-y-px">
           {folders
             ? SYSTEM_ORDER.map((role) => {
-                const f = role === 'starred' ? null : folders.find((x) => x.role === role);
-                if (role !== 'starred' && !f) return null;
+                const virtual = role === 'starred' || role === 'snoozed';
+                const f = virtual ? null : folders.find((x) => x.role === role);
+                if (!virtual && !f) return null;
                 const meta = VIEW_META[role];
                 const count = !f ? 0 : role === 'drafts' || role === 'scheduled' ? f.total : role === 'sent' || role === 'trash' || role === 'archive' ? 0 : f.unread;
                 return (

@@ -65,8 +65,12 @@ export function prefetchThread(qc: QueryClient, mb: string, tid: string): void {
 
 const MOVES: ThreadAction[] = ['archive', 'trash', 'spam', 'not_spam', 'move', 'delete_forever'];
 
-function patchThread(t: ThreadSummary, action: ThreadAction): ThreadSummary {
+function patchThread(t: ThreadSummary, action: ThreadAction, until?: number): ThreadSummary {
   switch (action) {
+    case 'snooze': return { ...t, snoozedUntil: until ?? null };
+    case 'unsnooze': return { ...t, snoozedUntil: null };
+    case 'mute': return { ...t, muted: true };
+    case 'unmute': return { ...t, muted: false };
     case 'read': return { ...t, unreadCount: 0 };
     case 'unread': return { ...t, unreadCount: Math.max(1, t.unreadCount) };
     case 'star': return { ...t, isStarred: true };
@@ -75,19 +79,21 @@ function patchThread(t: ThreadSummary, action: ThreadAction): ThreadSummary {
   }
 }
 
-function patchList(data: ThreadsData, ids: Set<string>, input: ThreadActionInput, listKey: string): ThreadsData {
+function patchList(data: ThreadsData, ids: Set<string>, input: ThreadActionInput, listKey: string, inboxId?: string): ThreadsData {
   const { action } = input;
   const removes =
     action === 'delete_forever' ||
     (action === 'unstar' && listKey === 'starred') ||
-    (MOVES.includes(action) && listKey !== 'starred' && listKey !== 'search' && input.folderId !== listKey);
+    (action === 'snooze' && !!inboxId && listKey === inboxId) ||
+    (action === 'unsnooze' && listKey === 'snoozed') ||
+    (MOVES.includes(action) && listKey !== 'starred' && listKey !== 'snoozed' && listKey !== 'search' && input.folderId !== listKey);
   return {
     ...data,
     pages: data.pages.map((p) => ({
       ...p,
       items: removes
         ? p.items.filter((t) => !ids.has(t.id))
-        : p.items.map((t) => (ids.has(t.id) ? patchThread(t, action) : t)),
+        : p.items.map((t) => (ids.has(t.id) ? patchThread(t, action, input.until) : t)),
     })),
   };
 }
@@ -129,11 +135,11 @@ export function useThreadAction(mb: string) {
       }
 
       for (const [key, data] of lists) {
-        if (data) qc.setQueryData<ThreadsData>(key, patchList(data, ids, input, String(key[2] ?? '')));
+        if (data) qc.setQueryData<ThreadsData>(key, patchList(data, ids, input, String(key[2] ?? ''), folders?.find((f) => f.role === 'inbox')?.id));
       }
       for (const [id, d] of details) {
         if (!d) continue;
-        const thread = patchThread(d.thread, input.action);
+        const thread = patchThread(d.thread, input.action, input.until);
         const messages = d.messages.map((m) => {
           if (input.action === 'read') return { ...m, isRead: true };
           if (input.action === 'star' || input.action === 'unstar') return { ...m, isStarred: input.action === 'star' };

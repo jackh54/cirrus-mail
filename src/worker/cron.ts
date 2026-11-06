@@ -1,6 +1,7 @@
 // scheduled(): every minute send due scheduled messages; at minute 0 purge and prune.
 import { deleteMessagesForever } from './lib/db';
 import { utcDay } from './lib/sendcount';
+import { wakeDueSnoozed } from './snooze';
 import { checkScheduled, claimForSend, mailboxMemberIds, performSend, recordOutcome } from './outbound/send';
 
 const DAY = 24 * 3600 * 1000;
@@ -65,6 +66,11 @@ export async function runCron(env: Env, scheduledTime: number): Promise<void> {
     await sendDueScheduled(env);
   } catch (e) {
     console.error('cron send error', (e as Error).name);
+  }
+  try {
+    await wakeDueSnoozed(env);
+  } catch (e) {
+    console.error('cron snooze error', (e as Error).name);
   }
   if (new Date(scheduledTime).getUTCMinutes() === 0) {
     try {

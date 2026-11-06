@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Archive, ArrowLeft, ChevronDown, ChevronUp, FolderInput, Forward, Mail, Reply, ReplyAll, ShieldAlert, ShieldCheck, Star, Trash2 } from 'lucide-react';
+import { AlarmClock, Archive, ArrowLeft, ChevronDown, ChevronUp, FolderInput, Forward, Mail, Reply, ReplyAll, ShieldAlert, ShieldCheck, Star, Trash2 } from 'lucide-react';
 import type { Folder, ThreadAction } from '@shared/api';
 import { IconButton } from '../../components/Button';
 import { Menu } from '../../components/Menu';
@@ -13,12 +13,13 @@ interface Props {
   showBack: boolean;
   onBack: () => void;
   onAction: (a: ThreadAction, folderId?: string) => void;
+  onSnooze: () => void;
   onStep?: (delta: number) => void;
   /** Phones: only back, spam and star up here; the rest lives in the bottom ReaderActionBar. */
   mobile?: boolean;
 }
 
-export function ReaderToolbar({ role, starred, folders, showBack, onBack, onAction, onStep, mobile }: Props) {
+export function ReaderToolbar({ role, starred, folders, showBack, onBack, onAction, onSnooze, onStep, mobile }: Props) {
   const trashLike = role === 'trash' || role === 'spam';
   const movable = folders.filter((f) => f.role === 'inbox' || f.role === 'archive' || !f.role);
   if (mobile) {
@@ -63,6 +64,7 @@ export function ReaderToolbar({ role, starred, folders, showBack, onBack, onActi
         items={movable.length ? movable.map((f) => ({ label: f.name, onSelect: () => onAction('move', f.id) })) : [{ kind: 'heading', label: 'No folders' }]}
         trigger={(p) => <IconButton {...p} label="Move to folder"><FolderInput size={16} /></IconButton>}
       />
+      <IconButton label="Snooze" shortcut="B" onClick={onSnooze}><AlarmClock size={16} /></IconButton>
       <span className="mx-1.5 h-4 w-px bg-border" aria-hidden="true" />
       <IconButton label="Mark as unread" shortcut="⇧U" onClick={() => onAction('unread')}><Mail size={16} /></IconButton>
       <IconButton label={starred ? 'Unstar' : 'Star'} shortcut="S" onClick={() => onAction(starred ? 'unstar' : 'star')}>
@@ -83,11 +85,12 @@ interface BarProps {
   folders: Folder[];
   onAction: (a: ThreadAction, folderId?: string) => void;
   onReply: (mode: 'reply' | 'reply_all' | 'forward') => void;
+  onSnooze: () => void;
   canReply: boolean;
 }
 
 /** Phone reader: the main actions in a bottom bar within thumb reach, padded above the home indicator. */
-export function ReaderActionBar({ role, folders, onAction, onReply, canReply }: BarProps) {
+export function ReaderActionBar({ role, folders, onAction, onReply, onSnooze, canReply }: BarProps) {
   const trashLike = role === 'trash' || role === 'spam';
   const movable = folders.filter((f) => f.role === 'inbox' || f.role === 'archive' || !f.role);
   return (
@@ -108,6 +111,7 @@ export function ReaderActionBar({ role, folders, onAction, onReply, canReply }: 
         items={movable.length ? movable.map((f) => ({ label: f.name, icon: <FolderInput />, onSelect: () => onAction('move', f.id) })) : [{ kind: 'heading', label: 'No folders' }]}
         trigger={(p) => <BarButton {...p} label="Move to folder"><FolderInput /></BarButton>}
       />
+      <BarButton label="Snooze" onClick={onSnooze}><AlarmClock /></BarButton>
       <BarButton label="Mark as unread" onClick={() => onAction('unread')}><Mail /></BarButton>
       <Menu
         label="Reply options"

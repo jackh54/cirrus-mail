@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Ban, ChevronDown, Code2, FolderInput, Forward, Mail, Moon, MoreHorizontal, Reply, ReplyAll, Star, Sun } from 'lucide-react';
+import { AlarmClock, Ban, Bell, BellOff, ChevronDown, Code2, FolderInput, Forward, Mail, Moon, MoreHorizontal, Reply, ReplyAll, Star, Sun } from 'lucide-react';
 import type { Address, Folder, MessageFull } from '@shared/api';
 import { Avatar } from '../../components/Avatar';
 import { IconButton } from '../../components/Button';
@@ -8,10 +8,14 @@ import { displayName, longDate, smartTime } from '../../lib/format';
 import { useDarkTheme } from '../../lib/theme';
 import { setOverride, useRenderPref, wantsDark } from './renderPrefs';
 import { AuthBadge } from './AuthBadge';
+import { UnsubscribeDialog } from './UnsubscribeDialog';
 
 interface Props {
   message: MessageFull;
   starred: boolean;
+  muted: boolean;
+  /** This is the latest message with an unsubscribe option: show the link. */
+  unsubscribable: boolean;
   mailboxId: string;
   folders: Folder[];
   myEmails: Set<string>;
@@ -20,6 +24,8 @@ interface Props {
   onMove: (folderId: string) => void;
   onBlock: (email: string) => void;
   onMarkUnread: () => void;
+  onMute: () => void;
+  onSnooze: () => void;
   onCollapse: () => void;
 }
 
@@ -27,8 +33,9 @@ function list(xs: Address[], mine: Set<string>): string {
   return xs.map((a) => (mine.has(a.email.toLowerCase()) ? 'me' : displayName(a))).join(', ');
 }
 
-export function MessageHeader({ message: m, starred, mailboxId, folders, myEmails, onStar, onReply, onMove, onBlock, onMarkUnread, onCollapse }: Props) {
+export function MessageHeader({ message: m, starred, muted, unsubscribable, mailboxId, folders, myEmails, onStar, onReply, onMove, onBlock, onMarkUnread, onMute, onSnooze, onCollapse }: Props) {
   const [details, setDetails] = useState(false);
+  const [unsubscribing, setUnsubscribing] = useState(false);
   const recipients = list([...m.to, ...m.cc], myEmails);
   const movable = folders.filter((f) => f.role === 'inbox' || f.role === 'archive' || !f.role);
   const items: MenuItem[] = [
@@ -37,6 +44,8 @@ export function MessageHeader({ message: m, starred, mailboxId, folders, myEmail
     { label: 'Forward', icon: <Forward />, onSelect: () => onReply('forward'), hint: 'F' },
     { kind: 'separator' },
     { label: 'Mark as unread', icon: <Mail />, onSelect: onMarkUnread, hint: '⇧U' },
+    { label: 'Snooze…', icon: <AlarmClock />, onSelect: onSnooze, hint: 'B' },
+    { label: muted ? 'Unmute conversation' : 'Mute conversation', icon: muted ? <Bell /> : <BellOff />, onSelect: onMute, hint: 'M' },
     {
       label: 'Show original',
       icon: <Code2 />,
@@ -58,6 +67,15 @@ export function MessageHeader({ message: m, starred, mailboxId, folders, myEmail
           <span className="truncate text-[13px] font-semibold text-fg">{displayName(m.from)}</span>
           <span className="min-w-0 truncate text-[12px] text-muted max-sm:hidden">{m.from.email}</span>
           <AuthBadge auth={m.auth} />
+          {unsubscribable && m.unsubscribe && (
+            <button
+              type="button"
+              onClick={() => setUnsubscribing(true)}
+              className="shrink-0 rounded px-1 text-[12px] text-selected-fg hover:underline pointer-coarse:min-h-11 pointer-coarse:px-2"
+            >
+              Unsubscribe
+            </button>
+          )}
         </div>
         <button
           type="button"
@@ -103,6 +121,7 @@ export function MessageHeader({ message: m, starred, mailboxId, folders, myEmail
           )}
         />
       </div>
+      {unsubscribing && <UnsubscribeDialog mailboxId={mailboxId} message={m} onClose={() => setUnsubscribing(false)} />}
     </div>
   );
 }

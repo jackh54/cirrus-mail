@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { useLatest } from '../../lib/useLatest';
 import { useQueryClient } from '@tanstack/react-query';
-import { Archive, CheckSquare, Mail, MailOpen, Menu as MenuIcon, RefreshCw, Star, Trash, Trash2 } from 'lucide-react';
+import { AlarmClock, Archive, BellOff, Bell, CheckSquare, Mail, MailOpen, Menu as MenuIcon, RefreshCw, Star, Trash, Trash2 } from 'lucide-react';
 import type { Folder, MailboxSummary, ThreadAction, ThreadSummary } from '@shared/api';
 import { ActionSheet, type SheetAction } from '../../components/ActionSheet';
 import { Button, IconButton } from '../../components/Button';
@@ -130,6 +130,7 @@ export function ThreadListPane({ mailbox, view, folders, ctl, onOpenMenu, mobile
           role={view.role}
           folders={folders}
           onSelectAll={selectAll}
+          onSnooze={() => ctl.openSnooze([...selected])}
           onAction={(a, folderId) => void act(a, [...selected], folderId)}
         />
       ) : (
@@ -214,14 +215,14 @@ export function ThreadListPane({ mailbox, view, folders, ctl, onOpenMenu, mobile
           open
           title={sheetFor.subject || '(no subject)'}
           onClose={() => setSheetFor(null)}
-          actions={sheetActions(sheetFor, view.role, (a) => void act(a, [sheetFor.id]), () => toggle(sheetFor.id, threads.indexOf(sheetFor), false))}
+          actions={sheetActions(sheetFor, view.role, (a) => void act(a, [sheetFor.id]), () => toggle(sheetFor.id, threads.indexOf(sheetFor), false), () => ctl.openSnooze([sheetFor.id]))}
         />
       )}
     </section>
   );
 }
 
-function sheetActions(t: ThreadSummary, role: ResolvedView['role'], run: (a: ThreadAction) => void, select: () => void): SheetAction[] {
+function sheetActions(t: ThreadSummary, role: ResolvedView['role'], run: (a: ThreadAction) => void, select: () => void, snooze: () => void): SheetAction[] {
   const unread = t.unreadCount > 0;
   const trashLike = role === 'trash' || role === 'spam';
   return [
@@ -231,6 +232,12 @@ function sheetActions(t: ThreadSummary, role: ResolvedView['role'], run: (a: Thr
       : { label: 'Move to Trash', icon: <Trash2 />, onSelect: () => run('trash') },
     { label: unread ? 'Mark as read' : 'Mark as unread', icon: unread ? <MailOpen /> : <Mail />, onSelect: () => run(unread ? 'read' : 'unread') },
     { label: t.isStarred ? 'Unstar' : 'Star', icon: <Star />, onSelect: () => run(t.isStarred ? 'unstar' : 'star') },
+    t.snoozedUntil
+      ? { label: 'Unsnooze', icon: <AlarmClock />, onSelect: () => run('unsnooze') }
+      : { label: 'Snooze…', icon: <AlarmClock />, onSelect: snooze },
+    t.muted
+      ? { label: 'Unmute', icon: <Bell />, onSelect: () => run('unmute') }
+      : { label: 'Mute', icon: <BellOff />, onSelect: () => run('mute') },
     { label: 'Select', icon: <CheckSquare />, onSelect: select },
   ];
 }

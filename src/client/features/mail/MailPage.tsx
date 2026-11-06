@@ -12,6 +12,7 @@ import { resolveView } from './folderMeta';
 import { Rail } from './Rail';
 import { ReaderEmpty } from './ReaderEmpty';
 import { ReaderPane } from './ReaderPane';
+import { SnoozeDialog } from './SnoozeDialog';
 import { ThreadListPane } from './ThreadListPane';
 import { useLayoutMode, useMailRoute } from './useMailRoute';
 import { useMailController } from './useMailController';
@@ -127,6 +128,17 @@ export function MailPage() {
         ) : (
           <ReaderEmpty />
         ))}
+      <SnoozeDialog
+        open={!!ctl.snoozeIds}
+        onClose={ctl.closeSnooze}
+        onPick={(at) => {
+          const ids = ctl.snoozeIds;
+          ctl.closeSnooze();
+          if (!ids) return;
+          void ctl.act('snooze', ids, undefined, at);
+          ctl.selectAll(false);
+        }}
+      />
       {mobile && !threadId && !compose.isOpen && (
         <button
           type="button"

@@ -54,6 +54,8 @@ export function ReaderPane({ mailbox, threadId, view, folders, ctl, showBack, mo
   const messages = data?.messages ?? [];
   const sent = messages.filter((m) => m.status !== 'draft');
   const latest: MessageFull | undefined = sent[sent.length - 1];
+  // "Unsubscribe" is offered on the latest message that carries a way to do it.
+  const unsubscribeId = [...messages].reverse().find((m) => m.unsubscribe)?.id;
 
   // Latest message and unread ones start expanded.
   useEffect(() => {
@@ -141,6 +143,7 @@ export function ReaderPane({ mailbox, threadId, view, folders, ctl, showBack, mo
         showBack={showBack}
         onBack={back}
         onAction={act}
+        onSnooze={() => ctl.openSnooze([threadId])}
         onStep={ctl.threads.length > 1 ? step : undefined}
         mobile={mobile}
       />
@@ -159,6 +162,8 @@ export function ReaderPane({ mailbox, threadId, view, folders, ctl, showBack, mo
                   message={m}
                   expanded={expanded.has(m.id)}
                   starred={data.thread.isStarred}
+                  muted={data.thread.muted}
+                  unsubscribable={m.id === unsubscribeId}
                   mailboxId={mb}
                   folders={folders}
                   myEmails={myEmails}
@@ -175,6 +180,8 @@ export function ReaderPane({ mailbox, threadId, view, folders, ctl, showBack, mo
                   onMove={(folderId) => act('move', folderId)}
                   onBlock={(email) => void block(email)}
                   onMarkUnread={() => act('unread')}
+                  onMute={() => act(data.thread.muted ? 'unmute' : 'mute')}
+                  onSnooze={() => ctl.openSnooze([threadId])}
                   onEditDraft={() => compose.open({ mailboxId: mb, mode: 'draft', draft: m })}
                   onCancelSchedule={() => void cancelSchedule(m)}
                 />
@@ -184,7 +191,7 @@ export function ReaderPane({ mailbox, threadId, view, folders, ctl, showBack, mo
           </div>
         )}
       </div>
-      {mobile && <ReaderActionBar role={view?.role} folders={folders} onAction={act} onReply={(mode) => reply(mode)} canReply={!!latest} />}
+      {mobile && <ReaderActionBar role={view?.role} folders={folders} onAction={act} onReply={(mode) => reply(mode)} onSnooze={() => ctl.openSnooze([threadId])} canReply={!!latest} />}
     </section>
   );
 }

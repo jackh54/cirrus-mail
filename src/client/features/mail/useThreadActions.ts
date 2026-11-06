@@ -3,7 +3,7 @@ import type { Folder, ThreadAction } from '@shared/api';
 import { useConfirm } from '../../components/Confirm';
 import { useToast } from '../../components/Toast';
 import { errorMessage } from '../../lib/api';
-import { pluralize } from '../../lib/format';
+import { longDate, pluralize } from '../../lib/format';
 import { useThreadAction } from '../../lib/queries/mail';
 
 const DONE: Partial<Record<ThreadAction, string>> = {
@@ -12,7 +12,12 @@ const DONE: Partial<Record<ThreadAction, string>> = {
   spam: 'Marked as spam',
   not_spam: 'Moved to Inbox',
   delete_forever: 'Deleted forever',
+  unsnooze: 'Moved back to Inbox',
+  mute: 'Conversation muted',
+  unmute: 'Conversation unmuted',
 };
+
+const REVERSE: Partial<Record<ThreadAction, ThreadAction>> = { snooze: 'unsnooze', mute: 'unmute', unmute: 'mute' };
 
 const UNDOABLE: ThreadAction[] = ['archive', 'trash', 'spam', 'move'];
 
@@ -26,7 +31,7 @@ export function useThreadActions(mb: string, listKey: string | null, folders: Fo
   const confirm = useConfirm();
 
   return useCallback(
-    async (action: ThreadAction, threadIds: string[], folderId?: string): Promise<boolean> => {
+    async (action: ThreadAction, threadIds: string[], folderId?: string, until?: number): Promise<boolean> => {
       if (!threadIds.length) return false;
       if (action === 'delete_forever') {
         const ok = await confirm({
@@ -37,20 +42,23 @@ export function useThreadActions(mb: string, listKey: string | null, folders: Fo
         });
         if (!ok) return false;
       }
-      const canUndo = UNDOABLE.includes(action) && !!listKey && listKey !== 'starred' && listKey !== 'search';
+      const canUndo = UNDOABLE.includes(action) && !!listKey && listKey !== 'starred' && listKey !== 'snoozed' && listKey !== 'search';
+      const reverse = REVERSE[action];
       const targetName = action === 'move' ? folders?.find((f) => f.id === folderId)?.name : undefined;
       mutation.mutate(
-        { threadIds, action, folderId },
+        { threadIds, action, folderId, until },
         {
           onSuccess: () => {
-            const label = action === 'move' ? `Moved to ${targetName ?? 'folder'}` : DONE[action];
+            const label = action === 'move' ? `Moved to ${targetName ?? 'folder'}` : action === 'snooze' ? `Snoozed until ${longDate(until ?? 0)}` : DONE[action];
             if (!label) return;
             toast({
               title: threadIds.length > 1 ? `${label} · ${pluralize(threadIds.length, 'conversation')}` : label,
               tone: action === 'delete_forever' ? 'neutral' : 'success',
-              action: canUndo && listKey
-                ? { label: 'Undo', onClick: () => mutation.mutate({ threadIds, action: 'move', folderId: listKey }) }
-                : undefined,
+              action: reverse
+                ? { label: 'Undo', onClick: () => mutation.mutate({ threadIds, action: reverse }) }
+                : canUndo && listKey
+                  ? { label: 'Undo', onClick: () => mutation.mutate({ threadIds, action: 'move', folderId: listKey }) }
+                  : undefined,
             });
           },
           onError: (e) => toast({ tone: 'error', title: "Couldn't update the conversation", description: errorMessage(e) }),
