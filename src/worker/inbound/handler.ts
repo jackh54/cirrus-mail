@@ -206,7 +206,7 @@ export async function processInbound(message: ForwardableEmailMessage, env: Env)
   if (!spam.isSpam && folderId !== roles.trash) {
     try {
       await maybeAutoreply(env, mbRow, {
-        sender: normalizeEmail(message.from), subject, messageId: msgIdHdr, headers: header, ownAddresses, now,
+        sender: normalizeEmail(message.from), subject, messageId: msgIdHdr, headers: header, auth, ownAddresses, now,
       });
     } catch (e) {
       console.error('autoreply error', (e as Error).name);

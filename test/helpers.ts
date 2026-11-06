@@ -10,10 +10,10 @@ export function withEnv(overrides: Partial<Env>): Env {
   return new Proxy(env, { get: (t, k) => (k in overrides ? (overrides as Record<string | symbol, unknown>)[k] : Reflect.get(t, k)) });
 }
 
-export interface CallOpts { method?: string; body?: unknown; cookie?: string; csrf?: boolean; env?: Env; form?: FormData }
+export interface CallOpts { method?: string; body?: unknown; cookie?: string; csrf?: boolean; env?: Env; form?: FormData; headers?: Record<string, string> }
 
 export async function call(path: string, o: CallOpts = {}): Promise<Response> {
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string> = { ...o.headers };
   if (o.cookie) headers.cookie = o.cookie;
   if (o.csrf !== false) headers['x-cirrus'] = '1';
   let body: BodyInit | undefined;

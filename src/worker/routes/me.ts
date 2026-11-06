@@ -2,10 +2,10 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import type { Identity, MailboxSummary, SessionInfo } from '../../shared/api';
 import { ulid } from '../../shared/ulid';
-import { base32Encode, hashPassword, randomBytes, sha256Hex, verifyPassword, verifyTotp } from '../lib/crypto';
+import { base32Encode, hashPassword, randomBytes, sha256Hex, verifyPassword, verifyTotpStep } from '../lib/crypto';
 import { rowToUser, type UserRow } from '../lib/db';
 import { HttpError } from '../lib/errors';
-import { jsonBody, zPassword } from '../lib/validate';
+import { jsonBody, zName, zPassword } from '../lib/validate';
 import { requireAuth } from '../middleware/session';
 import type { AppEnv } from '../types';
 import { normalizeRecoveryCode } from './auth';
@@ -47,7 +47,7 @@ me.get('/', async (c) => {
 });
 
 const UpdateMeSchema = z.object({
-  name: z.string().trim().min(1).max(120).optional(),
+  name: zName.optional(),
   theme: z.enum(['system', 'light', 'dark']).optional(),
   density: z.enum(['comfortable', 'compact']).optional(),
 });
@@ -95,11 +95,13 @@ me.post('/totp/enable', async (c) => {
   const u = c.get('user');
   if (u.totp_secret) throw new HttpError(409, 'TOTP_ALREADY_ENABLED', 'Two-factor authentication is already enabled');
   if (!u.totp_pending) throw new HttpError(400, 'TOTP_NOT_STARTED', 'Start enrolment first');
-  if (!(await verifyTotp(u.totp_pending, body.code))) throw new HttpError(400, 'INVALID_CODE', 'That code is not valid');
+  const step = await verifyTotpStep(u.totp_pending, body.code);
+  if (step === null) throw new HttpError(400, 'INVALID_CODE', 'That code is not valid');
   const codes = Array.from({ length: 10 }, recoveryCode);
   const now = Date.now();
   await c.env.DB.batch([
-    c.env.DB.prepare('UPDATE users SET totp_secret = totp_pending, totp_pending = NULL, updated_at = ? WHERE id = ?').bind(now, u.id),
+    // The enrolment code's step counts as used, so it cannot be replayed at the next login.
+    c.env.DB.prepare('UPDATE users SET totp_secret = totp_pending, totp_pending = NULL, totp_last_step = ?, updated_at = ? WHERE id = ?').bind(step, now, u.id),
     c.env.DB.prepare('DELETE FROM recovery_codes WHERE user_id = ?').bind(u.id),
     ...(await Promise.all(codes.map(async (code) =>
       c.env.DB.prepare('INSERT INTO recovery_codes (id, user_id, code_hash) VALUES (?, ?, ?)')
@@ -113,7 +115,7 @@ me.post('/totp/disable', async (c) => {
   const u = c.get('user');
   if (!(await verifyPassword(body.password, u.password_hash))) throw new HttpError(400, 'INVALID_PASSWORD', 'Password is incorrect');
   await c.env.DB.batch([
-    c.env.DB.prepare('UPDATE users SET totp_secret = NULL, totp_pending = NULL, updated_at = ? WHERE id = ?').bind(Date.now(), u.id),
+    c.env.DB.prepare('UPDATE users SET totp_secret = NULL, totp_pending = NULL, totp_last_step = 0, updated_at = ? WHERE id = ?').bind(Date.now(), u.id),
     c.env.DB.prepare('DELETE FROM recovery_codes WHERE user_id = ?').bind(u.id),
   ]);
   return c.json({ ok: true });

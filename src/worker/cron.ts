@@ -1,6 +1,6 @@
 // scheduled(): every minute send due scheduled messages; at minute 0 purge and prune.
 import { deleteMessagesForever, type MessageRow } from './lib/db';
-import { claimForSend, mailboxMemberIds, performSend } from './outbound/send';
+import { checkScheduled, claimForSend, mailboxMemberIds, performSend, recordOutcome } from './outbound/send';
 
 const DAY = 24 * 3600 * 1000;
 const MAX_SENDS_PER_TICK = 25;
@@ -14,6 +14,12 @@ export async function sendDueScheduled(env: Env, now = Date.now()): Promise<numb
   for (const row of results) {
     // Claim: only one tick (or the API) can move a row from scheduled to sending.
     if (!(await claimForSend(env.DB, row.id, ['scheduled']))) continue;
+    // Membership or aliases may have changed since it was scheduled.
+    const problem = await checkScheduled(env.DB, row);
+    if (problem) {
+      await recordOutcome(env, row, { ok: false, ...problem }, []);
+      continue;
+    }
     const res = await performSend(env, row, await mailboxMemberIds(env.DB, row.mailbox_id));
     if (res.ok) sent++;
   }

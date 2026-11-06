@@ -4,7 +4,7 @@ import type { Filter } from '../../shared/api';
 import { ulid } from '../../shared/ulid';
 import { HttpError, notFound } from '../lib/errors';
 import { jsonBody, zEmail, zId } from '../lib/validate';
-import { compileRegex, MAX_REGEX_LENGTH, rowToFilter, type FilterRow } from '../inbound/filters';
+import { compileRegex, MAX_REGEX_LENGTH, REGEX_RULE, regexSafetyIssue, rowToFilter, type FilterRow } from '../inbound/filters';
 import type { AppEnv } from '../types';
 
 export const filters = new Hono<AppEnv>();
@@ -36,6 +36,7 @@ async function validate(db: D1Database, mb: string, f: z.infer<typeof FilterSche
   for (const c of f.conditions) {
     if (c.op === 'regex') {
       if (c.value.length > MAX_REGEX_LENGTH) throw new HttpError(400, 'INVALID_REGEX', `Regex is longer than ${MAX_REGEX_LENGTH} characters`);
+      if (regexSafetyIssue(c.value)) throw new HttpError(400, 'UNSAFE_REGEX', `Regex rejected. ${REGEX_RULE}`);
       if (!compileRegex(c.value)) throw new HttpError(400, 'INVALID_REGEX', 'Regex does not compile');
     }
   }

@@ -1,4 +1,4 @@
-// HTML → plain text and snippets. Regex based: good enough for previews and FTS, not for rendering.
+// HTML → plain text and snippets. Good enough for previews, FTS and text/plain parts; not for rendering.
 
 const ENTITIES: Record<string, string> = {
   nbsp: ' ', amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", '#39': "'",
@@ -15,21 +15,70 @@ export function decodeEntities(s: string): string {
   });
 }
 
+/** Input cap for htmlToText: the output only feeds snippets, FTS and the text/plain alternative. */
+export const HTML_TO_TEXT_MAX = 512 * 1024;
+
+const SKIP_ELEMENTS = new Set(['head', 'style', 'script', 'title', 'noscript', 'template']);
+const BLOCK_ELEMENTS = new Set(['p', 'div', 'tr', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'table', 'blockquote', 'section', 'article', 'header', 'footer']);
+
+/**
+ * HTML → plain text with a single forward scan (linear time: every indexOf only moves forward or is
+ * cached), so hostile input such as thousands of unterminated `<a href="` or `<!--` stays cheap.
+ */
 export function htmlToText(html: string): string {
-  let s = html;
-  s = s.replace(/<!--[\s\S]*?-->/g, '');
-  s = s.replace(/<(head|style|script|title|noscript)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, '');
-  s = s.replace(/<br\s*\/?>/gi, '\n');
-  s = s.replace(/<li\b[^>]*>/gi, '\n- ');
-  s = s.replace(/<\/(p|div|tr|h[1-6]|li|ul|ol|table|blockquote|section|article|header|footer)\s*>/gi, '\n');
-  s = s.replace(/<(p|div|h[1-6]|blockquote|tr)\b[^>]*>/gi, '\n');
-  s = s.replace(/<a\b[^>]*href\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi, (_m, href: string, inner: string) => {
-    const text = inner.replace(/<[^>]+>/g, '').trim();
-    return href.startsWith('http') && text && text !== href ? `${text} (${href})` : text || href;
-  });
-  s = s.replace(/<[^>]+>/g, '');
-  s = decodeEntities(s);
-  s = s.replace(/\r/g, '').replace(/[ \t ]+/g, ' ').replace(/ *\n */g, '\n').replace(/\n{3,}/g, '\n\n');
+  const src = html.length > HTML_TO_TEXT_MAX ? html.slice(0, HTML_TO_TEXT_MAX) : html;
+  const lower = src.toLowerCase();
+  const parts: string[] = [];
+  const emit = (t: string) => { parts.push(t); };
+  let anchor: { href: string; partIndex: number } | null = null;
+  let pos = 0;
+  let gt = -2; // cached index of the next '>' at or after pos (-1: none left)
+  while (pos < src.length) {
+    const lt = src.indexOf('<', pos);
+    if (lt < 0) break;
+    if (lt > pos) emit(src.slice(pos, lt));
+    if (src.startsWith('<!--', lt)) {
+      const end = src.indexOf('-->', lt + 4);
+      pos = end < 0 ? src.length : end + 3;
+      continue;
+    }
+    if (gt !== -1 && gt < lt + 1) gt = src.indexOf('>', lt + 1);
+    if (gt < 0) { emit(src.slice(lt)); pos = src.length; break; }
+    const tag = src.slice(lt + 1, gt);
+    const m = tag.match(/^(\/?)([a-zA-Z][a-zA-Z0-9-]{0,30})/);
+    if (!m) {
+      if (tag.startsWith('!') || tag.startsWith('?')) { pos = gt + 1; continue; } // doctype, PI
+      emit('<');
+      pos = lt + 1;
+      continue;
+    }
+    const closing = m[1] === '/';
+    const name = m[2].toLowerCase();
+    pos = gt + 1;
+    if (!closing && SKIP_ELEMENTS.has(name)) {
+      const end = lower.indexOf(`</${name}`, pos);
+      const endGt = end < 0 ? -1 : src.indexOf('>', end);
+      pos = endGt < 0 ? src.length : endGt + 1;
+      continue;
+    }
+    if (name === 'br') emit('\n');
+    else if (name === 'li' && !closing) emit('\n- ');
+    else if (BLOCK_ELEMENTS.has(name) || name === 'li') emit('\n');
+    else if (name === 'a') {
+      if (!closing) {
+        const href = tag.length <= 4096 ? tag.match(/\bhref\s*=\s*["']([^"']*)["']/i)?.[1] ?? '' : '';
+        anchor = { href: decodeEntities(href), partIndex: parts.length };
+      } else if (anchor) {
+        const text = parts.slice(anchor.partIndex).join('').trim();
+        if (anchor.href.startsWith('http') && text && text !== anchor.href) emit(` (${anchor.href})`);
+        else if (!text && anchor.href) emit(anchor.href);
+        anchor = null;
+      }
+    }
+  }
+  if (pos < src.length) emit(src.slice(pos));
+  let s = decodeEntities(parts.join(''));
+  s = s.replace(/\r/g, '').replace(/[ \t\u00a0]+/g, ' ').replace(/ ?\n ?/g, '\n').replace(/\n{3,}/g, '\n\n');
   return s.trim();
 }
 

@@ -149,15 +149,27 @@ export async function totp(key: Uint8Array, timeMs: number, digits = 6, step = 3
   return hotp(key, Math.floor(timeMs / 1000 / step), digits);
 }
 
-/** Verifies a 6-digit code against a base32 secret with a ±1 step window. */
-export async function verifyTotp(secretB32: string, code: string, timeMs = Date.now()): Promise<boolean> {
+/**
+ * Verifies a 6-digit code against a base32 secret with a ±1 step window.
+ * Returns the matching time step (for replay protection) or null.
+ */
+export async function verifyTotpStep(secretB32: string, code: string, timeMs = Date.now()): Promise<number | null> {
   const clean = code.replace(/\s/g, '');
-  if (!/^\d{6}$/.test(clean)) return false;
-  const key = base32Decode(secretB32);
-  const counter = Math.floor(timeMs / 1000 / 30);
-  let ok = false;
-  for (const d of [-1, 0, 1]) {
-    if (timingSafeEqual(await hotp(key, counter + d, 6), clean)) ok = true;
+  if (!/^\d{6}$/.test(clean)) return null;
+  let key: Uint8Array;
+  try {
+    key = base32Decode(secretB32);
+  } catch {
+    return null;
   }
-  return ok;
+  const counter = Math.floor(timeMs / 1000 / 30);
+  let match: number | null = null;
+  for (const d of [-1, 0, 1]) {
+    if (timingSafeEqual(await hotp(key, counter + d, 6), clean)) match = counter + d;
+  }
+  return match;
+}
+
+export async function verifyTotp(secretB32: string, code: string, timeMs = Date.now()): Promise<boolean> {
+  return (await verifyTotpStep(secretB32, code, timeMs)) !== null;
 }

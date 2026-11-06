@@ -5,7 +5,7 @@ import { signFileUrl } from './sign';
 
 export interface UserRow {
   id: string; email: string; name: string; password_hash: string; role: 'admin' | 'member';
-  totp_secret: string | null; totp_pending: string | null; theme: User['theme']; density: User['density'];
+  totp_secret: string | null; totp_pending: string | null; totp_last_step: number; theme: User['theme']; density: User['density'];
   disabled: number; must_change_password: number; created_at: number; updated_at: number;
 }
 
@@ -16,7 +16,7 @@ export interface MessageRow {
   to_json: string; cc_json: string; bcc_json: string; reply_to: string | null; subject: string; snippet: string;
   body_key: string | null; raw_key: string | null; size: number; has_attachments: number; is_read: number;
   is_starred: number; spam_score: number; auth_json: string | null; list_id: string | null; send_at: number | null;
-  sent_at: number | null; error_code: string | null; error_message: string | null; date: number;
+  sent_at: number | null; error_code: string | null; error_message: string | null; date: number; scheduled_by: string | null;
   created_at: number; updated_at: number; folder_changed_at: number;
 }
 

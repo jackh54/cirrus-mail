@@ -9,7 +9,7 @@ import {
 } from '../lib/db';
 import { HttpError, notFound } from '../lib/errors';
 import { htmlToText, makeSnippet } from '../lib/html';
-import { jsonBody, zAddress, zId } from '../lib/validate';
+import { jsonBody, zAddress, zHeaderText, zId } from '../lib/validate';
 import { normalizeSubject } from '../inbound/thread';
 import { claimForSend, performSend, sendErrorStatus, validateDraft } from '../outbound/send';
 import type { AppEnv } from '../types';
@@ -25,7 +25,7 @@ const DraftSchema = z.object({
   to: z.array(zAddress).max(LIMITS.maxRecipients),
   cc: z.array(zAddress).max(LIMITS.maxRecipients),
   bcc: z.array(zAddress).max(LIMITS.maxRecipients),
-  subject: z.string().max(LIMITS.maxSubject).transform((s) => s.replace(/[\r\n]+/g, ' ')),
+  subject: zHeaderText(LIMITS.maxSubject),
   html: z.string().max(10 * 1024 * 1024),
   text: z.string().max(10 * 1024 * 1024).optional(),
   parentId: zId.nullable().optional(),
@@ -216,9 +216,9 @@ drafts.post('/drafts/:id/send', async (c) => {
     if (body.sendAt > now + 366 * 24 * 3600 * 1000) throw new HttpError(400, 'INVALID_SEND_AT', 'sendAt is too far in the future');
     const roles = await folderIdsByRole(db, mb);
     const res = await db.prepare(
-      `UPDATE messages SET status = 'scheduled', send_at = ?, folder_id = ?, folder_changed_at = ?, updated_at = ?, error_code = NULL, error_message = NULL
+      `UPDATE messages SET status = 'scheduled', send_at = ?, scheduled_by = ?, folder_id = ?, folder_changed_at = ?, updated_at = ?, error_code = NULL, error_message = NULL
         WHERE id = ? AND status IN ('draft','failed')`,
-    ).bind(body.sendAt, roles.scheduled, now, now, row.id).run();
+    ).bind(body.sendAt, c.get('user').id, roles.scheduled, now, now, row.id).run();
     if (!res.meta.changes) throw new HttpError(409, 'NOT_A_DRAFT', 'This message is no longer a draft');
     await recomputeThreads(db, [row.thread_id]);
     const updated = await db.prepare('SELECT * FROM messages WHERE id = ?').bind(row.id).first<MessageRow>();

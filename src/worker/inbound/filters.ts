@@ -20,9 +20,63 @@ export interface FilterOutcome {
   matched: string[];       // ids of filters that matched
 }
 
-/** Compiles a user regex safely: too long or invalid → null (never throws). */
+export const MAX_FIELD_LENGTH = 1024;
+
+export const REGEX_RULE =
+  'Patterns may not use backreferences (\\1, \\k<name>) or put a quantifier (*, +, ?, {n}) on a group that itself ' +
+  'contains a quantifier or |, such as (a+)+ or (a|b)*. These forms can take exponential time.';
+
+/**
+ * Conservative ReDoS heuristic. Returns a reason when the pattern uses a backreference or a quantified
+ * group whose body contains a quantifier or alternation (directly or in a nested group); else null.
+ */
+export function regexSafetyIssue(pattern: string): string | null {
+  type Frame = { quant: boolean; alt: boolean };
+  const stack: Frame[] = [{ quant: false, alt: false }];
+  const top = () => stack[stack.length - 1];
+  const quantAt = (j: number) => {
+    const ch = pattern[j];
+    if (ch === '*' || ch === '+' || ch === '?') return true;
+    return ch === '{' && /^\{\d+(,\d*)?\}/.test(pattern.slice(j));
+  };
+  for (let i = 0; i < pattern.length; i++) {
+    const ch = pattern[i];
+    if (ch === '\\') {
+      const next = pattern[i + 1] ?? '';
+      if (/[1-9]/.test(next) || (next === 'k' && pattern[i + 2] === '<')) return 'backreference';
+      i++;
+      continue;
+    }
+    if (ch === '[') {
+      let j = i + 1;
+      if (pattern[j] === '^') j++;
+      if (pattern[j] === ']') j++;
+      while (j < pattern.length && pattern[j] !== ']') j += pattern[j] === '\\' ? 2 : 1;
+      i = j;
+      continue;
+    }
+    if (ch === '(') {
+      stack.push({ quant: false, alt: false });
+      const m = pattern.slice(i + 1).match(/^\?(?::|=|!|<=|<!|<[A-Za-z_$][\w$]*>)/);
+      if (m) i += m[0].length;
+      continue;
+    }
+    if (ch === ')') {
+      const f = stack.length > 1 ? stack.pop()! : { quant: false, alt: false };
+      if (quantAt(i + 1) && (f.quant || f.alt)) return 'quantified group containing a quantifier or alternation';
+      top().quant ||= f.quant;
+      top().alt ||= f.alt;
+      continue;
+    }
+    if (ch === '|') top().alt = true;
+    else if (quantAt(i)) top().quant = true;
+  }
+  return null;
+}
+
+/** Compiles a user regex safely: too long, invalid or ReDoS-prone → null (never throws). */
 export function compileRegex(pattern: string): RegExp | null {
-  if (pattern.length > MAX_REGEX_LENGTH) return null;
+  if (pattern.length > MAX_REGEX_LENGTH || regexSafetyIssue(pattern)) return null;
   try {
     return new RegExp(pattern, 'i');
   } catch {
@@ -31,7 +85,9 @@ export function compileRegex(pattern: string): RegExp | null {
 }
 
 function matchValue(value: string, op: FilterCondition['op'], needle: string): boolean {
-  const v = value.toLowerCase();
+  // Every matched field is capped, display names included, so no rule scans unbounded input.
+  const capped = value.slice(0, MAX_FIELD_LENGTH);
+  const v = capped.toLowerCase();
   const n = needle.toLowerCase();
   switch (op) {
     case 'contains': return n !== '' && v.includes(n);
@@ -39,7 +95,7 @@ function matchValue(value: string, op: FilterCondition['op'], needle: string): b
     case 'ends_with': return n !== '' && v.endsWith(n);
     case 'regex': {
       const re = compileRegex(needle);
-      return re ? re.test(value) : false;
+      return re ? re.test(capped) : false;
     }
     case 'is_true': return v !== '' && v !== 'false' && v !== '0';
   }

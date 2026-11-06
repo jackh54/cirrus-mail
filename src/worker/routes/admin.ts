@@ -6,7 +6,7 @@ import { domainOf } from '../lib/addresses';
 import { hashPassword } from '../lib/crypto';
 import { rowToUser, SYSTEM_FOLDERS, type UserRow } from '../lib/db';
 import { HttpError, notFound } from '../lib/errors';
-import { jsonBody, zDomainName, zEmail, zId, zLocalPart, zName, zPassword } from '../lib/validate';
+import { jsonBody, zDomainName, zEmail, zHeaderText, zId, zLocalPart, zName, zPassword } from '../lib/validate';
 import { requireAdmin, requireAuth } from '../middleware/session';
 import type { AppEnv } from '../types';
 
@@ -222,7 +222,7 @@ async function checkMembers(db: D1Database, members: z.infer<typeof MembersSchem
 admin.get('/mailboxes', async (c) => c.json(await adminMailboxes(c.env.DB)));
 
 admin.post('/mailboxes', async (c) => {
-  const b = await jsonBody(c, z.object({ localPart: zLocalPart, domainId: zId, displayName: z.string().trim().max(120), members: MembersSchema }));
+  const b = await jsonBody(c, z.object({ localPart: zLocalPart, domainId: zId, displayName: zHeaderText(120), members: MembersSchema }));
   const db = c.env.DB;
   await checkMembers(db, b.members);
   const address = await resolveNewAddress(db, b.localPart, b.domainId);
@@ -233,7 +233,7 @@ admin.post('/mailboxes', async (c) => {
 });
 
 admin.patch('/mailboxes/:id', async (c) => {
-  const b = await jsonBody(c, z.object({ displayName: z.string().trim().max(120).optional(), members: MembersSchema.optional() }));
+  const b = await jsonBody(c, z.object({ displayName: zHeaderText(120).optional(), members: MembersSchema.optional() }));
   const db = c.env.DB;
   const id = c.req.param('id');
   const [box] = await adminMailboxes(db, id);

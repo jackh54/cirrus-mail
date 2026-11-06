@@ -10,6 +10,13 @@ export const proxy = new Hono<AppEnv>();
 
 export const PROXY_MAX_BYTES = 5 * 1024 * 1024;
 const MAX_REDIRECTS = 3;
+export const UPSTREAM_TIMEOUT_MS = 5000;
+
+function upstreamFailed(signal: AbortSignal): HttpError {
+  return signal.aborted
+    ? new HttpError(504, 'UPSTREAM_TIMEOUT', 'The image server did not respond in time')
+    : new HttpError(502, 'UPSTREAM_ERROR', 'Could not fetch the image');
+}
 
 proxy.post('/sign', requireAuth, async (c) => {
   const body = await jsonBody(c, z.object({ urls: z.array(z.string().max(4096)).max(200) }));
@@ -47,13 +54,19 @@ async function readCapped(body: ReadableStream<Uint8Array> | null, max: number):
 
 proxy.get('/image', async (c) => {
   const u = c.req.query('u');
-  if (!(await verifyProxySig(c.env, u, c.req.query('s')))) throw new HttpError(403, 'INVALID_SIGNATURE', 'Invalid signature');
+  if (!(await verifyProxySig(c.env, u, c.req.query('e'), c.req.query('s')))) throw new HttpError(403, 'INVALID_SIGNATURE', 'Invalid or expired signature');
+  // One 5 s budget covers redirects, headers and the body.
+  const signal = AbortSignal.timeout(UPSTREAM_TIMEOUT_MS);
   let url = u!;
   let res: Response | null = null;
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
     if (!isSafeRemoteUrl(url)) throw new HttpError(400, 'BLOCKED_URL', 'That URL cannot be proxied');
     // A fresh request: no cookies, auth or client headers are forwarded.
-    res = await fetch(url, { redirect: 'manual', headers: { accept: 'image/*', 'user-agent': 'CirrusMail-ImageProxy/0.1' } });
+    try {
+      res = await fetch(url, { redirect: 'manual', signal, headers: { accept: 'image/*', 'user-agent': 'CirrusMail-ImageProxy/0.1' } });
+    } catch {
+      throw upstreamFailed(signal);
+    }
     if (res.status >= 300 && res.status < 400 && res.headers.get('location')) {
       url = new URL(res.headers.get('location')!, url).toString();
       res = null;
@@ -67,7 +80,12 @@ proxy.get('/image', async (c) => {
   if (!type.startsWith('image/')) throw new HttpError(415, 'NOT_AN_IMAGE', 'Upstream did not return an image');
   const len = Number(res.headers.get('content-length') ?? '0');
   if (len > PROXY_MAX_BYTES) throw new HttpError(413, 'TOO_LARGE', 'Image is larger than 5 MB');
-  const data = await readCapped(res.body, PROXY_MAX_BYTES);
+  let data: Uint8Array | null;
+  try {
+    data = await readCapped(res.body, PROXY_MAX_BYTES);
+  } catch {
+    throw upstreamFailed(signal);
+  }
   if (!data) throw new HttpError(413, 'TOO_LARGE', 'Image is larger than 5 MB');
   return new Response(data, {
     headers: {

@@ -1,4 +1,4 @@
-// Spam verdict: score 0–10, spam at ≥ 5. Blocklist → spam; known contact → −3 and never spam.
+// Spam verdict: score 0–10, spam at ≥ 5. Blocklist → spam; known contact → −3 and never spam, unless DMARC failed.
 import type { AuthResults } from '../../shared/api';
 import { matchesPattern } from '../lib/addresses';
 
@@ -27,9 +27,11 @@ export function scoreSpam(i: SpamInput): { score: number; isSpam: boolean } {
   if (i.auth?.dmarc === 'fail') score += 5;
   if (i.auth?.spf === 'fail') score += 2;
   if (i.auth?.dkim === 'fail') score += 2;
-  if (i.inContacts) score -= 3;
+  // The header From is spoofable, so the contact bonus only counts when DMARC did not fail.
+  const trustedContact = i.inContacts && i.auth?.dmarc !== 'fail';
+  if (trustedContact) score -= 3;
   score = Math.max(0, Math.min(10, score));
-  return { score, isSpam: !i.inContacts && score >= SPAM_THRESHOLD };
+  return { score, isSpam: !trustedContact && score >= SPAM_THRESHOLD };
 }
 
 export function isBlocked(sender: string, patterns: string[]): boolean {

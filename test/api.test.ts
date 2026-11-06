@@ -3,7 +3,8 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import type { MessageFull, Page, ThreadDetail, ThreadSummary } from '../src/shared/api';
 import { sendDueScheduled } from '../src/worker/cron';
 import { processInbound } from '../src/worker/inbound/handler';
-import { isSafeRemoteUrl, signFileUrl, signProxyUrl } from '../src/worker/lib/sign';
+import { isSafeRemoteUrl, signFileUrl, signProxyUrl, verifyFileSig, verifyProxySig } from '../src/worker/lib/sign';
+import { base32Decode, totp } from '../src/worker/lib/crypto';
 import { buildEml, call, fakeEmail, sessionCookie, withEnv } from './helpers';
 
 const PNG = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82]);
@@ -184,13 +185,20 @@ describe('mail', () => {
     const { e } = stubEmail(async () => { throw Object.assign(new Error('Daily sending limit exceeded'), { code: 'E_DAILY_LIMIT_EXCEEDED' }); });
     const res = await call(`/api/mailboxes/${state.mbA}/drafts/${draft.id}/send`, { body: {}, cookie: state.admin, env: e });
     expect(res.status).toBe(429);
-    expect(await res.json()).toEqual({ error: { code: 'E_DAILY_LIMIT_EXCEEDED', message: 'Daily sending limit exceeded' } });
-    const row = await env.DB.prepare('SELECT status, error_code, folder_id FROM messages WHERE id = ?').bind(draft.id).first<{ status: string; error_code: string; folder_id: string }>();
-    expect(row).toMatchObject({ status: 'failed', error_code: 'E_DAILY_LIMIT_EXCEEDED', folder_id: draft.folderId });
+    expect(await res.json()).toEqual({ error: { code: 'E_DAILY_LIMIT_EXCEEDED', message: 'The daily sending limit for this account has been reached. Try again tomorrow.' } });
+    const row = await env.DB.prepare('SELECT status, error_code, error_message, folder_id FROM messages WHERE id = ?').bind(draft.id).first<{ status: string; error_code: string; folder_id: string }>();
+    expect(row).toMatchObject({ status: 'failed', error_code: 'E_DAILY_LIMIT_EXCEEDED', error_message: 'The daily sending limit for this account has been reached. Try again tomorrow.', folder_id: draft.folderId });
     const other = stubEmail(async () => { throw Object.assign(new Error('nope'), { code: 'E_SENDER_NOT_VERIFIED' }); });
     expect((await call(`/api/mailboxes/${state.mbA}/drafts/${draft.id}/send`, { body: {}, cookie: state.admin, env: other.e })).status).toBe(502);
+    // Unknown codes and the provider's raw text never reach the client or the database.
+    const weird = stubEmail(async () => { throw Object.assign(new Error('internal: upstream token=abc123'), { code: 'boom with spaces' }); });
+    const wres = await call(`/api/mailboxes/${state.mbA}/drafts/${draft.id}/send`, { body: {}, cookie: state.admin, env: weird.e });
+    expect(wres.status).toBe(502);
+    expect(await wres.json()).toEqual({ error: { code: 'E_DELIVERY_FAILED', message: 'Delivery failed. Try again later.' } });
+    const stored = await env.DB.prepare('SELECT error_message FROM messages WHERE id = ?').bind(draft.id).first<string>('error_message');
+    expect(stored).not.toContain('token');
     const log = await env.DB.prepare('SELECT COUNT(*) AS n FROM send_log WHERE message_id = ? AND ok = 0').bind(draft.id).first<number>('n');
-    expect(log).toBe(2);
+    expect(log).toBe(3);
   });
 
   it('schedules a send and the cron claims and delivers it once', async () => {
@@ -274,15 +282,35 @@ describe('signed URLs and the image proxy', () => {
 
   it('rejects private, loopback and non-http hosts', async () => {
     for (const u of ['http://localhost/a.png', 'http://127.0.0.1/a.png', 'http://10.1.2.3/a.png', 'http://192.168.1.1/a.png', 'http://169.254.169.254/latest',
-      'http://[::1]/a.png', 'http://printer.local/a.png', 'http://172.16.0.1/a.png', 'ftp://x.test/a.png', 'javascript:alert(1)', 'http://2130706433/', 'http://intranet/a.png']) {
+      'http://[::1]/a.png', 'http://printer.local/a.png', 'http://172.16.0.1/a.png', 'ftp://x.test/a.png', 'javascript:alert(1)', 'http://2130706433/', 'http://intranet/a.png',
+      'http://[::]/', 'http://[::127.0.0.1]/', 'http://[::ffff:127.0.0.1]/', 'http://[::ffff:a00:1]/', 'http://[64:ff9b::a00:1]/', 'http://[2002:7f00:1::]/',
+      'http://[fd00::1]/', 'http://[fc12:3456::1]/', 'http://[fe80::1]/', 'http://[febf::1]/', 'http://[ff02::1]/', 'http://198.18.0.1/', 'http://198.19.255.255/',
+      'http://192.0.0.8/', 'http://100.64.0.1/', 'http://100.127.255.255/', 'http://0.1.2.3/', 'http://0x7f.1/', 'http://017700000001/']) {
       expect(isSafeRemoteUrl(u), u).toBe(false);
     }
-    expect(isSafeRemoteUrl('https://images.example.com/logo.png')).toBe(true);
+    for (const u of ['https://images.example.com/logo.png', 'http://[2606:4700:4700::1111]/x.png', 'http://100.128.0.1/', 'http://198.20.0.1/', 'http://8.8.8.8/']) {
+      expect(isSafeRemoteUrl(u), u).toBe(true);
+    }
     const signed = await signProxyUrl(env, 'http://127.0.0.1/secret.png');
     const res = await call(signed);
     expect(res.status).toBe(400);
     expect((await res.json<{ error: { code: string } }>()).error.code).toBe('BLOCKED_URL');
     expect((await call('/api/proxy/image?u=https%3A%2F%2Fimages.example.com%2Fa.png&s=forged')).status).toBe(403);
+  });
+
+  it('proxy signatures expire after 24 h and cannot be swapped with file signatures', async () => {
+    const url = 'https://images.example.com/a.png';
+    const fresh = new URL(await signProxyUrl(env, url), 'http://localhost');
+    expect(Number(fresh.searchParams.get('e')) * 1000).toBeGreaterThan(Date.now() + 23 * 3600_000);
+    expect(await verifyProxySig(env, url, fresh.searchParams.get('e')!, fresh.searchParams.get('s')!)).toBe(true);
+    const old = await signProxyUrl(env, url, Date.now() - 25 * 3600_000);
+    const res = await call(old);
+    expect(res.status).toBe(403);
+    expect((await call(old.replace(/&e=\d+/, ''))).status).toBe(403);
+    // A file signature for "id" must not validate as a proxy signature for u="id" (and vice versa).
+    const file = new URL(await signFileUrl(env, 'http://localhost', url));
+    expect(await verifyProxySig(env, url, file.searchParams.get('e')!, file.searchParams.get('s')!)).toBe(false);
+    expect(await verifyFileSig(env, url, fresh.searchParams.get('e')!, fresh.searchParams.get('s')!)).toBe(false);
   });
 
   it('POST /api/proxy/sign signs only public http(s) URLs and needs a session', async () => {
@@ -292,7 +320,112 @@ describe('signed URLs and the image proxy', () => {
     const res = await call('/api/proxy/sign', { body: { urls }, cookie: state.admin });
     const { signed } = await res.json<{ signed: Record<string, string> }>();
     expect(Object.keys(signed)).toEqual(['https://images.example.com/a.png']);
-    expect(signed['https://images.example.com/a.png']).toBe(await signProxyUrl(env, 'https://images.example.com/a.png'));
+    const signedUrl = new URL(signed['https://images.example.com/a.png'], 'http://localhost');
+    expect(signedUrl.pathname).toBe('/api/proxy/image');
+    expect(await verifyProxySig(env, signedUrl.searchParams.get('u')!, signedUrl.searchParams.get('e')!, signedUrl.searchParams.get('s')!)).toBe(true);
     expect((await call('/api/proxy/sign', { body: { urls: Array(201).fill('https://a.example/x.png') }, cookie: state.admin })).status).toBe(400);
+  });
+});
+
+describe('security hardening', () => {
+  const wrong = (email: string, ip = '203.0.113.7') =>
+    call('/api/auth/login', { body: { email, password: 'definitely-wrong' }, headers: { 'cf-connecting-ip': ip } }).then((r) => r.status);
+  const count = (xs: number[], v: number) => xs.filter((x) => x === v).length;
+
+  it('login throttle counts before hashing, so parallel guesses cannot exceed the cap', async () => {
+    const statuses = await Promise.all(Array.from({ length: 15 }, () => wrong('ghost1@apitest.test')));
+    expect(count(statuses, 401)).toBe(10);
+    expect(count(statuses, 429)).toBe(5);
+  });
+
+  it('has a per-email cap across IPs, and a throttled real account is refused before the password check', async () => {
+    const statuses = await Promise.all(Array.from({ length: 33 }, (_, i) => wrong('ghost2@apitest.test', `198.51.100.${i}`)));
+    expect(count(statuses, 401)).toBe(30);
+    expect(count(statuses, 429)).toBe(3);
+
+    await call('/api/admin/users', { body: { name: 'Locked Out', email: 'locked@apitest.test', role: 'member', tempPassword: 'locked-password-1' }, cookie: state.admin });
+    for (let i = 0; i < 10; i++) expect(await wrong('locked@apitest.test')).toBe(401);
+    const right = await call('/api/auth/login', { body: { email: 'locked@apitest.test', password: 'locked-password-1' }, headers: { 'cf-connecting-ip': '203.0.113.7' } });
+    expect(right.status).toBe(429);
+    const elsewhere = await call('/api/auth/login', { body: { email: 'locked@apitest.test', password: 'locked-password-1' }, headers: { 'cf-connecting-ip': '203.0.113.8' } });
+    expect(elsewhere.status).toBe(200);
+  });
+
+  it('rejects TOTP replay and caps TOTP failures per user', async () => {
+    await call('/api/admin/users', { body: { name: 'Two Factor', email: 'totp@apitest.test', role: 'member', tempPassword: 'totp-password-1' }, cookie: state.admin });
+    const cookie = sessionCookie(await call('/api/auth/login', { body: { email: 'totp@apitest.test', password: 'totp-password-1' } }));
+    const { secret } = await (await call('/api/me/totp/begin', { body: {}, cookie })).json<{ secret: string }>();
+    const key = base32Decode(secret);
+    const now = Date.now();
+    const codeNow = await totp(key, now);
+    expect((await call('/api/me/totp/enable', { body: { code: codeNow }, cookie })).status).toBe(200);
+    const login = (code?: string) => call('/api/auth/login', { body: { email: 'totp@apitest.test', password: 'totp-password-1', totp: code } });
+    expect((await (await login()).json<{ error: { code: string } }>()).error.code).toBe('TOTP_REQUIRED');
+    expect((await login(codeNow)).status).toBe(401);            // the enrolment code's step is already used
+    const codeNext = await totp(key, now + 30_000);
+    expect((await login(codeNext)).status).toBe(200);
+    expect((await login(codeNext)).status).toBe(401);           // replay of an accepted code
+    const bad = await totp(key, now + 3600_000);
+    for (let i = 0; i < 4; i++) expect((await login(bad)).status).toBe(401);
+    expect((await login(await totp(key, now - 30_000))).status).toBe(429); // 6th TOTP failure window
+  });
+
+  it('cron re-validates identity and membership before sending a scheduled message', async () => {
+    const alias = await (await call('/api/admin/aliases', { body: { address: 'hello@apitest.test', mailboxId: state.mbA }, cookie: state.admin })).json<{ id: string }>();
+    const d = await (await call(`/api/mailboxes/${state.mbA}/drafts`, { body: { from: 'hello@apitest.test', to: [{ email: 'x@vendor.test' }], cc: [], bcc: [], subject: 'From alias', html: 'x' }, cookie: state.admin })).json<MessageFull>();
+    const sendAt = Date.now() + 3600_000;
+    await call(`/api/mailboxes/${state.mbA}/drafts/${d.id}/send`, { body: { sendAt }, cookie: state.admin });
+    await call(`/api/admin/aliases/${alias.id}`, { method: 'DELETE', cookie: state.admin });
+
+    const sd = await (await call(`/api/mailboxes/${state.mbB}/drafts`, { body: { from: 'sam@apitest.test', to: [{ email: 'y@vendor.test' }], cc: [], bcc: [], subject: 'From Sam', html: 'x' }, cookie: state.bob })).json<MessageFull>();
+    await call(`/api/mailboxes/${state.mbB}/drafts/${sd.id}/send`, { body: { sendAt }, cookie: state.bob });
+    await call(`/api/admin/mailboxes/${state.mbB}`, { method: 'PATCH', body: { members: [] }, cookie: state.admin });
+
+    const { e, calls } = stubEmail(async () => ({ messageId: '<never@cf>' }));
+    expect(await sendDueScheduled(e, sendAt + 1)).toBe(0);
+    expect(calls).toHaveLength(0);
+    for (const id of [d.id, sd.id]) {
+      expect(await env.DB.prepare('SELECT status, error_code FROM messages WHERE id = ?').bind(id).first()).toEqual({ status: 'failed', error_code: 'IDENTITY_NOT_ALLOWED' });
+    }
+    await call(`/api/admin/mailboxes/${state.mbB}`, { method: 'PATCH', body: { members: [{ userId: state.bobId, role: 'owner' }] }, cookie: state.admin });
+  });
+
+  it('strips CR/LF from names and subjects on save and again before sending', async () => {
+    const res = await call(`/api/mailboxes/${state.mbA}/drafts`, {
+      body: { from: 'alex@apitest.test', to: [{ email: 'x@vendor.test', name: 'Evil\r\nBcc: a@evil.test' }], cc: [], bcc: [], subject: 'Hi\r\nBcc: b@evil.test\u0000', html: 'x' }, cookie: state.admin,
+    });
+    const d = await res.json<MessageFull>();
+    expect(d.subject).toBe('Hi  Bcc: b@evil.test');
+    expect(d.to[0].name).toBe('Evil  Bcc: a@evil.test');
+    // Simulate a value that got into the row some other way: send-time sanitising still applies.
+    await env.DB.prepare("UPDATE messages SET from_name = 'Alex\r\nBcc: c@evil.test', subject = 'S\nX: y' WHERE id = ?").bind(d.id).run();
+    const { e, calls } = stubEmail(async () => ({ messageId: '<clean@cf>' }));
+    expect((await call(`/api/mailboxes/${state.mbA}/drafts/${d.id}/send`, { body: {}, cookie: state.admin, env: e })).status).toBe(200);
+    const sent = JSON.stringify(calls[0]);
+    expect(calls[0].subject).toBe('S X: y');
+    expect((calls[0].from as EmailAddress).name).toBe('Alex  Bcc: c@evil.test');
+    expect(sent).not.toMatch(/\\r|\\n|\\u0000/);
+    const bad = await call(`/api/mailboxes/${state.mbA}/settings`, { method: 'PUT', body: { displayName: 'A\r\nB', signatureHtml: '', autoreply: { enabled: false, subject: 'x\ny', body: '', start: null, end: null } }, cookie: state.admin });
+    expect(await bad.json()).toMatchObject({ displayName: 'A  B', autoreply: { subject: 'x y' } });
+  });
+
+  it('refuses ReDoS-prone filter patterns with an explanation', async () => {
+    const res = await call(`/api/mailboxes/${state.mbA}/filters`, {
+      body: { name: 'bad', match: 'all', conditions: [{ field: 'subject', op: 'regex', value: '(a+)+$' }], actions: [{ type: 'star' }], enabled: true, sort: 1 }, cookie: state.admin,
+    });
+    expect(res.status).toBe(400);
+    const { error } = await res.json<{ error: { code: string; message: string } }>();
+    expect(error.code).toBe('UNSAFE_REGEX');
+    expect(error.message).toMatch(/backreferences.*\(a\+\)\+/);
+  });
+
+  it('a spoofed known contact with dmarc=fail still lands in Spam', async () => {
+    const raw = buildEml({
+      from: 'Jordan Lee <jordan@vendor.test>', to: 'alex@apitest.test', subject: 'Wire transfer today', body: 'please',
+      headers: { 'Authentication-Results': 'mx.cloudflare.net; dkim=none; spf=fail; dmarc=fail header.from=vendor.test' },
+    });
+    const out = await processInbound(fakeEmail('attacker@elsewhere.test', 'alex@apitest.test', raw), env);
+    const folders = await (await call(`/api/mailboxes/${state.mbA}/folders`, { cookie: state.admin })).json<{ id: string; role: string }[]>();
+    expect(out.accepted && out.folderId).toBe(folders.find((f) => f.role === 'spam')!.id);
   });
 });

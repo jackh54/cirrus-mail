@@ -1,6 +1,7 @@
 import { env } from 'cloudflare:workers';
 import { describe, expect, it } from 'vitest';
 import { ulid } from '../src/shared/ulid';
+import { AUTOREPLY_DAILY_CAP } from '../src/worker/inbound/autoreply';
 import { processInbound } from '../src/worker/inbound/handler';
 import { normalizeSubject, parseMessageIds } from '../src/worker/inbound/thread';
 import { buildEml, createMailbox, ensureDomain, fakeEmail, randomLocal, withEnv } from './helpers';
@@ -134,17 +135,53 @@ describe('inbound handler', () => {
     expect(row).toEqual({ is_read: 1, list_id: 'Digest <digest.example>' });
   });
 
-  it('sends one vacation auto-reply per sender and never to lists', async () => {
-    const addr = `${randomLocal()}@inbound.test`;
-    const mb = await createMailbox(addr);
-    await env.DB.prepare("UPDATE mailboxes SET autoreply_enabled = 1, autoreply_subject = 'Out of office', autoreply_body = 'Back Monday' WHERE id = ?").bind(mb.id).run();
-    const sent: EmailMessageBuilder[] = [];
-    const e = withEnv({ EMAIL: { send: async (b: EmailMessageBuilder) => { sent.push(b); return { messageId: 'x@y' }; } } as unknown as SendEmail });
-    await deliver(addr, { from: 'client@partner.test', to: addr, subject: 'Question', body: 'x' }, e);
-    await deliver(addr, { from: 'client@partner.test', to: addr, subject: 'Another question', body: 'x' }, e);
-    await deliver(addr, { from: 'list@partner.test', to: addr, subject: 'List mail', body: 'x', headers: { 'List-Id': '<l.partner.test>' } }, e);
-    expect(sent).toHaveLength(1);
-    expect(sent[0]).toMatchObject({ to: 'client@partner.test', subject: 'Out of office', text: 'Back Monday' });
-    expect(sent[0].headers?.['Auto-Submitted']).toBe('auto-replied');
+  describe('vacation auto-reply', () => {
+    const PASS = { 'Authentication-Results': 'mx.cloudflare.net; dkim=pass; spf=pass smtp.mailfrom=partner.test; dmarc=pass' };
+    async function setup(subject = 'Out of office') {
+      const addr = `${randomLocal()}@inbound.test`;
+      const mb = await createMailbox(addr);
+      await env.DB.prepare("UPDATE mailboxes SET autoreply_enabled = 1, autoreply_subject = ?, autoreply_body = 'Back Monday' WHERE id = ?").bind(subject, mb.id).run();
+      const sent: EmailMessageBuilder[] = [];
+      const e = withEnv({ EMAIL: { send: async (b: EmailMessageBuilder) => { sent.push(b); return { messageId: 'x@y' }; } } as unknown as SendEmail });
+      return { addr, mb, sent, e };
+    }
+
+    it('replies once per authenticated sender and never to lists', async () => {
+      const { addr, sent, e } = await setup();
+      await deliver(addr, { from: 'client@partner.test', to: addr, subject: 'Question', body: 'x', headers: PASS }, e);
+      await deliver(addr, { from: 'client@partner.test', to: addr, subject: 'Another question', body: 'x', headers: PASS }, e);
+      await deliver(addr, { from: 'list@partner.test', to: addr, subject: 'List mail', body: 'x', headers: { ...PASS, 'List-Id': '<l.partner.test>' } }, e);
+      expect(sent).toHaveLength(1);
+      expect(sent[0]).toMatchObject({ to: 'client@partner.test', subject: 'Out of office', text: 'Back Monday' });
+      expect(sent[0].headers?.['Auto-Submitted']).toBe('auto-replied');
+    });
+
+    it('never replies to unauthenticated senders (backscatter)', async () => {
+      const { addr, sent, e } = await setup();
+      await deliver(addr, { from: 'forged@victim.test', to: addr, subject: 'x', body: 'x' }, e);
+      await deliver(addr, { from: 'forged2@victim.test', to: addr, subject: 'x', body: 'x', headers: { 'Authentication-Results': 'mx.cloudflare.net; spf=softfail; dkim=none; dmarc=none' } }, e);
+      expect(sent).toHaveLength(0);
+    });
+
+    it('stops at the per-mailbox daily cap', async () => {
+      const { addr, mb, sent, e } = await setup();
+      const now = Date.now();
+      await env.DB.batch(Array.from({ length: AUTOREPLY_DAILY_CAP }, (_, i) =>
+        env.DB.prepare('INSERT INTO autoreply_log (mailbox_id, sender, sent_at) VALUES (?, ?, ?)').bind(mb.id, `s${i}@partner.test`, now - 3600_000)));
+      await deliver(addr, { from: 'new@partner.test', to: addr, subject: 'x', body: 'x', headers: PASS }, e);
+      expect(sent).toHaveLength(0);
+      await env.DB.prepare('UPDATE autoreply_log SET sent_at = ? WHERE mailbox_id = ?').bind(now - 2 * 86_400_000, mb.id).run();
+      await deliver(addr, { from: 'new2@partner.test', to: addr, subject: 'x', body: 'x', headers: PASS }, e);
+      expect(sent).toHaveLength(1);
+    });
+
+    it('strips CR/LF smuggled through an encoded incoming subject', async () => {
+      const { addr, sent, e } = await setup('');
+      const evil = `=?UTF-8?B?${btoa('Hello\r\nBcc: victim@evil.test')}?=`;
+      await deliver(addr, { from: 'client@partner.test', to: addr, subject: evil, body: 'x', headers: PASS }, e);
+      expect(sent).toHaveLength(1);
+      expect(sent[0].subject).not.toMatch(/[\r\n]/);
+      expect(sent[0].subject).toMatch(/^Re: Hello +Bcc: victim@evil\.test$/);
+    });
   });
 });

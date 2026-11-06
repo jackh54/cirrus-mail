@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import type { MailboxSettings } from '../../shared/api';
-import { jsonBody } from '../lib/validate';
+import { jsonBody, zHeaderText } from '../lib/validate';
 import type { AppEnv } from '../types';
 
 export const mailboxSettings = new Hono<AppEnv>();
@@ -21,11 +21,11 @@ async function load(db: D1Database, mb: string): Promise<MailboxSettings> {
 }
 
 const SettingsSchema = z.object({
-  displayName: z.string().trim().max(120),
+  displayName: zHeaderText(120),
   signatureHtml: z.string().max(20_000),
   autoreply: z.object({
     enabled: z.boolean(),
-    subject: z.string().max(200).transform((s) => s.replace(/[\r\n]+/g, ' ')),
+    subject: zHeaderText(200),
     body: z.string().max(10_000),
     start: z.number().int().nullable(),
     end: z.number().int().nullable(),
