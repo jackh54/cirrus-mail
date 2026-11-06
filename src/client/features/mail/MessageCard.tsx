@@ -4,12 +4,15 @@ import type { MessageFull } from '@shared/api';
 import { Button } from '../../components/Button';
 import { cn } from '../../lib/cn';
 import { displayName, longDate, smartTime } from '../../lib/format';
+import { detectPgp, visibleAttachments } from '../../lib/pgp/detect';
 import { Attachments } from './Attachments';
 import { MessageHeader } from './MessageHeader';
 import { TextBody } from './TextBody';
 
 // DOMPurify and the sandboxed iframe renderer load on demand (and are warmed at idle by MailPage).
 const HtmlBody = lazy(() => import('./HtmlBody').then((m) => ({ default: m.HtmlBody })));
+// OpenPGP messages (decrypt/verify in the browser) load openpgp.js on demand, only when one is opened.
+const PgpBody = lazy(() => import('../pgp/PgpBody').then((m) => ({ default: m.PgpBody })));
 
 type HeaderProps = Omit<React.ComponentProps<typeof MessageHeader>, 'message' | 'onCollapse'>;
 
@@ -53,6 +56,7 @@ export function MessageCard(props: Props) {
     );
   }
 
+  const pgp = detectPgp(m);
   return (
     <article className="py-4" aria-label={`Message from ${displayName(m.from)}`}>
       <MessageHeader message={m} onCollapse={onToggle} {...header} />
@@ -73,14 +77,18 @@ export function MessageCard(props: Props) {
       )}
 
       <div className="mt-4">
-        {m.html ? (
+        {pgp ? (
+          <Suspense fallback={<div className="h-40" aria-hidden="true" />}>
+            <PgpBody message={m} mailboxId={header.mailboxId} detection={pgp} />
+          </Suspense>
+        ) : m.html ? (
           <Suspense fallback={<div className="h-40" aria-hidden="true" />}>
             <HtmlBody html={m.html} messageId={m.id} />
           </Suspense>
         ) : (
           <TextBody text={m.text ?? ''} />
         )}
-        <Attachments items={m.attachments} />
+        <Attachments items={visibleAttachments(m, pgp)} />
       </div>
     </article>
   );

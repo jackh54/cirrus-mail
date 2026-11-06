@@ -18,7 +18,7 @@ export interface MessageRow {
   is_starred: number; spam_score: number; auth_json: string | null; list_id: string | null; send_at: number | null;
   sent_at: number | null; error_code: string | null; error_message: string | null; date: number; scheduled_by: string | null;
   created_at: number; updated_at: number; folder_changed_at: number; fts_rowid: number | null;
-  display_date: number | null; content_hash: string | null;
+  display_date: number | null; content_hash: string | null; pgp_mode: 'mime' | 'inline' | null;
 }
 
 export interface AttachmentRow {

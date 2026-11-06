@@ -175,6 +175,8 @@ export interface DraftInput {
   text?: string;                // derived by the server from html when omitted
   parentId?: ID | null;         // message being replied to / forwarded
   composeMode?: ComposeMode;
+  /** OpenPGP send mode (see PgpSendMode). With it, `html` must be '' and `text` the armored payload. */
+  pgp?: PgpSendMode | null;
 }
 
 export interface SendInput { sendAt?: Millis }
@@ -427,6 +429,48 @@ export const SEND_WARN_RATIO = 0.8;
 
 /** GET/PATCH /api/admin/settings */
 export interface AdminSettings { dailySendLimit: number | null } // PATCH: 1..1,000,000, or null to clear
+
+// ---------- OpenPGP ----------
+
+export type PgpSource = 'manual' | 'autocrypt' | 'wkd';
+
+/**
+ * How a draft is sent. 'mime': `text` is an armored OpenPGP message and goes out as PGP/MIME (RFC 3156).
+ * 'inline': `text` goes out as is, as the only (text/plain) part (cleartext-signed or armored). Null/absent: normal.
+ * Messages with either mode can't have attachments. The server never encrypts or signs: it transports `text`.
+ */
+export type PgpSendMode = 'mime' | 'inline';
+
+/** GET /api/pgp/key (the caller's own key), PUT replaces it, DELETE removes it. */
+export interface PgpOwnKey {
+  fingerprint: string;
+  publicKey: string;            // armored
+  privateKey: string;           // armored, encrypted with the PGP passphrase. Decrypt in the browser only.
+  addresses: string[];          // email user IDs on the key
+  revoked: boolean;
+  createdAt: Millis;
+  updatedAt: Millis;
+}
+export interface PgpKeyResponse { key: PgpOwnKey | null }
+export interface PgpKeyInput { publicKey: string; privateKey: string; addresses: string[]; revoked?: boolean }
+
+export interface PgpKeyringEntry {
+  id: ID;
+  email: string;
+  publicKey: string;
+  fingerprint: string;
+  source: PgpSource;
+  createdAt: Millis;
+  updatedAt: Millis;
+  /** A different key seen for this address (Autocrypt or WKD). Not used until the user accepts it. */
+  pending: { publicKey: string; fingerprint: string; source: PgpSource; at: Millis } | null;
+}
+
+/** POST /api/pgp/keyring. A different key for a known address is a 409 KEY_CHANGED unless `replace` is true. */
+export interface PgpKeyringImportInput { email: string; publicKey: string; replace?: boolean }
+/** POST /api/pgp/keyring/wkd: looks `email` up in its Web Key Directory and stores the result (source 'wkd'). */
+export interface PgpWkdLookupInput { email: string }
+export interface PgpKeyringResponse { entry: PgpKeyringEntry; status: 'created' | 'unchanged' | 'replaced' | 'pending' }
 
 // ---------- limits shared by both sides ----------
 

@@ -7,6 +7,7 @@ import { HttpError } from '../lib/errors';
 import { cleanHeaderText } from '../lib/validate';
 import { htmlToText } from '../lib/html';
 import { recordSendsSafe } from '../lib/sendcount';
+import { sendPgpMime } from './pgpmime';
 
 const QUOTA_CODES = new Set(['E_RATE_LIMIT_EXCEEDED', 'E_DAILY_LIMIT_EXCEEDED']);
 
@@ -71,6 +72,7 @@ export async function validateDraft(db: D1Database, row: MessageRow): Promise<Dr
   if (recipients > LIMITS.maxRecipients) throw new HttpError(400, 'TOO_MANY_RECIPIENTS', `At most ${LIMITS.maxRecipients} recipients per message`);
   const att = await db.prepare('SELECT COUNT(*) AS n, COALESCE(SUM(size), 0) AS bytes FROM attachments WHERE message_id = ?').bind(row.id).first<{ n: number; bytes: number }>();
   if ((att?.n ?? 0) > LIMITS.maxAttachments) throw new HttpError(400, 'TOO_MANY_ATTACHMENTS', `At most ${LIMITS.maxAttachments} attachments`);
+  if (row.pgp_mode && (att?.n ?? 0) > 0) throw new HttpError(400, 'PGP_ATTACHMENTS', 'Encrypted or signed messages cannot have attachments');
   if (row.size > LIMITS.maxMessageBytes) throw new HttpError(400, 'MESSAGE_TOO_LARGE', 'Message exceeds 25 MiB');
   return { recipients, size: row.size };
 }
@@ -115,7 +117,9 @@ export async function performSend(env: Env, row: MessageRow, contactUserIds: str
       ...(Object.keys(headers).length ? { headers } : {}),
       ...(attachments.length ? { attachments } : {}),
     } as EmailMessageBuilder;
-    const res = await env.EMAIL.send(builder);
+    // OpenPGP: the body is already encrypted in the browser. 'mime' wraps it as PGP/MIME; 'inline' goes out as
+    // the plain text above (the draft has no HTML part).
+    const res = row.pgp_mode === 'mime' ? await sendPgpMime(env, row, body.text ?? '', { to, cc, bcc }, contactUserIds) : await env.EMAIL.send(builder);
     result = { ok: true, messageId: bracketId(res.messageId) };
     // Once per claimed send (claimForSend lets only one attempt through), one per recipient.
     await recordSendsSafe(db, to.length + cc.length + bcc.length);

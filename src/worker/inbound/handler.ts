@@ -6,6 +6,7 @@ import { dedupeAddresses, domainOf, fromParsed, normalizeEmail } from '../lib/ad
 import { sha256Hex } from '../lib/crypto';
 import { addressesForFts, folderIdsByRole, ftsInsertStmts, recomputeThreadStmts } from '../lib/db';
 import { htmlToText, makeSnippet } from '../lib/html';
+import { storeAutocrypt } from '../lib/pgp-keyring';
 import { notifyNewMail } from '../push';
 import { maybeAutoreply, type AutoreplyMailbox } from './autoreply';
 import { evaluateFilters, rowToFilter, type FilterRow } from './filters';
@@ -249,6 +250,11 @@ export async function processInbound(message: ForwardableEmailMessage, env: Env,
   } catch (e) {
     await env.BUCKET.delete(r2Keys).catch(() => undefined);
     throw e;
+  }
+
+  // Autocrypt: remember the sender's key for the mailbox's members (aligned DMARC only; never throws).
+  if (!spam.isSpam) {
+    await storeAutocrypt(db, mailboxId, from.email, email.headers.filter((h) => h.key === 'autocrypt').map((h) => h.value), auth);
   }
 
   // Web Push for unread mail stored in the Inbox (not spam, trash, another folder, or filtered to read).
