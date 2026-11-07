@@ -2,11 +2,11 @@
 // Regenerates docs/screenshots/*.png from a seeded local dev server.
 //
 //   npm run dev                      # in one terminal
-//   npm run db:migrate:local && node scripts/seed-demo.mjs
+//   npm run db:migrate:local && node scripts/seed-demo.mjs   # capture then runs seed-demo-dates.mjs (local D1)
 //   node scripts/capture-screenshots.mjs [--url http://localhost:5173] [--chrome /path/to/chrome]
 //
 // Uses headless Chrome over the DevTools protocol (Node's built-in WebSocket), no extra deps.
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { mkdir, writeFile, mkdtemp, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -60,6 +60,8 @@ class Cdp {
 }
 
 async function main() {
+  // Demo only: gives the seeded mail realistic dates in the local D1 (never remote).
+  execFileSync('node', [new URL('./seed-demo-dates.mjs', import.meta.url).pathname], { stdio: 'inherit' });
   const { cookie, me } = await login('alex@cirrus.test', 'demo-password-123');
   const mb = me.mailboxes.find((m) => m.address === 'alex@cirrus.test') ?? me.mailboxes[0];
   const get = (path) => fetch(`${BASE}${path}`, { headers: { cookie: `cirrus_session=${cookie}` } }).then((r) => r.json());
@@ -67,16 +69,18 @@ async function main() {
   const inbox = folders.find((f) => f.role === 'inbox');
   const threads = await get(`/api/mailboxes/${mb.id}/threads?folder=${inbox.id}&limit=50`);
   const byTitle = (s) => threads.items.find((t) => t.subject.includes(s))?.id ?? threads.items[0].id;
+  const contacts = await get('/api/dav/contacts?limit=2000');
+  const contactId = (contacts.items ?? contacts).find((c) => c.fn === 'Elena Novak')?.id;
 
   const profile = await mkdtemp(join(tmpdir(), 'cirrus-shot-'));
   const chrome = spawn(CHROME, [
-    '--headless=new', '--remote-debugging-port=9333', `--user-data-dir=${profile}`,
+    '--headless=new', '--remote-debugging-port=9355', `--user-data-dir=${profile}`,
     '--hide-scrollbars', '--no-first-run', '--no-default-browser-check', 'about:blank',
   ]);
   let wsUrl;
   for (let i = 0; i < 50 && !wsUrl; i++) {
     await sleep(200);
-    wsUrl = await fetch('http://127.0.0.1:9333/json/version').then((r) => r.json()).then((j) => j.webSocketDebuggerUrl).catch(() => null);
+    wsUrl = await fetch('http://127.0.0.1:9355/json/version').then((r) => r.json()).then((j) => j.webSocketDebuggerUrl).catch(() => null);
   }
   const ws = new WebSocket(wsUrl);
   await new Promise((r) => ws.addEventListener('open', r, { once: true }));
@@ -108,7 +112,7 @@ async function main() {
 
   await mkdir(OUT, { recursive: true });
   console.log(`Capturing into ${OUT}`);
-  await shot('inbox-light', { path: `/mail/${mb.id}/inbox/${byTitle('Pilot feedback')}` });
+  await shot('inbox-light', { path: `/mail/${mb.id}/inbox/${byTitle('Invoice INV')}` });
   await shot('inbox-dark', { path: `/mail/${mb.id}/inbox/${byTitle('Security review')}`, scheme: 'dark' });
   await shot('compose', {
     path: `/mail/${mb.id}/inbox/${byTitle('Pricing page')}`,
@@ -135,6 +139,17 @@ async function main() {
       await sleep(2500);
     },
   });
+  await shot('calendar', { path: '/calendar?v=week' });
+  await shot('contacts', { path: `/contacts/${contactId}` });
+  await shot('reader-labels', { path: `/mail/${mb.id}/inbox/${byTitle('Pilot feedback')}` });
+  await shot('settings-security', {
+    path: '/settings/security',
+    before: async () => {
+      await evaluate(`[...document.querySelectorAll('h2,h3')].find(h => h.textContent.trim() === 'Passkeys')?.scrollIntoView({ block: 'start' })`);
+      await sleep(600);
+    },
+  });
+  await shot('invite', { path: `/mail/${mb.id}/inbox/${byTitle('Q1 planning workshop')}` });
   await shot('mobile', { path: `/mail/${mb.id}/inbox`, width: 390, height: 844, mobile: true });
 
   ws.close();
