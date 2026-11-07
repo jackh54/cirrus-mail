@@ -1,0 +1,40 @@
+# Cirrus Mail
+
+> Cirrus Mail is an open-source (MIT) email suite that runs entirely on your own Cloudflare account. Email Routing receives mail, Email Sending sends it, D1 and R2 store it, and one Hono Worker serves a React webmail and the API. It gives you real mailboxes on your own domains, with a web app, an admin console, CalDAV/CardDAV, a JMAP server and an iOS beta. It needs Workers Paid and a domain on Cloudflare DNS. There is no IMAP, because Workers can't accept inbound TCP connections; mail apps connect over JMAP instead. The project is in beta.
+
+## Deploy it
+
+- [Setup guide](https://github.com/jackh54/cirrus-mail/blob/main/docs/setup.md): prerequisites, Email Sending and Email Routing, button and CLI deploy, first-run setup, catch-all rule, troubleshooting
+- [FAQ](https://github.com/jackh54/cirrus-mail/blob/main/docs/faq.md): cost, limits, privacy, acceptable use, IMAP vs JMAP, import, native app
+- [Condensed guide for LLMs](https://github.com/jackh54/cirrus-mail/blob/main/llms-full.txt): all of the above in one file
+- [Deploy to Cloudflare button](https://deploy.workers.cloudflare.com/?url=https://github.com/jackh54/cirrus-mail)
+
+## Understand it
+
+- [README](https://github.com/jackh54/cirrus-mail/blob/main/README.md): features, architecture, cost, limits, security model, roadmap
+- [Design spec](https://github.com/jackh54/cirrus-mail/blob/main/docs/design.md): constraints, architecture, data model, the HTTP API contract (section 5), subsystems (section 8)
+- [Security policy](https://github.com/jackh54/cirrus-mail/blob/main/SECURITY.md): how to report a vulnerability
+
+## Work on the code
+
+- [AGENTS.md](https://github.com/jackh54/cirrus-mail/blob/main/AGENTS.md): guide for AI coding agents (layout, commands, conventions, deploy help)
+- [Development guide](https://github.com/jackh54/cirrus-mail/blob/main/docs/development.md): local dev, scripts, tests, project layout
+- [Contributing](https://github.com/jackh54/cirrus-mail/blob/main/CONTRIBUTING.md)
+- [API types](https://github.com/jackh54/cirrus-mail/blob/main/src/shared/api.ts): the TypeScript side of the API contract
+
+## Subsystem notes
+
+- [Labels](https://github.com/jackh54/cirrus-mail/blob/main/docs/notes/labels.md)
+- [Snooze, mute, unsubscribe, reply templates](https://github.com/jackh54/cirrus-mail/blob/main/docs/notes/extras.md)
+- [Passkeys](https://github.com/jackh54/cirrus-mail/blob/main/docs/notes/passkeys.md)
+- [PGP](https://github.com/jackh54/cirrus-mail/blob/main/docs/notes/pgp.md)
+- [CalDAV and CardDAV](https://github.com/jackh54/cirrus-mail/blob/main/docs/notes/dav.md)
+- [Calendar and Contacts pages](https://github.com/jackh54/cirrus-mail/blob/main/docs/notes/contacts-calendar.md)
+- [mbox import and export](https://github.com/jackh54/cirrus-mail/blob/main/docs/notes/mbox.md)
+- [JMAP](https://github.com/jackh54/cirrus-mail/blob/main/docs/notes/jmap.md)
+- [AI triage](https://github.com/jackh54/cirrus-mail/blob/main/docs/notes/ai-triage.md)
+
+## Optional
+
+- [iOS app source](https://github.com/jackh54/cirrus-ios): native iPhone app, public beta on [TestFlight](https://testflight.apple.com/join/u5zScSGa)
+- [Landing page source](https://github.com/jackh54/cirrus-mail/tree/main/site)
