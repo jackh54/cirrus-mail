@@ -82,7 +82,7 @@
 - CalDAV and CardDAV sync for Apple and Android devices, with a downloadable Apple `.mobileconfig`
 - A JMAP server, so JMAP-capable mail apps can connect to your mailboxes
 - mbox import (for example from Gmail through Google Takeout) and mbox export
-- A native iOS app is in development
+- A native iOS app, in public beta on [TestFlight](#ios-app-beta)
 
 **Admin**
 - Users, domains, mailboxes, aliases and catch-all addresses
@@ -97,6 +97,18 @@
 - No Durable Objects, no Queues, no third-party services
 - One-click deploy, or `npm run deploy` from the CLI
 - Upgrade with `git pull && npm run deploy`
+
+## iOS app (beta)
+
+A native iPhone app for Cirrus is in public beta. It needs iOS 26 or later.
+
+**[Join the TestFlight beta](https://testflight.apple.com/join/u5zScSGa)**
+
+1. Install [TestFlight](https://apps.apple.com/app/testflight/id899247664) from the App Store, then open the link above on your iPhone.
+2. In the Cirrus web app, go to **Settings → Security → App passwords** and create one for your phone.
+3. Open the app and enter your Cirrus server address, your sign-in email and the app password. Use the app password, not your account password.
+
+The app talks to your server over JMAP, so it works with any Cirrus instance that runs this release or later. It's an early beta: reading, searching, organising and sending work; attachments in compose and notifications aren't in yet.
 
 ## How it works
 
@@ -165,7 +177,7 @@ Found a vulnerability? Please report it privately; see [SECURITY.md](SECURITY.md
 
 Still open:
 
-- **Native mobile apps.** An iOS app is in development.
+- **Native mobile apps.** The iOS app is in [TestFlight beta](#ios-app-beta); push notifications and attachments in compose are next. Android isn't started.
 - **IMAP.** Cloudflare Workers can't accept inbound TCP connections, so Cirrus can't run an IMAP server. Mail apps connect over JMAP instead. An optional IMAP bridge that you run somewhere else may come later.
 - **PGP extras:** publishing your own key over WKD, key expiry and subkey management, and changing a key's passphrase.
 - **Calendar scheduling:** free/busy, calendar sharing and iTIP over CalDAV.

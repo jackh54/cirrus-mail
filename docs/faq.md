@@ -89,7 +89,7 @@ Yes, from an mbox file. Export your Gmail with Google Takeout, or export from Ap
 
 ## Is there a native app?
 
-An iOS app is in development and isn't public yet. Until then, use the web app as a PWA, or connect a JMAP client.
+Yes, for iPhone: the iOS app is in public beta. [Join it on TestFlight](https://testflight.apple.com/join/u5zScSGa) (iOS 26 or later) and sign in with your server address, your email and an app password from **Settings → Security**. There's no Android app yet; use the web app as a PWA, or connect a JMAP client.
 
 ## Does the AI feature send my mail anywhere?
 
