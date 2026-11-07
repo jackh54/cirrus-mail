@@ -113,7 +113,7 @@ async function main() {
   await mkdir(OUT, { recursive: true });
   console.log(`Capturing into ${OUT}`);
   await shot('inbox-light', { path: `/mail/${mb.id}/inbox/${byTitle('Invoice INV')}` });
-  await shot('inbox-dark', { path: `/mail/${mb.id}/inbox/${byTitle('Security review')}`, scheme: 'dark' });
+  await shot('inbox-dark', { path: `/mail/${mb.id}/inbox/${byTitle('Checklist before')}`, scheme: 'dark' });
   await shot('compose', {
     path: `/mail/${mb.id}/inbox/${byTitle('Pricing page')}`,
     scheme: 'dark',
@@ -141,7 +141,7 @@ async function main() {
   });
   await shot('calendar', { path: '/calendar?v=week' });
   await shot('contacts', { path: `/contacts/${contactId}` });
-  await shot('reader-labels', { path: `/mail/${mb.id}/inbox/${byTitle('Pilot feedback')}` });
+  await shot('reader-labels', { path: `/mail/${mb.id}/inbox/${byTitle('brand refresh')}` });
   await shot('settings-security', {
     path: '/settings/security',
     before: async () => {
