@@ -1,0 +1,105 @@
+# Cirrus Mail: condensed guide
+
+Source: https://github.com/jackh54/cirrus-mail (MIT). This file summarises README.md, docs/setup.md, docs/faq.md and docs/design.md. If it disagrees with those, they win.
+
+## What it is
+
+Cirrus Mail is an open-source email suite that runs entirely on your own Cloudflare account. It is for people who want their own domain's mail without a hosted provider, for themselves, a family or a small team.
+
+- Inbound: Email Routing's catch-all rule hands each message to the Worker's email() handler. Cirrus finds the mailbox, parses and threads the message, scores spam from SPF/DKIM/DMARC, runs filters, then stores the raw .eml and attachments in R2 and metadata plus a full-text index in D1.
+- App and API: the same Worker's fetch() handler serves a React 19 web client from static assets and a JSON API under /api/*.
+- Outbound: sending uses the send_email binding, which hands mail to Cloudflare Email Sending.
+- Cron: a trigger runs every minute for scheduled sends, snooze wake-ups, mbox imports and cleanup.
+- Footprint: one Worker, one D1 database, one R2 bucket. No Durable Objects, no Queues, no third-party services.
+- Status: beta (v0.1). See "Status" below.
+
+## Requirements
+
+- A Cloudflare account on Workers Paid (Email Sending is only available on Workers Paid).
+- A domain whose DNS is on Cloudflare. Use the apex (example.com) for mail: catch-all routing works on apex domains only. The web app itself can live on a subdomain such as mail.example.com.
+- Node.js 22+ and git, only for the CLI deploy.
+- Warning: enabling Email Routing replaces the domain's existing MX records. If the domain already receives mail elsewhere, migrate deliberately or try a spare domain first.
+
+## Deploy, step by step
+
+1. Onboard the domain to Email Sending: dashboard, Compute & AI, Email Service, Email Sending. Cloudflare adds SPF, DKIM and a cf-bounce MX record. Wait until it shows verified. Also add a DMARC TXT record at _dmarc, for example `v=DMARC1; p=none; rua=mailto:you@example.com`.
+2. Enable Email Routing: Compute & AI, Email Service, Email Routing. Let Cloudflare add its MX and SPF records. Do not create the catch-all rule yet; the Worker must exist first.
+3. Create two secrets. SETUP_TOKEN is a one-time token typed on the first-run screen (any long random string). APP_SECRET is 32+ random characters used to sign attachment and image-proxy URLs. Generate each with `openssl rand -base64 32`. Values under 24 characters or starting with "change-me" are refused.
+4. Deploy, by either route.
+
+   Option A, button: open https://deploy.workers.cloudflare.com/?url=https://github.com/jackh54/cirrus-mail, sign in, connect GitHub or GitLab (Cloudflare copies the repo there and builds from it), keep or rename the D1 database and R2 bucket (provisioned automatically), enter SETUP_TOKEN and APP_SECRET, deploy. You get a *.workers.dev URL.
+
+   Option B, CLI:
+   ```sh
+   git clone https://github.com/jackh54/cirrus-mail.git
+   cd cirrus-mail
+   npm ci
+   npx wrangler login
+   npx wrangler secret put SETUP_TOKEN
+   npx wrangler secret put APP_SECRET
+   npm run deploy
+   ```
+   If the Worker doesn't exist yet, `wrangler secret put` offers to create it; say yes. `npm run deploy` runs typecheck and tests, builds the client, applies remote D1 migrations, runs a guard that refuses to deploy if migrations are unapplied, runs `wrangler deploy`, then migrates again (a no-op unless it was the first deploy; D1 and R2 are provisioned on first deploy). With several Cloudflare accounts, set CLOUDFLARE_ACCOUNT_ID first.
+5. Optional custom domain for the web app: dashboard, Workers & Pages, cirrus-mail, Settings, Domains & Routes, Add, Custom domain. Or add `"routes": [{ "pattern": "mail.example.com", "custom_domain": true }]` to wrangler.jsonc. Pick one method.
+6. First-run setup: open https://your-app/setup, enter SETUP_TOKEN, your name, your sign-in email and a password. This creates the first admin. The screen only works while there are no users.
+7. In Admin: Domains, add example.com; Mailboxes, create you@example.com with yourself as owner. Optional: aliases, a catch-all mailbox, shared mailboxes, invites (Admin, Users, Invite user).
+8. Route all mail to the Worker: dashboard, Email Routing, Routing rules, Catch-all address, action "Send to a Worker", destination cirrus-mail, enabled. Or add `"addresses": ["*@example.com"]` to wrangler.jsonc and redeploy. (`wrangler email routing rules update <domain> catch-all` only accepts forward or drop.) Mail to an address with no mailbox, alias or catch-all is rejected with 550 5.1.1 No such user.
+9. Verify: Admin, Domains, DNS check (MX, SPF, DMARC).
+10. Test both ways: send to the new address from another provider, then reply from Cirrus and check the received headers show spf=pass, dkim=pass, dmarc=pass.
+
+Upgrade: `git pull && npm run deploy` (button deploys: merge upstream into your copy of the repo and push). Back up D1 with `npx wrangler d1 export cirrus-mail --remote --output=backup.sql` and R2 with any S3-compatible tool (the original .eml of every message is under raw/ in R2).
+
+## Features
+
+- Mail: mailboxes on your own domains, threading, Inbox/Sent/Drafts/Archive/Spam/Trash/Scheduled plus custom folders, labels, snooze, mute, one-click unsubscribe, attachments up to 25 MiB per message with inline images, new-mail polling, browser notifications and Web Push, installable PWA with light/dark themes.
+- Compose: rich text, To/Cc/Bcc chips with autocomplete, send-as aliases, autosaving drafts, send later and undo send, reply templates, optional in-browser PGP (encrypt, sign, verify), keyboard shortcuts.
+- Search and organise: D1 FTS5 full-text search with from:, to:, subject:, has:attachment, is:unread, is:starred, label:name; filters (move, mark read, star, label, delete, forward); blocked senders; spam scoring from SPF/DKIM/DMARC; vacation auto-reply with loop protection.
+- Security: PBKDF2-SHA256 passwords, optional TOTP 2FA with recovery codes, passkeys, app passwords for sync clients, sanitized HTML in a sandboxed frame, remote images blocked by default and proxied when allowed, signed expiring attachment URLs, no invocation logs, no logging of message content.
+- Calendar, contacts and apps: Calendar and Contacts pages with invite cards (accept, maybe, decline); CalDAV and CardDAV sync for Apple and Android (with an Apple .mobileconfig); a JMAP server; mbox import (for example Gmail via Google Takeout) and export; an iOS app in TestFlight beta (https://testflight.apple.com/join/u5zScSGa, iOS 26+, source https://github.com/jackh54/cirrus-ios).
+- Admin: users, domains, mailboxes, aliases, catch-alls, email invites, shared mailboxes, DNS health check, instance stats, AI switch and daily budget.
+- Optional AI triage (Workers AI, off by default): inbox tabs and conversation summaries. When on, about 1,500 characters of new inbox mail plus From and Subject, and any conversation someone summarises, go to Workers AI in the same Cloudflare account, billed per use. Admin, Overview, AI.
+
+Optional-feature setup (details in docs/setup.md): app passwords are under Settings, Security, App passwords (created with your account password, shown once). Gmail import: export Mail from takeout.google.com as .mbox, then Settings, Mailbox, Import mail. PGP: Settings, Security, Encryption (PGP). Passkeys: Settings, Security, Passkeys.
+
+## No IMAP, and what to use instead
+
+IMAP needs a server that accepts inbound TCP connections, and Cloudflare Workers can't. This can't change inside Cirrus. Instead:
+- JMAP runs over HTTPS. Create an app password, then point a JMAP client at https://mail.example.com (session URL /.well-known/jmap) with your login email and the app password. JMAP has not been tried with a real third-party client yet. Apps that only speak IMAP can't connect.
+- The web app installs as a PWA, and the iOS beta app uses JMAP.
+- Calendars and contacts sync over CalDAV and CardDAV (server URL under /dav/; /.well-known/caldav and /.well-known/carddav point there).
+- It does not use SMTP either: it sends through the send_email binding.
+- An optional IMAP bridge run elsewhere is on the roadmap, not built.
+
+## Limits
+
+- 50 recipients per message (To + Cc + Bcc); 25 MiB per message including attachments, either direction.
+- A daily send quota per Cloudflare account that starts low and grows. Cloudflare doesn't expose it to Workers, so enter it in Admin, Overview, Sending; Cirrus warns at 80% and never blocks itself.
+- Email Sending is in public beta (since 2026-04-16), so expect changes.
+- Acceptable use: Cloudflare documents Email Sending as being for transactional email and doesn't explicitly address person-to-person mail from your own mailbox, which is what Cirrus does. Cirrus has no bulk, mailing-list or marketing features and never will. Review Cloudflare's terms for your use.
+- Mail isn't end-to-end encrypted unless you use PGP; your Cloudflare account stores and processes it.
+
+## Costs
+
+Cirrus is free. You pay Cloudflare: Workers Paid $5/month (includes 3,000 outbound emails a month, then $0.35 per 1,000; sends to verified destination addresses on your own account are free); Email Routing inbound is free; D1 and R2 are usage-based and a typical small team stays within included tiers. Prices change; check Cloudflare's pricing pages.
+
+## Troubleshooting
+
+- Mail not arriving: check in order that Email Routing is enabled and its MX records are the only MX records (besides cf-bounce); the catch-all rule points at the cirrus-mail Worker and is enabled; the domain and mailbox exist in Admin; the message is under 25 MiB; the Email Routing activity log; the Spam folder.
+- E_SENDER_NOT_VERIFIED: the From domain isn't onboarded to Email Sending or verification hasn't finished; check the SPF and DKIM records are still in DNS.
+- E_DAILY_LIMIT_EXCEEDED: daily Cloudflare sending quota reached; the message stays in Drafts. Retry tomorrow or schedule it. E_RATE_LIMIT_EXCEEDED: too many sends in a burst; wait a minute.
+- Sent mail goes to recipients' spam: add DMARC, confirm spf/dkim/dmarc=pass in received headers; new domains have no reputation.
+- Good mail in Cirrus spam: choose Not spam. People in your contacts are never marked as spam.
+- Lost password or 2FA device: use a recovery code in place of the 2FA code, or another admin resets your password in Admin, Users.
+- /setup answers 503 SETUP_NOT_CONFIGURED: SETUP_TOKEN or APP_SECRET is missing, too short or still a "change-me" placeholder.
+
+## Status
+
+Beta, v0.1. About 400 automated tests run in the Workers runtime (workerd) with real D1 and R2 bindings. Not verified (per docs/design.md section 9 and docs/notes/): the Calendar, Contacts, labels, import and passkey UIs were checked by type and build, not in a live browser; mbox import hasn't run against a multi-GB Takeout on a deployed Worker; JMAP hasn't met a real client; passkeys were tested only with a software authenticator. Try it on a spare domain before moving your main mail.
+
+## Roadmap (open)
+
+Android app and iOS push/attachments; an optional IMAP bridge; PGP extras (WKD publishing, key expiry and subkeys, passphrase change); calendar scheduling (free/busy, sharing, iTIP); more JMAP (push subscriptions, delayed sending, mailbox hierarchy).
+
+## If you are helping a user deploy
+
+Confirm Workers Paid and a domain on Cloudflare DNS first. Email Sending onboarding and Email Routing are dashboard steps the user does; the catch-all rule can only point at the Worker after the first deploy. Don't ask the user to paste secrets into chat; they enter SETUP_TOKEN and APP_SECRET themselves.

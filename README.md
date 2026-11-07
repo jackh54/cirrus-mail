@@ -7,9 +7,10 @@
   <a href="https://deploy.workers.cloudflare.com/?url=https://github.com/jackh54/cirrus-mail"><img alt="Deploy to Cloudflare" src="https://img.shields.io/badge/deploy-Cloudflare%20Workers-38D6C4?style=flat-square"></a>
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-strict-3178C6?style=flat-square&logo=typescript&logoColor=white">
   <a href="CONTRIBUTING.md"><img alt="PRs welcome" src="https://img.shields.io/badge/PRs-welcome-0E1424?style=flat-square"></a>
+  <a href="https://testflight.apple.com/join/u5zScSGa"><img alt="iOS app: TestFlight beta" src="https://img.shields.io/badge/iOS-TestFlight%20beta-0D96F6?style=flat-square&logo=apple&logoColor=white"></a>
 </p>
 
-**Cirrus Mail** is an open-source email suite that runs entirely on your own Cloudflare account. Email Routing receives your mail, Email Sending sends it, D1 and R2 store it, and a single Worker serves a fast web client and the API. You get real mailboxes on your own domains for yourself, your family or a small team, with threading, search, folders, attachments, shared mailboxes and an admin console. There's no server to run and no third-party service, and nobody else holds your mail. If you have Workers Paid, you can deploy it in minutes.
+**Cirrus Mail** is an open-source email suite that runs entirely on your own Cloudflare account. It's for people who want their own domain's mail without a hosted provider: yourself, your family or a small team. Email Routing receives your mail, Email Sending sends it, D1 and R2 store it, and a single Worker serves a fast web client and the API. You get real mailboxes on your own domains, with threading, search, folders, attachments, shared mailboxes and an admin console. There's no server to run and no third-party service, and nobody else holds your mail. If you have Workers Paid, you can deploy it in minutes.
 
 <p align="center">
   <a href="https://deploy.workers.cloudflare.com/?url=https://github.com/jackh54/cirrus-mail"><img src="https://deploy.workers.cloudflare.com/button" alt="Deploy to Cloudflare"></a>
@@ -19,8 +20,27 @@
   <a href="docs/setup.md"><b>Setup guide</b></a> ·
   <a href="docs/faq.md"><b>FAQ</b></a> ·
   <a href="docs/development.md"><b>Development</b></a> ·
-  <a href="docs/design.md"><b>Design spec</b></a>
+  <a href="docs/design.md"><b>Design spec</b></a> ·
+  <a href="AGENTS.md"><b>AGENTS.md</b></a> ·
+  <a href="llms.txt"><b>llms.txt</b></a>
 </p>
+
+**Status: beta (v0.1).** The Worker, API and web client are covered by more than 400 automated tests that run in the Workers runtime against real D1 and R2 bindings. It has run the maintainer's own mail since November 2026, plus a second small community instance. Not verified yet: the import and passkey screens were checked by type and build rather than in a live browser; mbox import hasn't run against a multi-GB Takeout on a deployed Worker; JMAP hasn't met a real third-party client; and passkeys were tested only with a software authenticator. Email Sending is itself in beta. Try Cirrus on a spare domain before you move your main mail. Details are in [docs/design.md](docs/design.md#9-out-of-scope-and-open-work) and `docs/notes/`.
+
+## Why Cirrus
+
+How it compares with the usual ways to get mail on your own domain:
+
+| | Hosted provider (Google Workspace, Fastmail) | Run your own mail server (Mailcow, Mail-in-a-Box) | Cirrus Mail |
+|---|---|---|---|
+| Who stores your mail | The provider | You, on a server you maintain | You, in your own Cloudflare account |
+| Server to patch and monitor | No | Yes, plus IP reputation and port 25 access | No |
+| Cost | Per user per month | A VPS and your time | Workers Paid ($5/month) plus usage |
+| IMAP and SMTP for any mail app | Yes | Yes | No. Web app, JMAP and an iOS beta |
+| Deliverability | Mature and well established | Yours to build and keep | Cloudflare Email Sending, in beta |
+| Maturity | Years in production | Years in production | Beta |
+
+Choose a hosted provider if you need IMAP clients, support or a long track record. Choose Mailcow or similar if you want full control and don't mind running a server. Choose Cirrus if you're already on Cloudflare, want no servers, and can live without IMAP.
 
 ## Screenshots
 
@@ -148,7 +168,7 @@ Prices change, so check Cloudflare's pricing page before you rely on these numbe
 
 1. Make sure you have **Workers Paid** and a domain on **Cloudflare DNS**.
 2. Onboard the domain to **Email Sending** (Compute & AI → Email Service) and enable **Email Routing**.
-3. Click **Deploy to Cloudflare** above, or run:
+3. Click **Deploy to Cloudflare** above, or run this in a terminal (Node.js 22+; each `secret put` prompts you for the value, so use a long random string such as the output of `openssl rand -base64 32`):
    ```sh
    git clone https://github.com/jackh54/cirrus-mail.git && cd cirrus-mail
    npm ci && npx wrangler login
@@ -156,7 +176,7 @@ Prices change, so check Cloudflare's pricing page before you rely on these numbe
    npx wrangler secret put APP_SECRET
    npm run deploy
    ```
-4. Open `/setup`, create your admin account, and add your domain and mailboxes in Admin.
+4. Open `/setup` on your new URL, enter your `SETUP_TOKEN`, create your admin account, and add your domain and mailboxes in Admin.
 5. Point the domain's Email Routing **catch-all** rule at the `cirrus-mail` Worker.
 
 The **[setup guide](docs/setup.md)** walks through every step, plus custom domains, backups and troubleshooting.

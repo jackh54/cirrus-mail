@@ -4,12 +4,30 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Cirrus Mail: your own email suite, on your own Cloudflare</title>
-  <meta name="description" content="Cirrus Mail is an open-source email suite that runs entirely on your own Cloudflare account: Email Routing in, Email Sending out, D1 and R2 storage, and a fast web client.">
+  <meta name="description" content="Cirrus Mail is an open-source (MIT) email suite that runs on your own Cloudflare account: mailboxes on your own domains, a web client, calendar and contacts sync, a JMAP server and an iOS beta. Needs Workers Paid. No IMAP.">
   <meta name="theme-color" content="#131417" media="(prefers-color-scheme: dark)">
   <meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)">
-  <meta property="og:title" content="Cirrus Mail">
-  <meta property="og:description" content="Your own email suite, on your own Cloudflare. Open source, MIT.">
+  <meta property="og:title" content="Cirrus Mail: your own email suite, on your own Cloudflare">
+  <meta property="og:description" content="Open-source, self-hosted email on your own Cloudflare account. Mailboxes on your own domains, web client, calendar and contacts sync, JMAP, PGP and passkeys. MIT licensed, in beta.">
   <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Cirrus Mail">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="Cirrus Mail: your own email suite, on your own Cloudflare">
+  <meta name="twitter:description" content="Open-source, self-hosted email on your own Cloudflare account. MIT licensed, in beta.">
+  <link rel="alternate" type="text/plain" href="llms.txt" title="llms.txt">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "Cirrus Mail",
+    "description": "An open-source email suite that runs entirely on your own Cloudflare account: Email Routing in, Email Sending out, D1 and R2 storage, and a React web client, with calendar and contacts sync, a JMAP server and an iOS app in beta. Requires Cloudflare Workers Paid.",
+    "applicationCategory": "CommunicationApplication",
+    "operatingSystem": "Cloudflare Workers",
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+    "license": "https://opensource.org/licenses/MIT",
+    "codeRepository": "https://github.com/jackh54/cirrus-mail"
+  }
+  </script>
   <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="assets/fonts.css">
   <link rel="stylesheet" href="assets/styles.css">
@@ -64,6 +82,7 @@
     <symbol id="i-unread" viewBox="0 0 24 24"><rect x="3" y="5.5" width="18" height="13" rx="2"/><path d="M3.5 7l8.5 6 8.5-6"/></symbol>
     <symbol id="i-code" viewBox="0 0 24 24"><path d="M8 7l-5 5 5 5"/><path d="M16 7l5 5-5 5"/><path d="M13.5 4.5l-3 15"/></symbol>
     <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3.5l9.5 16.5h-19z"/><path d="M12 10v4.5M12 17.5h.01"/></symbol>
+    <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15.5" rx="2"/><path d="M3.5 10h17M8 3v4M16 3v4"/></symbol>
     <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c2.5 2.5 3.8 5.5 3.8 9s-1.3 6.5-3.8 9c-2.5-2.5-3.8-5.5-3.8-9S9.5 5.5 12 3z"/></symbol>
   </defs>
 </svg>
@@ -264,11 +283,17 @@
         <div class="feature"><h3><svg class="icon" aria-hidden="true"><use href="#i-pen"/></svg>A compose window you'll like</h3><p>Rich text, recipient chips with autocomplete, send-as aliases, drag-and-drop attachments and autosave.</p></div>
         <div class="feature"><h3><svg class="icon" aria-hidden="true"><use href="#i-clock"/></svg>Send later, undo send</h3><p>Schedule a message for tomorrow morning, or take it back in the five seconds after you hit send.</p></div>
         <div class="feature"><h3><svg class="icon" aria-hidden="true"><use href="#i-filter"/></svg>Filters and spam scoring</h3><p>Rules that move, star, mark read or forward. Spam is scored from SPF, DKIM and DMARC results, plus your blocklist.</p></div>
+        <div class="feature"><h3><svg class="icon" aria-hidden="true"><use href="#i-tag"/></svg>Labels, snooze and mute</h3><p>Colour-coded labels, snooze a conversation until later, mute noisy threads, and unsubscribe from newsletters in one click.</p></div>
         <div class="feature"><h3><svg class="icon" aria-hidden="true"><use href="#i-users"/></svg>Shared mailboxes</h3><p>Give <code>support@</code> or <code>hello@</code> several members. Everyone can read and reply from the same mailbox.</p></div>
         <div class="feature"><h3><svg class="icon" aria-hidden="true"><use href="#i-at"/></svg>Aliases and catch-alls</h3><p>Extra addresses for a mailbox, and a per-domain catch-all for everything else.</p></div>
         <div class="feature"><h3><svg class="icon" aria-hidden="true"><use href="#i-sun"/></svg>Vacation replies</h3><p>Date-ranged auto-replies that skip mailing lists and bulk mail, and reply to each sender only once every few days.</p></div>
         <div class="feature"><h3><svg class="icon" aria-hidden="true"><use href="#i-phone"/></svg>Works on your phone</h3><p>A responsive layout, installable as a PWA, with light and dark themes and new-mail notifications.</p></div>
         <div class="feature"><h3><svg class="icon" aria-hidden="true"><use href="#i-keyboard"/></svg>Keyboard first</h3><p><code>c</code> to compose, <code>/</code> to search, <code>j</code>/<code>k</code> to move, <code>e</code> to archive, <code>r</code> to reply. Press <code>?</code> for the rest.</p></div>
+        <div class="feature"><h3><svg class="icon" aria-hidden="true"><use href="#i-calendar"/></svg>Calendar and contacts</h3><p>Calendar and Contacts pages with invite cards, plus CalDAV and CardDAV sync for Apple and Android using app passwords.</p></div>
+        <div class="feature"><h3><svg class="icon" aria-hidden="true"><use href="#i-globe"/></svg>A JMAP server</h3><p>IMAP can't run on Workers, so mail apps connect over JMAP instead. It hasn't been tried with a third-party client yet.</p></div>
+        <div class="feature"><h3><svg class="icon" aria-hidden="true"><use href="#i-lock"/></svg>Optional PGP</h3><p>Encrypt, sign and verify in your browser. The server never sees your passphrase or an unencrypted private key.</p></div>
+        <div class="feature"><h3><svg class="icon" aria-hidden="true"><use href="#i-inbox"/></svg>Import from Gmail</h3><p>Bring your old mail over from a Google Takeout <code>.mbox</code> file, labels and stars included. Export to mbox any time.</p></div>
+        <div class="feature"><h3><svg class="icon" aria-hidden="true"><use href="#i-phone"/></svg>iOS app, in beta</h3><p>A native iPhone app that talks to your server over JMAP. It's an early beta on <a href="https://testflight.apple.com/join/u5zScSGa">TestFlight</a>, and needs iOS 26 or later.</p></div>
         <div class="feature"><h3><svg class="icon" aria-hidden="true"><use href="#i-sliders"/></svg>Admin console</h3><p>Manage users, domains, mailboxes and aliases. A DNS check for MX, SPF and DMARC, and usage stats.</p></div>
         <div class="feature"><h3><svg class="icon" aria-hidden="true"><use href="#i-bolt"/></svg>One Worker, your account</h3><p>No Durable Objects, no Queues and no third-party services. Upgrade with <code>git pull &amp;&amp; npm run deploy</code>.</p></div>
       </div>
@@ -320,7 +345,7 @@
           <p>Email is the key to every other account you own, so Cirrus treats it that way.</p>
         </div>
         <ul class="sec-list">
-          <li><svg class="icon" aria-hidden="true"><use href="#i-key"/></svg><div><b>Strong passwords and 2FA</b><span>PBKDF2-SHA256 hashing, optional TOTP with hashed recovery codes, and login throttling.</span></div></li>
+          <li><svg class="icon" aria-hidden="true"><use href="#i-key"/></svg><div><b>Passwords, 2FA and passkeys</b><span>PBKDF2-SHA256 hashing, optional TOTP with hashed recovery codes, passkey sign-in, and login throttling.</span></div></li>
           <li><svg class="icon" aria-hidden="true"><use href="#i-shield"/></svg><div><b>Sandboxed HTML mail</b><span>Sanitized with DOMPurify and rendered in a sandboxed frame with no scripts and a strict CSP.</span></div></li>
           <li><svg class="icon" aria-hidden="true"><use href="#i-image"/></svg><div><b>Remote images blocked</b><span>Trackers don't load. When you allow images, they're fetched through a signed proxy on your own Worker.</span></div></li>
           <li><svg class="icon" aria-hidden="true"><use href="#i-link"/></svg><div><b>Signed attachment links</b><span>Attachment URLs are HMAC-signed and expire after an hour.</span></div></li>
@@ -354,7 +379,7 @@
         </details>
         <details>
           <summary>Can I use Apple Mail, Outlook or Thunderbird?</summary>
-          <p>Not yet. There's no IMAP or JMAP in v0.1; both are on the roadmap. The web client works well on phones and installs as a PWA.</p>
+          <p>Not over IMAP, and that can't change inside Cirrus: Cloudflare Workers can't accept inbound TCP connections. Cirrus has a JMAP server instead, which JMAP-capable apps can use with an app password, though it hasn't been tried with a third-party client yet. Calendars and contacts sync over CalDAV and CardDAV. The web client installs as a PWA, and there's an iOS app in TestFlight beta.</p>
         </details>
         <details>
           <summary>Where is my mail stored, and who can read it?</summary>
@@ -370,7 +395,7 @@
         </details>
         <details>
           <summary>Is it production-ready?</summary>
-          <p>Cirrus is at v0.1, and Email Sending has been in public beta since April 2026. It's built carefully, but test it on a spare domain before you move your main mail over.</p>
+          <p>It's a beta (v0.1), and Email Sending has been in public beta since April 2026. The automated tests run in the Workers runtime, but some screens, such as Calendar, Contacts and passkeys, haven't been exercised in a live browser, and mbox import hasn't run against a multi-GB Takeout on a deployed Worker. Test it on a spare domain before you move your main mail over.</p>
         </details>
       </div>
     </div>
@@ -398,6 +423,7 @@
       <a href="https://github.com/jackh54/cirrus-mail">GitHub</a>
       <a href="https://github.com/jackh54/cirrus-mail/blob/main/docs/setup.md">Setup guide</a>
       <a href="https://github.com/jackh54/cirrus-mail/blob/main/docs/faq.md">FAQ</a>
+      <a href="llms.txt">llms.txt</a>
       <a href="https://github.com/jackh54/cirrus-mail/blob/main/SECURITY.md">Security</a>
       <a href="https://github.com/jackh54/cirrus-mail/blob/main/LICENSE">License</a>
     </nav>

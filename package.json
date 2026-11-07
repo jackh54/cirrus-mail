@@ -1,7 +1,7 @@
 {
   "name": "cirrus-mail",
   "version": "0.1.0",
-  "description": "A self-hosted email suite that runs entirely on your own Cloudflare account. Email Routing in, Email Sending out, D1 + R2 storage, and a fast web client.",
+  "description": "A self-hosted email suite that runs entirely on your own Cloudflare account. Email Routing in, Email Sending out, D1 + R2 storage, a fast web client, calendar and contacts sync, and a JMAP server.",
   "license": "MIT",
   "private": true,
   "type": "module",
