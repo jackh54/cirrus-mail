@@ -50,8 +50,12 @@ Choose a hosted provider if you need IMAP clients, support or a long track recor
     <td width="50%"><img src="docs/screenshots/inbox-dark.png" alt="Inbox, dark theme"></td>
   </tr>
   <tr>
-    <td><img src="docs/screenshots/compose.png" alt="Composing a message"></td>
-    <td><img src="docs/screenshots/admin-domains.png" alt="Admin: domains and DNS check"></td>
+    <td><img src="docs/screenshots/calendar.png" alt="Calendar, week view"></td>
+    <td><img src="docs/screenshots/invite.png" alt="Meeting invitation card in a message"></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/contacts.png" alt="Contacts"></td>
+    <td><img src="docs/screenshots/settings-security.png" alt="Settings: passkeys, app passwords and CardDAV/CalDAV sync"></td>
   </tr>
   <tr>
     <td colspan="2" align="center"><img src="docs/screenshots/mobile.png" alt="Cirrus Mail on a phone" width="320"></td>

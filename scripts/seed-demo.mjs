@@ -101,6 +101,59 @@ const HOUR = 3600 * 1000;
 const now = Date.now();
 const ago = (days, hours = 0) => new Date(now - days * DAY - hours * HOUR);
 
+/** Local wall-clock time `daysFromMonday` days after this week's Monday. */
+const monday = new Date(now);
+monday.setHours(0, 0, 0, 0);
+monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
+const at = (daysFromMonday, h, min = 0) => {
+  const d = new Date(monday);
+  d.setDate(d.getDate() + daysFromMonday);
+  d.setHours(h, min, 0, 0);
+  return d;
+};
+const icsStamp = (d) => d.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+
+/** A METHOD:REQUEST invitation from Jordan for Thursday next week, 14:00 to 16:00. */
+function inviteIcs() {
+  return [
+    'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Cirrus Demo//EN', 'METHOD:REQUEST', 'BEGIN:VEVENT',
+    'UID:q1-planning-workshop@cirrus.test', `DTSTAMP:${icsStamp(new Date(now))}`, 'SEQUENCE:0',
+    `DTSTART:${icsStamp(at(10, 14))}`, `DTEND:${icsStamp(at(10, 16))}`,
+    'SUMMARY:Q1 planning workshop', 'LOCATION:Room Atlas',
+    'DESCRIPTION:Turn the roadmap draft into a plan.',
+    'ORGANIZER;CN=Jordan Lee:mailto:jordan@cirrus.test',
+    'ATTENDEE;CN=Alex Rivera;PARTSTAT=NEEDS-ACTION;RSVP=TRUE:mailto:alex@cirrus.test',
+    'END:VEVENT', 'END:VCALENDAR',
+  ].join('\r\n') + '\r\n';
+}
+
+const LABELS = [
+  { name: 'Clients', color: 'cobalt', subjects: ['Pilot feedback after week one', 'Invoice INV-2026-031 for October illustration work'] },
+  { name: 'Receipts', color: 'green', subjects: ['Invoice INV-2026-031 for October illustration work', 'Weekly metrics: 1,284 active mailboxes (+6.2%)'] },
+  { name: 'Travel', color: 'amber', subjects: ['Offsite venue options'] },
+  { name: 'Follow up', color: 'orange', subjects: ['Pilot feedback after week one', 'Security review checklist before the 0.2 release'] },
+];
+const SNOOZED_SUBJECT = 'Q1 roadmap draft for comment';
+
+const CONTACTS = [
+  { fn: 'Hana Sato', org: 'Cirrus', emails: [{ value: 'hana@cirrus.test', types: ['work'] }], phones: [{ value: '+1 555 0101', types: ['cell'] }], note: 'Design lead.' },
+  { fn: 'Dev Patel', org: 'Cirrus', emails: [{ value: 'dev@cirrus.test', types: ['work'] }], phones: [], note: 'Engineering.' },
+  { fn: 'Jordan Lee', org: 'Cirrus', emails: [{ value: 'jordan@cirrus.test', types: ['work'] }], phones: [{ value: '+1 555 0103', types: ['work'] }], note: 'Product.' },
+  { fn: 'Elena Novak', org: 'Brightpath', emails: [{ value: 'elena@brightpath.test', types: ['work'] }], phones: [{ value: '+1 555 0142', types: ['work'] }], note: 'Pilot customer. Prefers calls on Tuesday afternoons.' },
+  { fn: 'Tom Fischer', org: 'Fischer Studio', emails: [{ value: 'tom@fischer-studio.test', types: ['work'] }], phones: [], note: 'Freelance illustrator.' },
+  { fn: 'Ravi Menon', org: 'Greenleaf Co-op', emails: [{ value: 'ravi@greenleaf-coop.test', types: ['work'] }], phones: [], note: '' },
+  { fn: 'Lucia Romero', org: 'Studio Lumo', emails: [{ value: 'lucia@studio-lumo.test', types: ['work'] }], phones: [], note: '' },
+  { fn: 'Grace Kim', org: 'Harbor Books', emails: [{ value: 'grace@harbor-books.test', types: ['work'] }], phones: [{ value: '+1 555 0177', types: ['cell'] }], note: 'Moved the bookshop over in an afternoon.' },
+];
+
+const EVENTS = [
+  { summary: 'Team sync', start: at(0, 10), end: at(0, 10, 30), location: 'Video call', description: 'Weekly team meeting.', rrule: 'FREQ=WEEKLY;BYDAY=MO' },
+  { summary: 'Pilot call: Brightpath', start: at(1, 14), end: at(1, 14, 45), location: 'Video call', description: 'Follow-up with Elena.' },
+  { summary: 'Lunch with Tom', start: at(2, 12, 30), end: at(2, 13, 30), location: 'Ramen place on the corner', description: '' },
+  { summary: 'Design critique', start: at(3, 15), end: at(3, 16), location: 'Room Atlas', description: 'Onboarding v3, settings IA, dark mode contrast.' },
+  { summary: 'Focus time', start: at(4, 9), end: at(4, 11), location: '', description: '' },
+];
+
 const ALEX = 'Alex Rivera <alex@cirrus.test>';
 const SUPPORT = 'Cirrus Support <support@cirrus.test>';
 const PASS_AUTH = (d) => `mx.cloudflare.net; dkim=pass header.d=${d}; spf=pass smtp.mailfrom=${d}; dmarc=pass header.from=${d}`;
@@ -174,6 +227,9 @@ const MAIL = [
     text: 'The new ramen place on the corner opened this week. Friday 12:30? I\'ll book a table for 6 if enough people are in.' },
   { key: 'search', to: ALEX, from: 'Priya Natarajan <priya@cirrus.test>', date: ago(0, 5), subject: 'Search index rebuild results',
     text: 'Rebuilt the FTS index on the staging dataset (52k messages):\n\n- Index size: 61 MB\n- p50 query: 21 ms, p95: 74 ms\n- Prefix queries on the last term work as expected\n\nShipping the migration behind a flag tomorrow unless anyone objects.' },
+  { key: 'invite', to: ALEX, from: 'Jordan Lee <jordan@cirrus.test>', date: ago(0, 3), subject: 'Invitation: Q1 planning workshop',
+    text: 'Hi Alex,\n\nI\'d like to block two hours to turn the roadmap draft into a plan. Invitation attached.\n\nJordan',
+    attachments: [{ filename: 'invite.ics', type: 'text/calendar; method=REQUEST', content: Buffer.from(inviteIcs(), 'utf8') }] },
   { key: 'sup1', to: SUPPORT, from: 'Ravi Menon <ravi@greenleaf-coop.test>', date: ago(6, 3), subject: 'Custom domain stuck on "checking DNS"',
     headers: { 'Authentication-Results': PASS_AUTH('greenleaf-coop.test') },
     text: 'Hello,\n\nI added our domain yesterday and the admin page still shows MX as not OK. Our DNS host says the records are there. What should I check?\n\nThanks,\nRavi' },
@@ -249,6 +305,35 @@ async function main() {
     if (sent.status >= 400) console.warn(`  ! send "${r.subject}" failed: ${JSON.stringify(sent.json)}`);
   }
   console.log('  sent 2 replies');
+
+  // Labels, one snoozed thread, contacts, calendar events and app passwords, all through the public API.
+  const inboxThreads = await must(alex('GET', `/api/mailboxes/${alexBox.id}/threads?limit=100`), 'list threads');
+  const threadId = (subject) => inboxThreads.items.find((x) => x.subject === subject)?.id;
+  const existing = await must(alex('GET', `/api/mailboxes/${alexBox.id}/labels`), 'list labels');
+  for (const l of LABELS) {
+    const label = existing.find((x) => x.name === l.name) ?? await must(alex('POST', `/api/mailboxes/${alexBox.id}/labels`, { name: l.name, color: l.color }), `create label ${l.name}`);
+    const threadIds = l.subjects.map(threadId).filter(Boolean);
+    if (threadIds.length) await must(alex('POST', `/api/mailboxes/${alexBox.id}/threads/labels`, { threadIds, add: [label.id] }), `apply label ${l.name}`);
+  }
+  const snoozed = threadId(SNOOZED_SUBJECT);
+  if (snoozed) await must(alex('POST', `/api/mailboxes/${alexBox.id}/threads/actions`, { threadIds: [snoozed], action: 'snooze', until: at(7, 9).getTime() }), 'snooze');
+  console.log('  labels (Clients, Receipts, Travel, Follow up) and one snoozed thread');
+
+  const haveContacts = await must(alex('GET', '/api/dav/contacts?limit=2000'), 'list contacts');
+  for (const c of CONTACTS.filter((c) => !(haveContacts.items ?? haveContacts).some((x) => x.fn === c.fn))) await must(alex('POST', '/api/dav/contacts', c), `create contact ${c.fn}`);
+  const from = new Date(monday); from.setDate(from.getDate() - 14);
+  const to = new Date(monday); to.setDate(to.getDate() + 28);
+  const haveEvents = await must(alex('GET', `/api/dav/events?from=${from.toISOString()}&to=${to.toISOString()}`), 'list events');
+  for (const e of EVENTS.filter((e) => !(haveEvents.items ?? haveEvents).some((x) => x.summary === e.summary))) {
+    await must(alex('POST', '/api/dav/events', { ...e, start: e.start.toISOString(), end: e.end.toISOString(), allDay: false }), `create event ${e.summary}`);
+  }
+  console.log(`  ${CONTACTS.length} contacts and ${EVENTS.length} events this week`);
+
+  const haveApps = await must(alex('GET', '/api/app-passwords'), 'list app passwords');
+  for (const name of ['Thunderbird on laptop', 'iPhone Mail'].filter((n) => !haveApps.some((x) => x.name === n))) {
+    await must(alex('POST', '/api/app-passwords', { name, password: PASSWORD }), `create app password ${name}`);
+  }
+  console.log('  2 app passwords');
   console.log(`\nDone. Sign in at ${URL_BASE} as alex@cirrus.test / ${PASSWORD} (Sam: sam@cirrus.test / ${SAM_PASSWORD}).`);
 }
 
