@@ -100,7 +100,7 @@
 
 ## iOS app (beta)
 
-A native iPhone app for Cirrus is in public beta. It needs iOS 26 or later.
+A native iPhone app for Cirrus is in public beta. It needs iOS 26 or later. The source is at [jackh54/cirrus-ios](https://github.com/jackh54/cirrus-ios).
 
 **[Join the TestFlight beta](https://testflight.apple.com/join/u5zScSGa)**
 
