@@ -3,11 +3,13 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import type { DavCollectionInfo, EventView, InvitePreview, Page } from '../src/shared/api';
 import { ulid } from '../src/shared/ulid';
 import { hashPassword } from '../src/worker/lib/crypto';
-import { call, sessionCookie } from './helpers';
+import { call, createMailbox, sessionCookie } from './helpers';
 
 const PASSWORD = 'admin-password-123';
 let cookie = '';
 let other = '';
+let userA = '';
+let mbA = { id: '', folders: {} as Record<string, string> };
 
 async function mkUser(email: string): Promise<string> {
   const id = ulid();
@@ -20,11 +22,31 @@ async function mkUser(email: string): Promise<string> {
 const login = async (email: string) => sessionCookie(await call('/api/auth/login', { body: { email, password: PASSWORD } }));
 
 beforeAll(async () => {
-  await mkUser('cal-a@calui.test');
+  userA = await mkUser('cal-a@calui.test');
   await mkUser('cal-b@calui.test');
+  mbA = await createMailbox('cal-a@calui.test', [{ userId: userA }]);
   cookie = await login('cal-a@calui.test');
   other = await login('cal-b@calui.test');
 });
+
+interface Sent { from?: string; aligned?: boolean; mailbox?: string; cookie?: string; calendarId?: string }
+
+/** Stores `ics` as a received message's attachment (D1 row + R2 object) and posts its references to an invite endpoint. */
+async function seedInvite(ics: string, o: Sent = {}) {
+  const from = o.from ?? (/ORGANIZER[^:\r\n]*:mailto:([^\r\n]+)/i.exec(ics)?.[1] ?? 'nobody@calui.test');
+  const mid = ulid(), tid = ulid(), aid = ulid(), key = `test/invite/${aid}.ics`, now = Date.now();
+  await env.BUCKET.put(key, ics);
+  await env.DB.batch([
+    env.DB.prepare("INSERT INTO threads (id, mailbox_id, subject, subject_norm, last_message_at, created_at) VALUES (?, ?, 'Invitation', 'invitation', ?, ?)").bind(tid, mbA.id, now, now),
+    env.DB.prepare(`INSERT INTO messages (id, mailbox_id, thread_id, folder_id, direction, status, from_email, to_json, subject, auth_json, has_attachments, date, created_at, updated_at, folder_changed_at)
+                    VALUES (?, ?, ?, ?, 'in', 'received', ?, '[]', 'Invitation', ?, 1, ?, ?, ?, ?)`)
+      .bind(mid, mbA.id, tid, mbA.folders.inbox, from, JSON.stringify({ dkim: 'pass', aligned: o.aligned ?? true }), now, now, now, now),
+    env.DB.prepare("INSERT INTO attachments (id, message_id, mailbox_id, filename, mime_type, size, inline, r2_key, created_at) VALUES (?, ?, ?, 'invite.ics', 'text/calendar', ?, 0, ?, ?)")
+      .bind(aid, mid, mbA.id, ics.length, key, now),
+  ]);
+  return { mailboxId: o.mailbox ?? mbA.id, messageId: mid, attachmentId: aid, ...(o.calendarId ? { calendarId: o.calendarId } : {}) };
+}
+const inv = async (path: 'parse' | 'accept', ics: string, o: Sent = {}) => call(`/api/dav/invite/${path}`, { cookie: o.cookie ?? cookie, body: await seedInvite(ics, o) });
 
 const invite = (uid: string, summary: string, extra: string[] = [], method = 'REQUEST') => [
   'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Test//EN', `METHOD:${method}`,
@@ -71,7 +93,7 @@ describe('calendar collections API', () => {
 
 describe('invitations', () => {
   it('previews an invitation and finds no existing copy', async () => {
-    const res = await call('/api/dav/invite/parse', { cookie, body: { ics: invite('inv-1@test', 'Planning') } });
+    const res = await inv('parse', invite('inv-1@test', 'Planning'));
     expect(res.status).toBe(200);
     const p = (await res.json()) as InvitePreview;
     expect(p).toMatchObject({
@@ -82,35 +104,36 @@ describe('invitations', () => {
   });
 
   it('adds to the default calendar once and updates by UID afterwards', async () => {
-    const first = await call('/api/dav/invite/accept', { cookie, body: { ics: invite('inv-2@test', 'Kickoff') } });
+    const first = await inv('accept', invite('inv-2@test', 'Kickoff'));
     expect(first.status).toBe(201);
     const ev = (await first.json()) as EventView;
     expect(ev).toMatchObject({ summary: 'Kickoff', uid: 'inv-2@test', start: '2026-03-10T14:00:00Z' });
 
-    const second = await call('/api/dav/invite/accept', { cookie, body: { ics: invite('inv-2@test', 'Kickoff (moved)', ['SEQUENCE:1']) } });
+    const second = await inv('accept', invite('inv-2@test', 'Kickoff (moved)', ['SEQUENCE:1']));
     expect(second.status).toBe(200);
     expect(await second.json()).toMatchObject({ id: ev.id, summary: 'Kickoff (moved)' });
 
     const all = (await (await call('/api/dav/events?from=2026-03-01T00:00:00Z&to=2026-03-31T00:00:00Z', { cookie })).json()) as Page<EventView>;
     expect(all.items.filter((e) => e.uid === 'inv-2@test').length).toBe(1);
 
-    const again = (await (await call('/api/dav/invite/parse', { cookie, body: { ics: invite('inv-2@test', 'Kickoff') } })).json()) as InvitePreview;
+    const again = (await (await inv('parse', invite('inv-2@test', 'Kickoff'))).json()) as InvitePreview;
     expect(again.existing).toEqual({ id: ev.id, calendarId: ev.calendarId });
     // Another user's copy is invisible.
-    expect(((await (await call('/api/dav/invite/parse', { cookie: other, body: { ics: invite('inv-2@test', 'Kickoff') } })).json()) as InvitePreview).existing).toBeNull();
+    // Another user cannot read through this mailbox's message ids, so nothing of this user's calendar is reachable either.
+    expect((await call('/api/dav/invite/parse', { cookie: other, body: await seedInvite(invite('inv-2@test', 'Kickoff')) })).status).toBe(404);
   });
 
   it('refuses cancellations and garbage, and drops rules the API would reject', async () => {
-    expect((await call('/api/dav/invite/accept', { cookie, body: { ics: invite('inv-3@test', 'Gone', [], 'CANCEL') } })).status).toBe(400);
-    expect((await call('/api/dav/invite/parse', { cookie, body: { ics: 'this is not a calendar file at all' } })).status).toBe(400);
-    const odd = await call('/api/dav/invite/accept', { cookie, body: { ics: invite('inv-4@test', 'Odd rule', ['RRULE:FREQ=WEEKLY;BYDAY=MO;X-FOO=a b']) } });
+    expect((await inv('accept', invite('inv-3@test', 'Gone', [], 'CANCEL'))).status).toBe(400);
+    expect((await inv('parse', 'this is not a calendar file at all')).status).toBe(400);
+    const odd = await inv('accept', invite('inv-4@test', 'Odd rule', ['RRULE:FREQ=WEEKLY;BYDAY=MO;X-FOO=a b']));
     expect(odd.status).toBe(201);
     expect(((await odd.json()) as EventView).rrule).toBeNull();
   });
 
   it('keeps a Windows TZID and its EXDATE, resolves them to the right instant and marks only our own PARTSTAT', async () => {
     const ics = rawInvite('tz-win@test', ['DTSTART;TZID=Pacific Standard Time:20260310T090000', 'DTEND;TZID=Pacific Standard Time:20260310T100000', 'RRULE:FREQ=DAILY;COUNT=5', 'EXDATE;TZID=Pacific Standard Time:20260311T090000']);
-    const res = await call('/api/dav/invite/accept', { cookie, body: { ics } });
+    const res = await inv('accept', ics);
     expect(res.status).toBe(201);
     const ev = (await res.json()) as EventView;
     expect(ev).toMatchObject({ start: '2026-03-10T16:00:00Z', end: '2026-03-10T17:00:00Z', tzid: 'America/Los_Angeles' }); // PDT, not UTC
@@ -124,7 +147,7 @@ describe('invitations', () => {
 
   it('round-trips an IANA TZID as a TZID, not as UTC', async () => {
     const ics = rawInvite('tz-iana@test', ['DTSTART;TZID=Europe/Berlin:20260315T090000', 'DTEND;TZID=Europe/Berlin:20260315T100000']);
-    const ev = (await (await call('/api/dav/invite/accept', { cookie, body: { ics } })).json()) as EventView;
+    const ev = (await (await inv('accept', ics)).json()) as EventView;
     expect(ev).toMatchObject({ start: '2026-03-15T08:00:00Z', tzid: 'Europe/Berlin' });
     expect(await storedOf(ev.id)).toContain('DTSTART;TZID=Europe/Berlin:20260315T090000');
   });
@@ -132,26 +155,93 @@ describe('invitations', () => {
   it('computes the offset from the VTIMEZONE when the TZID is unknown, and keeps the block', async () => {
     const vtz = ['BEGIN:VTIMEZONE', 'TZID:Contoso HQ', 'BEGIN:STANDARD', 'DTSTART:19701101T020000', 'TZOFFSETFROM:+0630', 'TZOFFSETTO:+0530', 'END:STANDARD', 'END:VTIMEZONE'];
     const ics = rawInvite('tz-vtz@test', ['DTSTART;TZID=Contoso HQ:20260310T090000', 'DTEND;TZID=Contoso HQ:20260310T100000'], vtz);
-    const ev = (await (await call('/api/dav/invite/accept', { cookie, body: { ics } })).json()) as EventView;
+    const ev = (await (await inv('accept', ics)).json()) as EventView;
     expect(ev.start).toBe('2026-03-10T03:30:00Z');
     expect(await storedOf(ev.id)).toContain('TZID:Contoso HQ');
   });
 
   it('refuses an update from another organizer or with an older SEQUENCE', async () => {
     const mk = (org: string, seq: number, summary: string) => invite('inv-seq@test', summary, [`SEQUENCE:${seq}`]).replace('mailto:Grace@Navy.test', `mailto:${org}`);
-    expect((await call('/api/dav/invite/accept', { cookie, body: { ics: mk('Grace@Navy.test', 2, 'v2') } })).status).toBe(201);
-    const other = await call('/api/dav/invite/accept', { cookie, body: { ics: mk('mallory@evil.test', 3, 'hijack') } });
+    expect((await inv('accept', mk('Grace@Navy.test', 2, 'v2'))).status).toBe(201);
+    const other = await inv('accept', mk('mallory@evil.test', 3, 'hijack'), { from: 'grace@navy.test' });
     expect(other.status).toBe(409);
     expect(((await other.json()) as { error: { code: string } }).error.code).toBe('ORGANIZER_MISMATCH');
-    const old = await call('/api/dav/invite/accept', { cookie, body: { ics: mk('grace@navy.test', 1, 'stale') } });
+    const old = await inv('accept', mk('grace@navy.test', 1, 'stale'));
     expect(old.status).toBe(409);
     expect(((await old.json()) as { error: { code: string } }).error.code).toBe('OUTDATED_INVITATION');
     // Same organizer (any case) and the same or a newer SEQUENCE are applied.
-    expect((await call('/api/dav/invite/accept', { cookie, body: { ics: mk('GRACE@navy.test', 2, 'same seq') } })).status).toBe(200);
-    expect(await (await call('/api/dav/invite/accept', { cookie, body: { ics: mk('grace@navy.test', 3, 'v3') } })).json()).toMatchObject({ summary: 'v3' });
+    expect((await inv('accept', mk('GRACE@navy.test', 2, 'same seq'))).status).toBe(200);
+    expect(await (await inv('accept', mk('grace@navy.test', 3, 'v3'))).json()).toMatchObject({ summary: 'v3' });
+  });
+
+  const spoofBase = (uid: string, extra: string[] = []) => invite(uid, 'Weekly sync', ['SEQUENCE:0', ...extra]);
+  const errCode = async (r: Response) => ((await r.json()) as { error: { code: string } }).error.code;
+
+  it('does not change a stored event for a message sent by someone other than the organizer', async () => {
+    const first = (await (await inv('accept', spoofBase('org-bind@test'))).json()) as EventView;
+    const spoof = invite('org-bind@test', 'Weekly sync (moved)', ['SEQUENCE:1', 'LOCATION:https://evil.test/join']).replace('LOCATION:Room 4\r\n', '');
+    const res = await inv('accept', spoof, { from: 'mallory@evil.test' });
+    expect(res.status).toBe(409);
+    expect(await errCode(res)).toBe('SENDER_NOT_ORGANIZER');
+    expect(((await (await call(`/api/dav/events/${first.id}`, { cookie })).json()) as EventView)).toMatchObject({ summary: 'Weekly sync', location: 'Room 4' });
+    // The preview says why, so the card can show it instead of an update button.
+    const prev = (await (await inv('parse', spoof, { from: 'mallory@evil.test' })).json()) as InvitePreview;
+    expect(prev.updateBlocked).toContain('mallory@evil.test');
+    expect(prev.updateBlocked).toContain('grace@navy.test');
+  });
+
+  it('refuses an update from the organizer address when the message did not pass aligned authentication', async () => {
+    const first = (await (await inv('accept', spoofBase('org-auth@test'))).json()) as EventView;
+    const res = await inv('accept', invite('org-auth@test', 'Forged', ['SEQUENCE:1']), { from: 'grace@navy.test', aligned: false });
+    expect(res.status).toBe(409);
+    expect(await errCode(res)).toBe('SENDER_UNVERIFIED');
+    expect(((await (await call(`/api/dav/events/${first.id}`, { cookie })).json()) as EventView).summary).toBe('Weekly sync');
+  });
+
+  it('applies a genuine, aligned update from the organizer', async () => {
+    await inv('accept', spoofBase('org-ok@test'));
+    const res = await inv('accept', invite('org-ok@test', 'Weekly sync (moved)', ['SEQUENCE:1']), { from: 'Grace@Navy.test' });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ summary: 'Weekly sync (moved)' });
+  });
+
+  it('refuses to update an event or from an invitation that has no organizer', async () => {
+    const noOrg = (uid: string, summary: string) => invite(uid, summary).replace(/ORGANIZER[^\r\n]*\r\n/, '');
+    const first = (await (await inv('accept', noOrg('org-none@test', 'Feed'), { from: 'feed@conf.test' })).json()) as EventView;
+    const res = await inv('accept', noOrg('org-none@test', 'Overwritten'), { from: 'feed@conf.test' });
+    expect(res.status).toBe(409);
+    expect(await errCode(res)).toBe('NO_ORGANIZER');
+    expect(((await (await call(`/api/dav/events/${first.id}`, { cookie })).json()) as EventView).summary).toBe('Feed');
+    // Stored event has an organizer, the invitation does not.
+    await inv('accept', spoofBase('org-half@test'));
+    const half = await inv('accept', noOrg('org-half@test', 'Half'), { from: 'grace@navy.test' });
+    expect(half.status).toBe(409);
+    expect(await errCode(half)).toBe('NO_ORGANIZER');
+  });
+
+  it('does not let a non-member use another mailbox\'s message ids, or mix up message and attachment', async () => {
+    const ref = await seedInvite(invite('idor@test', 'Secret'));
+    expect((await call('/api/dav/invite/accept', { cookie: other, body: ref })).status).toBe(404);
+    expect((await call('/api/dav/invite/parse', { cookie: other, body: ref })).status).toBe(404);
+    const second = await seedInvite(invite('idor2@test', 'Other'));
+    expect((await call('/api/dav/invite/parse', { cookie, body: { ...ref, attachmentId: second.attachmentId } })).status).toBe(404);
+    expect((await call('/api/dav/invite/parse', { cookie, body: { ...ref, mailboxId: 'nope' } })).status).toBe(404);
+    expect((await call('/api/dav/invite/parse', { cookie, body: { ics: invite('idor@test', 'Secret') } })).status).toBe(400);
+  });
+
+  it('strips VALARM from new and updated events', async () => {
+    const alarm = ['BEGIN:VALARM', 'ACTION:DISPLAY', 'DESCRIPTION:Join now: https://evil.test/join', 'TRIGGER:-PT5M', 'END:VALARM'];
+    const ev = (await (await inv('accept', spoofBase('alarm@test', alarm))).json()) as EventView;
+    const first = await storedOf(ev.id);
+    expect(first).not.toContain('VALARM');
+    expect(first).not.toContain('evil.test');
+    expect(first).toContain('END:VEVENT');
+    const upd = await inv('accept', invite('alarm@test', 'Moved', ['SEQUENCE:1', ...alarm]));
+    expect(upd.status).toBe(200);
+    expect(await storedOf(ev.id)).not.toContain('VALARM');
   });
 
   it('requires a session', async () => {
-    expect((await call('/api/dav/invite/parse', { body: { ics: invite('inv-5@test', 'x') } })).status).toBe(401);
+    expect((await call('/api/dav/invite/parse', { body: await seedInvite(invite('inv-5@test', 'x')) })).status).toBe(401);
   });
 });

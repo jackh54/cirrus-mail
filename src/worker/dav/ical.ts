@@ -297,7 +297,8 @@ export function inviteFields(text: string): { method: string | null; uid: string
 /**
  * The invitation's own events (master and RECURRENCE-ID overrides) with the VTIMEZONEs they use, as a plain VCALENDAR
  * without METHOD, and with the PARTSTAT of the attendee matching one of `self` set to ACCEPTED.
- * Keeps TZID, EXDATE and overrides intact. RRULEs that `ruleOk` refuses are dropped.
+ * Keeps TZID, EXDATE and overrides intact. RRULEs that `ruleOk` refuses are dropped, and VALARMs always are: a sender
+ * must not be able to set reminders on the user's devices.
  */
 export function acceptedInvite(text: string, self: string[], ruleOk: (rule: string) => boolean): string {
   const lines = parseLines(text);
@@ -309,8 +310,14 @@ export function acceptedInvite(text: string, self: string[], ruleOk: (rule: stri
   const out = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Cirrus Mail//DAV//EN', 'CALSCALE:GREGORIAN'];
   for (const c of [...zones, ...events]) {
     const own = new Set(c.props);
+    let alarm = false;
     for (let i = c.start; i <= c.end; i++) {
       const l = lines[i];
+      if (!own.has(i) && l.name === 'BEGIN' && l.value.trim().toUpperCase() === 'VALARM') alarm = true;
+      if (alarm) {
+        if (!own.has(i) && l.name === 'END' && l.value.trim().toUpperCase() === 'VALARM') alarm = false;
+        continue;
+      }
       if (!own.has(i)) out.push(l.raw);
       else if (l.name === 'RRULE' && !ruleOk(l.value)) continue;
       else if (c.name === 'VEVENT' && l.name === 'ATTENDEE' && self.includes(mailto(l.value))) {

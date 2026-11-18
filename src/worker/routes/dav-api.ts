@@ -234,7 +234,31 @@ davApi.delete('/events/:id', async (c) => {
 
 // ---------- invitations (text/calendar parts of received mail) ----------
 
-const InviteSchema = z.object({ ics: z.string().min(20).max(256 * 1024), calendarId: z.string().max(64).optional() });
+const InviteSchema = z.object({
+  mailboxId: z.string().min(1).max(64), messageId: z.string().min(1).max(64), attachmentId: z.string().min(1).max(64), calendarId: z.string().max(64).optional(),
+});
+
+const MAX_ICS_BYTES = 256 * 1024;
+
+/**
+ * The .ics of an attachment on a message in a mailbox the caller is a member of, loaded from R2, with the message's
+ * sender and whether its authentication vouches for that sender. 404 for anything the caller cannot reach.
+ */
+async function loadInviteSource(c: { env: Env; get(k: 'user'): { id: string } }, ref: { mailboxId: string; messageId: string; attachmentId: string }) {
+  const row = await c.env.DB.prepare(
+    `SELECT m.from_email, m.auth_json, a.r2_key, a.size
+       FROM mailbox_members mm JOIN messages m ON m.mailbox_id = mm.mailbox_id JOIN attachments a ON a.message_id = m.id AND a.mailbox_id = m.mailbox_id
+      WHERE mm.user_id = ? AND mm.mailbox_id = ? AND m.id = ? AND a.id = ? AND m.direction = 'in'`,
+  ).bind(c.get('user').id, ref.mailboxId, ref.messageId, ref.attachmentId).first<{ from_email: string; auth_json: string | null; r2_key: string; size: number }>();
+  if (!row) throw notFound();
+  if (row.size > MAX_ICS_BYTES) throw new HttpError(413, 'TOO_LARGE', 'Too large (256 KB maximum)');
+  const obj = await c.env.BUCKET.get(row.r2_key);
+  if (!obj) throw notFound();
+  if (obj.size > MAX_ICS_BYTES) throw new HttpError(413, 'TOO_LARGE', 'Too large (256 KB maximum)');
+  let aligned = false;
+  if (row.auth_json) try { aligned = (JSON.parse(row.auth_json) as { aligned?: boolean }).aligned === true; } catch { /* unverified */ }
+  return { ics: await obj.text(), from: row.from_email.trim().toLowerCase(), aligned };
+}
 
 /** The invitation's master event, and the copy of it (same UID) already in one of the user's calendars. */
 async function readInvite(c: { env: Env; get(k: 'user'): { id: string } }, ics: string) {
@@ -253,19 +277,41 @@ async function readInvite(c: { env: Env; get(k: 'user'): { id: string } }, ics: 
   return { inv, row };
 }
 
+/**
+ * Whether an invitation may change the event already stored: the stored ORGANIZER must exist and be the message's
+ * From address, and the message must have passed aligned DMARC/DKIM. The ORGANIZER in the submitted .ics proves nothing.
+ */
+function updateBlock(storedOrganizer: string | null, src: { from: string; aligned: boolean }): { code: string; message: string } | null {
+  if (!storedOrganizer) return { code: 'NO_ORGANIZER', message: 'The event in your calendar has no organizer, so it was not updated from a message' };
+  if (src.from !== storedOrganizer) return { code: 'SENDER_NOT_ORGANIZER', message: `Sent by ${src.from}, not the organizer ${storedOrganizer}, so it was not applied` };
+  if (!src.aligned) return { code: 'SENDER_UNVERIFIED', message: `This message could not be verified as really sent by ${src.from}, so it was not applied` };
+  return null;
+}
+
 davApi.post('/invite/parse', async (c) => {
-  const { ics } = await jsonBody(c, InviteSchema);
+  const { ics, from, aligned } = await loadInviteSource(c, await jsonBody(c, InviteSchema));
   const { inv, row } = await readInvite(c, ics);
+  let blocked: { code: string; message: string } | null = null;
+  if (row) {
+    const o = await getObjectById(c.env.DB, c.get('user').id, 'calendar', row.id);
+    const cur = o?.data ? await guard(async () => inviteFields(o.data!)) : null;
+    blocked = updateBlock(cur?.organizer?.email ?? null, { from, aligned });
+    if (!inv.organizer && !blocked) blocked = { code: 'NO_ORGANIZER', message: 'This invitation has no organizer, so it was not applied' };
+  }
   const out: InvitePreview = {
     method: inv.method, uid: inv.uid, sequence: inv.sequence, event: inv.event, organizer: inv.organizer, attendees: inv.attendees,
     existing: row ? { id: row.id, calendarId: row.collection_id } : null,
+    from, updateBlocked: blocked?.message ?? null,
   };
   return c.json(out);
 });
 
 /** Adds the invitation's event to the chosen (default) calendar, or updates the copy that already carries its UID. */
 davApi.post('/invite/accept', async (c) => {
-  const { ics, calendarId } = await jsonBody(c, InviteSchema);
+  const b = await jsonBody(c, InviteSchema);
+  const { calendarId } = b;
+  const src = await loadInviteSource(c, b);
+  const { ics } = src;
   const { inv, row } = await readInvite(c, ics);
   if (inv.method && inv.method !== 'REQUEST' && inv.method !== 'PUBLISH') throw new HttpError(400, 'INVALID_DATA', `A ${inv.method.toLowerCase()} message cannot be added to a calendar`);
   const parsed = EventSchema.safeParse({ ...inv.event, rrule: inv.event.rrule && RRULE_RE.test(inv.event.rrule) ? inv.event.rrule : null });
@@ -280,8 +326,10 @@ davApi.post('/invite/accept', async (c) => {
   const stored = await guard(async () => acceptedInvite(ics, self, (r) => RRULE_RE.test(r)));
   if (row) {
     const { o, coll } = await loadEvent(c, row.id);
-    // Only the organizer may update the event, and never with an older revision.
+    // Only the stored organizer, from an authenticated message of theirs, may update the event, and never with an older revision.
     const cur = await guard(async () => inviteFields(o.data!));
+    const block = updateBlock(cur.organizer?.email ?? null, src);
+    if (block || !inv.organizer) throw new HttpError(409, block?.code ?? 'NO_ORGANIZER', block?.message ?? 'This invitation has no organizer, so it was not applied');
     if ((cur.organizer?.email ?? null) !== (inv.organizer?.email ?? null)) throw new HttpError(409, 'ORGANIZER_MISMATCH', 'This invitation is from a different organizer than the event already in your calendar, so it was not applied');
     if (inv.sequence < cur.sequence) throw new HttpError(409, 'OUTDATED_INVITATION', 'This invitation is older than the event already in your calendar, so it was not applied');
     const r = await guard(async () => putObject(c.env.DB, coll, o.uri, stored));
