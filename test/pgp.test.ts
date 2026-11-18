@@ -7,6 +7,7 @@ import { hashPassword, toBase64 } from '../src/worker/lib/crypto';
 import {
   armoredToBase64, autocryptTrusted, dearmorPublicKey, lookupWkd, parseAutocrypt, parsePublicKey, parseWkdAddress, wkdHash, wkdUrls, zbase32,
 } from '../src/worker/lib/pgp';
+import { MAX_AUTOCRYPT_ENTRIES } from '../src/worker/lib/pgp-keyring';
 import { sendDueScheduled } from '../src/worker/cron';
 import { buildPgpMime } from '../src/worker/outbound/pgpmime';
 import { buildEml, call, createMailbox, fakeEmail, randomLocal, sessionCookie, withEnv } from './helpers';
@@ -193,6 +194,62 @@ describe('Autocrypt parsing', () => {
       const row = await keyring(state.aId, 'frank@example.org');
       expect(row?.fingerprint).toBe(KEY_A.fingerprint);
       expect(row?.pending_fingerprint).toBe(KEY_B.fingerprint);
+    });
+
+    it('caps autocrypt rows per user by evicting the oldest, and leaves room for manual imports', async () => {
+      const email = `${randomLocal()}@pgpcap.test`;
+      const userId = await mkUser('Cap', email);
+      const addr = `${randomLocal()}@pgpin.test`;
+      await createMailbox(addr, [{ userId }]);
+      const base = Date.now() - 1_000_000;
+      const insert = env.DB.prepare("INSERT INTO pgp_keyring (id, user_id, email, public_key, fingerprint, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'autocrypt', ?, ?)");
+      const rows = Array.from({ length: MAX_AUTOCRYPT_ENTRIES }, (_, i) => insert.bind(ulid(), userId, `s${i}@example.org`, KEY_B.armored, KEY_B.fingerprint, base + i, base + i));
+      await env.DB.batch(rows);
+      await env.DB.prepare("INSERT INTO pgp_keyring (id, user_id, email, public_key, fingerprint, source, created_at, updated_at) VALUES (?, ?, 'old-manual@example.org', ?, ?, 'manual', ?, ?)")
+        .bind(ulid(), userId, KEY_B.armored, KEY_B.fingerprint, base - 1, base - 1).run();
+
+      await deliver(addr, 'newest@example.org', header('newest@example.org'), PASS('example.org'));
+
+      const autocryptCount = await env.DB.prepare("SELECT COUNT(*) AS n FROM pgp_keyring WHERE user_id = ? AND source = 'autocrypt'").bind(userId).first<number>('n');
+      expect(autocryptCount).toBe(MAX_AUTOCRYPT_ENTRIES);
+      expect((await keyring(userId, 'newest@example.org'))?.fingerprint).toBe(KEY_A.fingerprint);
+      expect(await keyring(userId, 's0@example.org')).toBeNull();
+      expect(await keyring(userId, 's1@example.org')).not.toBeNull();
+      expect(await keyring(userId, 'old-manual@example.org')).not.toBeNull();
+
+      const cookie = await login(email);
+      const manual = await call('/api/pgp/keyring', { body: { email: 'manual-new@example.org', publicKey: KEY_A.armored }, cookie });
+      expect(manual.status).toBe(200);
+    });
+
+    it('sheds legacy autocrypt rows one per new sender, keeps pending rows, and keeps re-seen senders', async () => {
+      const email = `${randomLocal()}@pgpcap.test`;
+      const userId = await mkUser('Legacy', email);
+      const addr = `${randomLocal()}@pgpin.test`;
+      await createMailbox(addr, [{ userId }]);
+      const base = Date.now() - 1_000_000;
+      const total = MAX_AUTOCRYPT_ENTRIES + 20;
+      const insert = env.DB.prepare("INSERT INTO pgp_keyring (id, user_id, email, public_key, fingerprint, source, pending_public_key, pending_fingerprint, pending_source, pending_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'autocrypt', ?, ?, ?, ?, ?, ?)");
+      // s0 is the oldest and carries a pending key; s1 is the next oldest.
+      await env.DB.batch(Array.from({ length: total }, (_, i) => i === 0
+        ? insert.bind(ulid(), userId, `s${i}@example.org`, KEY_B.armored, KEY_B.fingerprint, KEY_A.armored, KEY_A.fingerprint, 'autocrypt', base, base, base)
+        : insert.bind(ulid(), userId, `s${i}@example.org`, KEY_B.armored, KEY_B.fingerprint, null, null, null, null, base + i, base + i)));
+      const count = async () => (await env.DB.prepare("SELECT COUNT(*) AS n FROM pgp_keyring WHERE user_id = ? AND source = 'autocrypt'").bind(userId).first<number>('n')) ?? 0;
+
+      // s1 mails again with the same key: it is refreshed rather than evicted.
+      await deliver(addr, 's1@example.org', `addr=s1@example.org; keydata=${toBase64(dearmorPublicKey(KEY_B.armored)!)}`, PASS('example.org'));
+      expect(await count()).toBe(total);
+
+      await deliver(addr, 'n1@example.org', header('n1@example.org'), PASS('example.org'));
+      expect(await count()).toBe(total);
+      await deliver(addr, 'n2@example.org', header('n2@example.org'), PASS('example.org'));
+      expect(await count()).toBe(total);
+
+      expect(await keyring(userId, 's0@example.org')).not.toBeNull();
+      expect(await keyring(userId, 's1@example.org')).not.toBeNull();
+      expect(await keyring(userId, 's2@example.org')).toBeNull();
+      expect(await keyring(userId, 's3@example.org')).toBeNull();
+      expect(await keyring(userId, 's4@example.org')).not.toBeNull();
     });
   });
 });
