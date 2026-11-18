@@ -108,7 +108,7 @@ export function useChangePassword() {
 }
 
 export function useTotpBegin() {
-  return useMutation({ mutationFn: () => api.post<TotpBeginResponse>('/api/me/totp/begin') });
+  return useMutation({ mutationFn: (password: string) => api.post<TotpBeginResponse>('/api/me/totp/begin', { password }) });
 }
 
 export function useTotpEnable() {

@@ -41,15 +41,25 @@ export function TotpSection() {
   const [disabling, setDisabling] = useState(false);
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  const [setupPassword, setSetupPassword] = useState('');
+  const [setupError, setSetupError] = useState<string | null>(null);
+
+  const closeConfirm = () => {
+    setConfirming(false);
+    setSetupPassword('');
+    setSetupError(null);
+  };
 
   const start = () =>
-    begin.mutate(undefined, {
+    begin.mutate(setupPassword, {
       onSuccess: (r) => {
+        closeConfirm();
         setSetup(r);
         setCode('');
         setError(null);
       },
-      onError: (e) => toast({ tone: 'error', title: 'Could not start setup', description: errorMessage(e) }),
+      onError: (e) => setSetupError(errorMessage(e)),
     });
 
   const verify = () =>
@@ -69,7 +79,7 @@ export function TotpSection() {
         user.totpEnabled ? (
           <Button variant="ghost" className="text-danger" onClick={() => setDisabling(true)}>Turn off</Button>
         ) : (
-          <Button variant="primary" loading={begin.isPending} onClick={start}>Set up</Button>
+          <Button variant="primary" onClick={() => setConfirming(true)}>Set up</Button>
         )
       }
     >
@@ -77,6 +87,16 @@ export function TotpSection() {
         <ShieldCheck size={16} className={user.totpEnabled ? 'text-success' : 'text-faint'} />
         {user.totpEnabled ? 'On. You will be asked for a code each time you sign in.' : 'Off.'}
       </p>
+
+      <Dialog open={confirming} onClose={closeConfirm} title="Set up two-factor authentication" width={420}
+        footer={<><Button variant="ghost" onClick={closeConfirm}>Cancel</Button><Button variant="primary" loading={begin.isPending} disabled={!setupPassword} onClick={start}>Continue</Button></>}
+      >
+        <form onSubmit={(e) => { e.preventDefault(); if (setupPassword) start(); }}>
+          <Field label="Confirm with your password" error={setupError}>
+            {(id, d) => <Input id={id} aria-describedby={d} aria-invalid={!!setupError} type="password" autoComplete="current-password" autoFocus value={setupPassword} onChange={(e) => setSetupPassword(e.target.value)} />}
+          </Field>
+        </form>
+      </Dialog>
 
       <Dialog open={!!setup} onClose={() => setSetup(null)} title="Set up two-factor authentication" width={520}
         footer={<><Button variant="ghost" onClick={() => setSetup(null)}>Cancel</Button><Button variant="primary" loading={enable.isPending} disabled={code.replace(/\s/g, '').length < 6} onClick={verify}>Verify and turn on</Button></>}

@@ -111,9 +111,13 @@ me.post('/password', async (c) => {
   return c.json({ ok: true });
 });
 
+// Adding a second factor is a credential change: like every sibling, it needs the current password, so a stolen
+// session alone cannot enrol an attacker's authenticator and lock the owner out of password sign-in.
 me.post('/totp/begin', async (c) => {
+  const body = await jsonBody(c, z.object({ password: z.string().min(1).max(256) }));
   const u = c.get('user');
   if (u.totp_secret) throw new HttpError(409, 'TOTP_ALREADY_ENABLED', 'Two-factor authentication is already enabled');
+  await requireCurrentPassword(c.env.DB, u, body.password, 'Password is incorrect');
   const secret = base32Encode(randomBytes(20));
   await c.env.DB.prepare('UPDATE users SET totp_pending = ?, updated_at = ? WHERE id = ?').bind(secret, Date.now(), u.id).run();
   const issuer = c.env.APP_NAME || 'Cirrus Mail';
