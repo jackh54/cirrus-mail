@@ -15,7 +15,8 @@ import {
   accountOf, idsOf, invalidArguments, isoUtc, jsonIds, LIMITS_JMAP, maxChangesOf, MethodError, parseSince, propsOf, readState, stateReadStmt,
   structureOf, toState, type Account, type Ctx, type J, type MethodDef, type Structure,
 } from './core';
-import { buildFtsQuery, ftsQuote } from '../search';
+import { hit } from '../lib/ratelimit';
+import { buildFtsQuery, ftsQuote, SEARCH_MAX_PER_MINUTE, SEARCH_WINDOW_MS, searchRateKey } from '../search';
 
 const CAP = 'urn:ietf:params:jmap:mail';
 const OUTBOX = new Set(['draft', 'scheduled', 'sending']);
@@ -348,6 +349,12 @@ function buildFilter(f: J, st: Structure, p: unknown[], depth = 0): string {
   return c.length ? `(${c.join(' AND ')})` : '1';
 }
 
+function hasTextFilter(f: J, depth = 0): boolean {
+  if (!f || typeof f !== 'object' || depth > 8) return false;
+  if (Array.isArray(f.conditions)) return f.conditions.some((c: J) => hasTextFilter(c, depth + 1));
+  return 'text' in f || 'body' in f;
+}
+
 const SORT_EXPR: Record<string, string> = { receivedAt: 'm.date', sentAt: 'COALESCE(m.display_date, m.date)', size: 'm.size' };
 
 const emailQuery: MethodDef = {
@@ -356,6 +363,9 @@ const emailQuery: MethodDef = {
     const acc = accountOf(ctx, args);
     const db = ctx.env.DB;
     const st = await structureOf(ctx, acc.id);
+    if (args.filter && hasTextFilter(args.filter) && (await hit(db, searchRateKey(ctx.user.id), SEARCH_WINDOW_MS)) > SEARCH_MAX_PER_MINUTE) {
+      throw new MethodError('rateLimit', 'Too many searches. Try again in a minute.');
+    }
     const params: unknown[] = [acc.id];
     const where = args.filter ? buildFilter(args.filter, st, params) : '1';
     if (params.length > 90) throw new MethodError('unsupportedFilter', 'Filter is too complex');

@@ -53,9 +53,17 @@ export function ftsQuote(s: string): string {
   return `"${s.replace(/"/g, '""')}"`;
 }
 
+/** Shorter bare words match as exact tokens: a 1-2 letter prefix would expand to most of the shared FTS index. */
+export const MIN_PREFIX_LEN = 3;
+
+/** Per-user cap on text searches (REST and JMAP share it): generous for typing, tight for scripted scans. */
+export const SEARCH_MAX_PER_MINUTE = 60;
+export const SEARCH_WINDOW_MS = 60_000;
+export const searchRateKey = (userId: string) => `search:${userId}`;
+
 /**
- * Builds the FTS5 MATCH expression for free text. Every term is quoted; the last bare word gets a prefix `*`.
- * Returns null when there is no searchable text.
+ * Builds the FTS5 MATCH expression for free text. Every term is quoted; the last bare word gets a prefix `*`
+ * when it is at least MIN_PREFIX_LEN characters. Returns null when there is no searchable text.
  */
 export function buildFtsQuery(terms: Term[]): string | null {
   const parts: string[] = [];
@@ -63,7 +71,7 @@ export function buildFtsQuery(terms: Term[]): string | null {
     // unicode61 drops punctuation anyway; strip control chars and keep the rest literal inside quotes.
     const v = t.value.replace(/[\u0000-\u001f]/g, ' ').trim();
     if (!/[\p{L}\p{N}]/u.test(v)) return;
-    const last = i === terms.length - 1 && !t.phrase;
+    const last = i === terms.length - 1 && !t.phrase && [...v].length >= MIN_PREFIX_LEN;
     parts.push(ftsQuote(v) + (last ? '*' : ''));
   });
   return parts.length ? parts.join(' ') : null;
@@ -102,6 +110,9 @@ export function buildSearchSql(p: ParsedQuery): { where: string[]; params: unkno
   if (fts) {
     where.push('m.id IN (SELECT message_id FROM messages_fts WHERE messages_fts MATCH ?)');
     params.push(fts);
+  } else if (p.text.length) {
+    // Free text with nothing searchable (punctuation only): match nothing rather than list everything.
+    where.push('0');
   }
   return { where, params };
 }

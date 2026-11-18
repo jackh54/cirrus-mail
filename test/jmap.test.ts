@@ -8,6 +8,7 @@ import { eventStream } from '../src/worker/jmap/handler';
 import { deleteMessagesForever } from '../src/worker/lib/db';
 import { hashPassword, sha256Hex } from '../src/worker/lib/crypto';
 import { utcDay } from '../src/worker/lib/sendcount';
+import { SEARCH_MAX_PER_MINUTE, SEARCH_WINDOW_MS, searchRateKey } from '../src/worker/search';
 import worker from '../src/worker/index';
 import { BASE, buildEml, call, createMailbox, ctx, fakeEmail, randomLocal, sessionCookie, withEnv } from './helpers';
 
@@ -276,6 +277,19 @@ describe('Email/query and Email/get', () => {
     const t = await one('Thread/get', { ids: [tid, 'nope'] });
     expect(t.list).toEqual([{ id: tid, emailIds: [a, b] }]);
     expect(t.notFound).toEqual(['nope']);
+  });
+});
+
+describe('Email/query text search rate limit', () => {
+  it('answers rateLimit after the per-user limit for text filters only', async () => {
+    const W = await mkWho('rl');
+    await env.DB.prepare('INSERT INTO rate_limits (key, count, window_end) VALUES (?, ?, ?)')
+      .bind(searchRateKey(W.id), SEARCH_MAX_PER_MINUTE, Date.now() + SEARCH_WINDOW_MS).run();
+    const q = async (filter: Record<string, unknown>) => (await jmap([['Email/query', { accountId: W.mb, filter }, 'c']], { auth: W.auth }))[0];
+    expect((await q({ subject: 'x' }))[0]).toBe('Email/query');
+    const limited = await q({ operator: 'AND', conditions: [{ text: 'hello' }] });
+    expect(limited[0]).toBe('error');
+    expect(limited[1].type).toBe('rateLimit');
   });
 });
 
