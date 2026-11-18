@@ -9,9 +9,10 @@ import {
 } from '../lib/db';
 import { HttpError, notFound } from '../lib/errors';
 import { jsonBody, zId } from '../lib/validate';
-import { buildSearchSql, parseSearch } from '../search';
+import { hit } from '../lib/ratelimit';
+import { buildSearchSql, parseSearch, SEARCH_MAX_PER_MINUTE, SEARCH_WINDOW_MS, searchRateKey } from '../search';
 import { parseJsonAddresses } from '../lib/addresses';
-import { authorizeMailbox, type Authz } from '../middleware/session';
+import { authorizeMailbox, authorizeSession, type Authz } from '../middleware/session';
 import type { AppEnv } from '../types';
 
 export const mail = new Hono<AppEnv>();
@@ -184,6 +185,13 @@ export function readThreadList(results: D1Result[], limit: number, what = 'Folde
 mailReads.get('/threads', async (c) => {
   const limit = Math.min(Math.max(Number(c.req.query('limit')) || 50, 1), 100);
   const q = c.req.query('q')?.trim() || undefined;
+  if (q && parseSearch(q).text.length) {
+    // The user is only known after the session check, and the list query runs inside it: check the session first so the limit applies before any FTS scan.
+    await authorizeSession(c, () => []);
+    if ((await hit(c.env.DB, searchRateKey(c.get('user').id), SEARCH_WINDOW_MS)) > SEARCH_MAX_PER_MINUTE) {
+      throw new HttpError(429, 'RATE_LIMITED', 'Too many searches. Try again in a minute.');
+    }
+  }
   const category = THREAD_CATEGORIES.find((k) => k === c.req.query('category'));
   const opts = { folder: c.req.query('folder') || undefined, label: c.req.query('label') || undefined, q, cursor: c.req.query('cursor'), limit, category };
   return c.json(readThreadList(await authorizeMailbox(c, (mb, authz) => listThreadsStmts(c.env.DB, mb, opts, authz)), limit, opts.label ? 'Label' : 'Folder'));
