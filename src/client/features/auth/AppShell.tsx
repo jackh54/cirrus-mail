@@ -5,6 +5,7 @@ import { Button } from '../../components/Button';
 import { EmptyState } from '../../components/EmptyState';
 import { FullScreenSpinner } from '../../components/Spinner';
 import { isApiError } from '../../lib/api';
+import { syncPush } from '../../lib/push';
 import { useMe } from '../../lib/queries/me';
 import { applyPrefs, useDarkTheme } from '../../lib/theme';
 import { ComposeProvider } from '../compose/ComposeProvider';
@@ -20,6 +21,11 @@ export function AppShell() {
   useEffect(() => {
     if (user) applyPrefs({ theme: user.theme, density: user.density });
   }, [user?.theme, user?.density, user]);
+
+  // Push subscriptions are tied to the session; re-bind or restore this browser's once per signed-in user.
+  useEffect(() => {
+    if (user?.id) void syncPush().catch(() => undefined);
+  }, [user?.id]);
 
   // index.html has one theme-color per system scheme; follow the resolved theme so a user choice wins.
   useEffect(() => {

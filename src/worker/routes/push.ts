@@ -43,10 +43,12 @@ push.get('/public-key', async (c) => {
   return c.json(body);
 });
 
-// Upserts by endpoint and binds the subscription to the caller (a browser that signs in as someone else moves over).
+// Upserts by endpoint and binds the subscription to the caller and their session (a browser that signs in as
+// someone else moves over). Deleting the session deletes the subscription (ON DELETE CASCADE, migration 0020).
 push.post('/subscriptions', async (c) => {
   const b = await jsonBody(c, SubscriptionSchema);
   const userId = c.get('user').id;
+  const sessionId = c.get('sessionId');
   const db = c.env.DB;
   const count = await db.prepare('SELECT COUNT(*) AS n FROM push_subscriptions WHERE user_id = ? AND endpoint != ?').bind(userId, b.endpoint).first<number>('n');
   if ((count ?? 0) >= MAX_PUSH_DEVICES) {
@@ -55,14 +57,14 @@ push.post('/subscriptions', async (c) => {
   const now = Date.now();
   const ua = (c.req.header('user-agent') ?? '').slice(0, 300) || null;
   await db.prepare(
-    `INSERT INTO push_subscriptions (id, user_id, endpoint, p256dh, auth, user_agent, created_at, failures)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 0)
+    `INSERT INTO push_subscriptions (id, user_id, session_id, endpoint, p256dh, auth, user_agent, created_at, failures)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
      ON CONFLICT(endpoint) DO UPDATE SET
-       user_id = excluded.user_id, p256dh = excluded.p256dh, auth = excluded.auth, user_agent = excluded.user_agent,
+       user_id = excluded.user_id, session_id = excluded.session_id, p256dh = excluded.p256dh, auth = excluded.auth, user_agent = excluded.user_agent,
        failures = 0,
        created_at = CASE WHEN push_subscriptions.user_id = excluded.user_id THEN push_subscriptions.created_at ELSE excluded.created_at END,
        last_success_at = CASE WHEN push_subscriptions.user_id = excluded.user_id THEN push_subscriptions.last_success_at ELSE NULL END`,
-  ).bind(ulid(now), userId, b.endpoint, b.keys.p256dh, b.keys.auth, ua, now).run();
+  ).bind(ulid(now), userId, sessionId, b.endpoint, b.keys.p256dh, b.keys.auth, ua, now).run();
   const row = await db.prepare('SELECT id, user_agent AS userAgent, created_at AS createdAt, last_success_at AS lastSuccessAt FROM push_subscriptions WHERE endpoint = ? AND user_id = ?')
     .bind(b.endpoint, userId).first<PushDevice>();
   return c.json(row, 201);

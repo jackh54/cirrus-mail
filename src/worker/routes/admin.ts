@@ -193,7 +193,11 @@ admin.patch('/users/:id', async (c) => {
     stmts.push(db.prepare('UPDATE users SET password_hash = ?, must_change_password = 1 WHERE id = ?').bind(await hashPassword(b.resetPassword), id));
     stmts.push(db.prepare('DELETE FROM invites WHERE user_id = ?').bind(id)); // the admin chose a password instead
   }
-  if (b.resetPassword || b.disabled) stmts.push(db.prepare('DELETE FROM sessions WHERE user_id = ?').bind(id));
+  if (b.resetPassword || b.disabled) {
+    stmts.push(db.prepare('DELETE FROM sessions WHERE user_id = ?').bind(id));
+    // Push subscriptions are credentials too (session-bound ones cascade; this also removes pre-0020 ones).
+    stmts.push(db.prepare('DELETE FROM push_subscriptions WHERE user_id = ?').bind(id));
+  }
   await db.batch(stmts);
   return c.json(await adminUser(db, id));
 });
