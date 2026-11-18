@@ -2,7 +2,6 @@
 // AUTOREPLY_DAILY_CAP per mailbox per day, and only to authenticated envelope senders (no backscatter).
 import type { AuthResults } from '../../shared/api';
 import { ulid } from '../../shared/ulid';
-import { domainOf } from '../lib/addresses';
 import { recordSendsSafe } from '../lib/sendcount';
 import { cleanHeaderText } from '../lib/validate';
 
@@ -32,10 +31,10 @@ export function autoreplyEligible(mb: AutoreplyMailbox, i: AutoreplyInput): bool
   if (mb.autoreply_start && i.now < mb.autoreply_start) return false;
   if (mb.autoreply_end && i.now > mb.autoreply_end) return false;
   // A forged envelope sender would turn us into a backscatter source. The reply goes to the envelope sender,
-  // so the header From must be authenticated (aligned pass) and the envelope must belong to it: the same
-  // domain exactly (no suffix matching without a public-suffix list), or SPF passed for the envelope itself.
+  // so the header From must be authenticated (aligned pass) and SPF must have passed for the envelope itself:
+  // DKIM/DMARC only vouch for the From domain, not for a mailbox at the same domain used as envelope sender.
   if (i.auth?.aligned !== true) return false;
-  if (domainOf(i.sender) !== i.fromDomain && !i.envelopeSpfPass) return false;
+  if (!i.envelopeSpfPass) return false;
   if (!i.sender || i.ownAddresses.has(i.sender)) return false;
   if (/^(mailer-daemon|postmaster|no-?reply|do-?not-?reply|bounces?)[@+]/i.test(i.sender)) return false;
   const auto = i.headers('auto-submitted');
