@@ -168,7 +168,7 @@ describe('mbox import', () => {
       msg({ subject: 'E draft', labels: 'Drafts', id: '<e@t.test>' }),
       msg({ subject: 'F archive', labels: '"Taxes, 2024",Kids,Category Social', id: '<f@t.test>', date: 'Wed, 01 Jan 2200 00:00:00 +0000' }),
       msg({ subject: 'G plain', labels: '', id: '<g@t.test>' }),
-      msg({ subject: 'A again', labels: 'Inbox', id: '<a@t.test>' }),
+      msg({ subject: 'A inbox', labels: 'Inbox', id: '<a@t.test>' }),
     ]);
     await upload(user.cookie, mb.id, file);
     const done = await drain(user.cookie, mb.id);
@@ -205,6 +205,40 @@ describe('mbox import', () => {
     await upload(user.cookie, mb.id, file);
     expect(await drain(user.cookie, mb.id)).toMatchObject({ status: 'done', imported: 0, duplicates: 3 });
     expect(await count(mb.id)).toBe(3);
+  });
+
+  it('a planted inbound Message-ID does not block the archived message; a genuine inbound copy still counts as a duplicate', async () => {
+    const addr = `${randomLocal('m')}@mbox.test`;
+    const mb = await createMailbox(addr, [{ userId: user.id }]);
+    const MID = '<shared-mid@list.test>';
+    const planted = buildEml({ from: 'Stranger <stranger@elsewhere.test>', to: addr, subject: 'Planted', body: 'planted', messageId: MID });
+    expect((await processInbound(fakeEmail('stranger@elsewhere.test', addr, planted), env)).accepted).toBe(true);
+    const ALIGNED = { 'Authentication-Results': 'mx.cloudflare.net; dkim=pass header.d=elsewhere.test header.s=s1; dmarc=pass header.from=elsewhere.test; spf=pass smtp.mailfrom=elsewhere.test' };
+    const genuine = buildEml({ from: 'Sam <sam@elsewhere.test>', to: addr, subject: 'Genuine', body: 'inbound', messageId: '<genuine-mid@list.test>', headers: ALIGNED });
+    expect((await processInbound(fakeEmail('sam@elsewhere.test', addr, genuine), env)).accepted).toBe(true);
+    const file = mboxOf([
+      msg({ subject: 'Archived', id: MID, from: 'Real <real@list.test>' }),
+      msg({ subject: 'Genuine', id: '<genuine-mid@list.test>', from: 'SAM <Sam@Elsewhere.test>' }),
+    ]);
+    await upload(user.cookie, mb.id, file);
+    expect(await drain(user.cookie, mb.id)).toMatchObject({ status: 'done', imported: 1, duplicates: 1 });
+    expect((await stored(mb.id)).map((r) => r.subject)).toEqual(['Archived', 'Genuine', 'Planted']);
+    await upload(user.cookie, mb.id, file);
+    expect(await drain(user.cookie, mb.id)).toMatchObject({ status: 'done', imported: 0, duplicates: 2 });
+    expect(await count(mb.id)).toBe(3);
+  });
+
+  it('an unaligned inbound copy with the same Message-ID, From and Subject does not block the archived message', async () => {
+    const addr = `${randomLocal('m')}@mbox.test`;
+    const mb = await createMailbox(addr, [{ userId: user.id }]);
+    const MID = '<forged-all-three@list.test>';
+    const FAIL = { 'Authentication-Results': 'mx.cloudflare.net; dkim=fail; spf=fail; dmarc=fail header.from=list.test' };
+    const forged = buildEml({ from: 'Real <real@list.test>', to: addr, subject: 'Statement', body: 'forged', messageId: MID, headers: FAIL });
+    expect((await processInbound(fakeEmail('real@list.test', addr, forged), env)).accepted).toBe(true);
+    const file = mboxOf([msg({ subject: 'Statement', id: MID, from: 'Real <real@list.test>', body: 'genuine' })]);
+    await upload(user.cookie, mb.id, file);
+    expect(await drain(user.cookie, mb.id)).toMatchObject({ status: 'done', imported: 1, duplicates: 0 });
+    expect(await count(mb.id)).toBe(2);
   });
 
   it('puts a non-Gmail file in the chosen folder, optionally marking it read', async () => {

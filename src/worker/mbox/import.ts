@@ -169,9 +169,16 @@ async function importOne(env: Env, c: Ctx, raw: Uint8Array, sepLine: string): Pr
   const createdAt = Math.min(date, now - 1);
   const hash = await contentHash(raw, [msgId, from.email, to.map((a) => a.email), cc.map((a) => a.email), subject, email.date ?? '']);
 
-  const dup = msgId
-    ? await db.prepare('SELECT 1 FROM messages WHERE mailbox_id = ? AND message_id_hdr = ? LIMIT 1').bind(c.mailboxId, msgId).first()
-    : await db.prepare('SELECT 1 FROM messages WHERE mailbox_id = ? AND content_hash = ? LIMIT 1').bind(c.mailboxId, hash).first();
+  // The sender picks Message-ID, From and Subject, so a header match counts only against a row we can trust: one we sent,
+  // or inbound mail with aligned auth. A copy of this exact import (same hash) always counts, which keeps re-runs idempotent.
+  // Each lookup is an indexed equality on (mailbox_id, content_hash) or (mailbox_id, message_id_hdr).
+  let dup: unknown = await db.prepare('SELECT 1 FROM messages WHERE mailbox_id = ? AND content_hash = ? LIMIT 1').bind(c.mailboxId, hash).first();
+  if (!dup && msgId) {
+    dup = await db.prepare(
+      `SELECT 1 FROM messages WHERE mailbox_id = ? AND message_id_hdr = ? AND from_email = ? AND subject = ?
+          AND (direction = 'out' OR (auth_json IS NOT NULL AND json_valid(auth_json) AND json_extract(auth_json, '$.aligned') = 1)) LIMIT 1`,
+    ).bind(c.mailboxId, msgId, from.email.toLowerCase(), subject).first();
+  }
   if (dup) return { kind: 'duplicate' };
 
   let folderId: string;
