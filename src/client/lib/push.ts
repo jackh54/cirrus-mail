@@ -108,6 +108,61 @@ export function setThisDeviceId(id: string | null): void {
   }
 }
 
+const RESTORE_KEY = 'cirrus:pushRestore';
+
+/** Marks that this browser just signed in, so the next syncPush() may re-register a subscription the server dropped. */
+export function markPushRestore(): void {
+  try {
+    sessionStorage.setItem(RESTORE_KEY, '1');
+  } catch {
+    /* ignore */
+  }
+}
+
+function takePushRestore(): boolean {
+  try {
+    const v = sessionStorage.getItem(RESTORE_KEY) === '1';
+    sessionStorage.removeItem(RESTORE_KEY);
+    return v;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Keeps this browser's push registration in step with the server. Subscriptions belong to the session that made
+ * them and are deleted with it (sign-out elsewhere, password change, expiry), so on each app start:
+ * - the device row still exists: re-register it, which binds it to the current session;
+ * - it is gone and this browser just signed in: register it again (its old session ended);
+ * - it is gone otherwise (removed from the device list): forget it here, so in-page alerts take over.
+ * Never asks for permission and never subscribes a browser that was not subscribed.
+ */
+export async function syncPush(): Promise<void> {
+  const restore = takePushRestore();
+  const deviceId = getThisDeviceId();
+  if (!deviceId) return;
+  if (notificationPermission() !== 'granted') {
+    setThisDeviceId(null);
+    return;
+  }
+  const sub = await currentSubscription();
+  if (!sub) {
+    setThisDeviceId(null);
+    return;
+  }
+  const known = (await pushApi.devices()).some((d) => d.id === deviceId);
+  if (!known && !restore) {
+    setThisDeviceId(null);
+    return;
+  }
+  try {
+    const device = await api.post<PushDevice>('/api/push/subscriptions', sub.toJSON() as PushSubscriptionInput);
+    setThisDeviceId(device.id);
+  } catch {
+    setThisDeviceId(null);
+  }
+}
+
 export const pushApi = {
   devices: () => api.get<PushDevice[]>('/api/push/subscriptions'),
   remove: (id: string) => api.del<{ ok: boolean }>(`/api/push/subscriptions/${id}`),

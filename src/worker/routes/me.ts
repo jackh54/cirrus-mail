@@ -101,8 +101,10 @@ me.post('/password', async (c) => {
   await c.env.DB.batch([
     c.env.DB.prepare('UPDATE users SET password_hash = ?, must_change_password = 0, updated_at = ? WHERE id = ?')
       .bind(await hashPassword(body.next), Date.now(), u.id),
-    // Changing the password signs out every other session.
+    // Changing the password signs out every other session. Their push subscriptions go with them (cascade);
+    // subscriptions from before migration 0020 have no session and are removed here.
     c.env.DB.prepare('DELETE FROM sessions WHERE user_id = ? AND id != ?').bind(u.id, c.get('sessionId')),
+    c.env.DB.prepare('DELETE FROM push_subscriptions WHERE user_id = ? AND session_id IS NULL').bind(u.id),
     // Passkeys and app passwords are credentials too: unless the caller opts out, they go with the old password.
     ...(body.revokeCredentials
       ? [c.env.DB.prepare('DELETE FROM app_passwords WHERE user_id = ?').bind(u.id), c.env.DB.prepare('DELETE FROM passkeys WHERE user_id = ?').bind(u.id)]
@@ -174,7 +176,13 @@ me.get('/sessions', async (c) => {
 });
 
 me.delete('/sessions/:id', async (c) => {
-  const res = await c.env.DB.prepare('DELETE FROM sessions WHERE id = ? AND user_id = ?').bind(c.req.param('id'), c.get('user').id).run();
+  const userId = c.get('user').id;
+  const [res] = await c.env.DB.batch([
+    // The session's push subscriptions are deleted with it (cascade).
+    c.env.DB.prepare('DELETE FROM sessions WHERE id = ? AND user_id = ?').bind(c.req.param('id'), userId),
+    // Subscriptions from before migration 0020 cannot be traced to a session, so revoking any session removes them.
+    c.env.DB.prepare('DELETE FROM push_subscriptions WHERE user_id = ? AND session_id IS NULL').bind(userId),
+  ]);
   if (!res.meta.changes) throw new HttpError(404, 'NOT_FOUND', 'Session not found');
   return c.json({ ok: true });
 });

@@ -4,10 +4,11 @@ import type { PushDevice, PushPayload, PushPublicKeyResponse } from '../src/shar
 import { ulid } from '../src/shared/ulid';
 import { processInbound } from '../src/worker/inbound/handler';
 import { hit } from '../src/worker/lib/ratelimit';
-import { fromBase64Url, hmac, randomBytes, sha256Hex, toBase64Url } from '../src/worker/lib/crypto';
+import { fromBase64Url, hashPassword, hmac, randomBytes, sha256Hex, toBase64Url } from '../src/worker/lib/crypto';
 import { encryptPayload, generateVapidKeys, importVapidPrivateKey, isAllowedPushEndpoint, vapidAuthorization, vapidJwt } from '../src/worker/lib/webpush';
 import { getVapid, notifyNewMail, PUSH_HOURLY_CAP } from '../src/worker/push';
-import { buildEml, call, createMailbox, fakeEmail, randomLocal } from './helpers';
+import { hourlyMaintenance } from '../src/worker/cron';
+import { buildEml, call, createMailbox, fakeEmail, randomLocal, sessionCookie } from './helpers';
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
@@ -400,5 +401,106 @@ describe('new-mail push', () => {
     expect(sent.length - before).toBe(1);
     await notifyNewMail(env, { ...mail, mailboxId: hb!, threadId: ulid() }, now + 3601_000); // the next hour
     expect(sent.length - before).toBe(2);
+  });
+});
+
+// ---------- revocation (security audit 2026-11-18) ----------
+
+describe('push subscriptions are revoked with the session that created them', () => {
+  const PW = 'revoke-old-password-1';
+
+  async function setup() {
+    const id = ulid();
+    const email = `${randomLocal('rv')}@push.test`;
+    const now = Date.now();
+    await env.DB.prepare('INSERT INTO users (id, email, name, password_hash, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .bind(id, email, 'Revoke User', await hashPassword(PW), 'member', now, now).run();
+    const addr = `${randomLocal('rvbox')}@push.test`;
+    await createMailbox(addr, [{ userId: id }]);
+    const login = async (ua: string) => sessionCookie(await call('/api/auth/login', { body: { email, password: PW }, headers: { 'user-agent': ua } }));
+    const owner = await login('Owner/1.0');
+    const thief = await login('Thief/1.0');
+    const subscribe = async (cookie: string) => {
+      const keys = await browserKeys();
+      const endpoint = `https://fcm.googleapis.com/fcm/send/rv-${ulid()}`;
+      const r = await call('/api/push/subscriptions', { cookie, body: { endpoint, expirationTime: null, keys: { p256dh: keys.p256dh, auth: keys.auth } } });
+      expect(r.status).toBe(201);
+      return endpoint;
+    };
+    const ownerEndpoint = await subscribe(owner);
+    const thiefEndpoint = await subscribe(thief);
+    const sessionOf = async (endpoint: string) =>
+      env.DB.prepare('SELECT session_id FROM push_subscriptions WHERE endpoint = ?').bind(endpoint).first<string | null>('session_id');
+    return { id, addr, owner, thief, ownerEndpoint, thiefEndpoint, thiefSession: (await sessionOf(thiefEndpoint))!, sessionOf };
+  }
+
+  const exists = async (endpoint: string) =>
+    (await env.DB.prepare('SELECT COUNT(*) AS n FROM push_subscriptions WHERE endpoint = ?').bind(endpoint).first<number>('n')) === 1;
+
+  async function pushedTo(addr: string): Promise<string[]> {
+    const sent = stubFetch();
+    await deliverMail(addr, { subject: `Revocation ${ulid()}` });
+    vi.unstubAllGlobals();
+    return sent.map((x) => x.url);
+  }
+
+  it('binds a new subscription to the caller session', async () => {
+    const s = await setup();
+    expect(s.thiefSession).toBeTruthy();
+    expect(await s.sessionOf(s.ownerEndpoint)).not.toBe(s.thiefSession);
+  });
+
+  it('password change drops other sessions\' subscriptions and keeps this one', async () => {
+    const s = await setup();
+    expect((await call('/api/me/password', { cookie: s.owner, body: { current: PW, next: 'revoke-new-password-2' } })).status).toBe(200);
+    expect(await exists(s.thiefEndpoint)).toBe(false);
+    expect(await exists(s.ownerEndpoint)).toBe(true);
+    const urls = await pushedTo(s.addr);
+    expect(urls).toContain(s.ownerEndpoint);
+    expect(urls).not.toContain(s.thiefEndpoint);
+  });
+
+  it('revoking a session drops its subscriptions', async () => {
+    const s = await setup();
+    expect((await call(`/api/me/sessions/${s.thiefSession}`, { method: 'DELETE', cookie: s.owner })).status).toBe(200);
+    expect(await exists(s.thiefEndpoint)).toBe(false);
+    expect(await exists(s.ownerEndpoint)).toBe(true);
+  });
+
+  it('server-side logout drops that session\'s subscriptions', async () => {
+    const s = await setup();
+    expect((await call('/api/auth/logout', { method: 'POST', cookie: s.thief })).status).toBe(200);
+    expect(await exists(s.thiefEndpoint)).toBe(false);
+    expect(await exists(s.ownerEndpoint)).toBe(true);
+  });
+
+  it('session expiry pruning drops its subscriptions', async () => {
+    const s = await setup();
+    await env.DB.prepare('UPDATE sessions SET expires_at = 1 WHERE id = ?').bind(s.thiefSession).run();
+    await hourlyMaintenance(env);
+    expect(await exists(s.thiefEndpoint)).toBe(false);
+  });
+
+  it('admin password reset and disable drop every subscription', async () => {
+    for (const change of [{ resetPassword: 'admin-chosen-password-1' }, { disabled: true }]) {
+      const s = await setup();
+      expect((await call(`/api/admin/users/${s.id}`, { method: 'PATCH', cookie: admin.cookie, body: change })).status).toBe(200);
+      expect(await exists(s.thiefEndpoint)).toBe(false);
+      expect(await exists(s.ownerEndpoint)).toBe(false);
+    }
+  });
+
+  it('subscriptions from before session binding go on password change or any session revoke', async () => {
+    for (const revoke of ['password', 'session'] as const) {
+      const s = await setup();
+      const legacy = await addSubscription(s.id, await browserKeys());
+      if (revoke === 'password') {
+        expect((await call('/api/me/password', { cookie: s.owner, body: { current: PW, next: 'revoke-new-password-3' } })).status).toBe(200);
+      } else {
+        expect((await call(`/api/me/sessions/${s.thiefSession}`, { method: 'DELETE', cookie: s.owner })).status).toBe(200);
+      }
+      expect(await exists(legacy.endpoint)).toBe(false);
+      expect(await exists(s.ownerEndpoint)).toBe(true);
+    }
   });
 });

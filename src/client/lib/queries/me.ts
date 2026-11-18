@@ -1,4 +1,4 @@
-import { disablePush, setThisDeviceId } from '../push';
+import { disablePush, markPushRestore, setThisDeviceId } from '../push';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   AuthResponse, ChangePasswordInput, InviteAcceptInput, InviteLookupResponse, LoginInput, MeResponse, SessionInfo, SetupInput, SetupStatus,
@@ -38,7 +38,11 @@ export function useLogin() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: LoginInput) => api.post<AuthResponse>('/api/auth/login', input),
-    onSuccess: () => qc.invalidateQueries({ queryKey: qk.me }),
+    onSuccess: () => {
+      // This browser's push subscription may have been deleted with its previous session; let syncPush restore it.
+      markPushRestore();
+      return qc.invalidateQueries({ queryKey: qk.me });
+    },
   });
 }
 
