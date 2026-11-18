@@ -369,10 +369,21 @@ describe('security hardening', () => {
     expect(elsewhere.status).toBe(200);
   });
 
+  it('TOTP enrolment needs the current password', async () => {
+    await call('/api/admin/users', { body: { name: 'Step Up', email: 'stepup@apitest.test', role: 'member', tempPassword: 'stepup-password-1' }, cookie: state.admin });
+    const cookie = sessionCookie(await call('/api/auth/login', { body: { email: 'stepup@apitest.test', password: 'stepup-password-1' } }));
+    expect((await call('/api/me/totp/begin', { body: {}, cookie })).status).toBe(400);
+    const wrong = await call('/api/me/totp/begin', { body: { password: 'not-the-password' }, cookie });
+    expect((await wrong.json<{ error: { code: string } }>()).error.code).toBe('INVALID_PASSWORD');
+    const pending = await env.DB.prepare("SELECT totp_pending FROM users WHERE email = 'stepup@apitest.test'").first<string | null>('totp_pending');
+    expect(pending).toBeNull();
+    expect((await call('/api/me/totp/begin', { body: { password: 'stepup-password-1' }, cookie })).status).toBe(200);
+  });
+
   it('rejects TOTP replay and caps TOTP failures per user', async () => {
     await call('/api/admin/users', { body: { name: 'Two Factor', email: 'totp@apitest.test', role: 'member', tempPassword: 'totp-password-1' }, cookie: state.admin });
     const cookie = sessionCookie(await call('/api/auth/login', { body: { email: 'totp@apitest.test', password: 'totp-password-1' } }));
-    const { secret } = await (await call('/api/me/totp/begin', { body: {}, cookie })).json<{ secret: string }>();
+    const { secret } = await (await call('/api/me/totp/begin', { body: { password: 'totp-password-1' }, cookie })).json<{ secret: string }>();
     const key = base32Decode(secret);
     const now = Date.now();
     const codeNow = await totp(key, now);

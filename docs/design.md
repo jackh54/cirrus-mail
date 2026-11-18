@@ -136,7 +136,7 @@ IDs are text ULIDs; `src/shared/ulid.ts` is the only generator. Timestamps are i
 | GET | `/api/me` | → `{ user, mailboxes: MailboxSummary[] }` |
 | PATCH | `/api/me` | `{ name?, theme?, density? }` → `{ user }` |
 | POST | `/api/me/password` | `{ current, next }` → `{ ok }` |
-| POST | `/api/me/totp/begin` | → `{ secret, otpauthUrl }` |
+| POST | `/api/me/totp/begin` | `{ password }` → `{ secret, otpauthUrl }` |
 | POST | `/api/me/totp/enable` | `{ code }` → `{ recoveryCodes: string[] }` |
 | POST | `/api/me/totp/disable` | `{ password }` → `{ ok }` |
 | GET | `/api/me/sessions` · DELETE `/api/me/sessions/:id` | session management |
