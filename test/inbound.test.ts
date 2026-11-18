@@ -204,6 +204,18 @@ describe('inbound handler', () => {
       expect(sent.map((m) => m.to)).toEqual(['rp-77@esp.test']);
     });
 
+    it('does not reply to a same-domain forged envelope mailbox when SPF softfails', async () => {
+      const { addr, sent, e } = await setup();
+      // Aligned DKIM/DMARC pass vouches for partner.test only; the envelope mailbox at that domain is forged.
+      const forged = buildEml({ from: 'news@partner.test', to: addr, subject: 'Hello', body: 'x',
+        headers: { 'Authentication-Results': 'mx.cloudflare.net; dkim=pass header.d=partner.test; dmarc=pass header.from=partner.test; spf=softfail smtp.mailfrom=victim@partner.test' } });
+      await processInbound(fakeEmail('victim@partner.test', addr, forged), e);
+      expect(sent).toHaveLength(0);
+      // A legitimate sender whose SPF passes for its own envelope still gets one.
+      await deliver(addr, { from: 'client@partner.test', to: addr, subject: 'Question', body: 'x', headers: PASS }, e);
+      expect(sent.map((m) => m.to)).toEqual(['client@partner.test']);
+    });
+
     it('strips CR/LF smuggled through an encoded incoming subject', async () => {
       const { addr, sent, e } = await setup('');
       const evil = `=?UTF-8?B?${btoa('Hello\r\nBcc: victim@evil.test')}?=`;
