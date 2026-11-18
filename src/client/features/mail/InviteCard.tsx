@@ -2,29 +2,24 @@ import { useState } from 'react';
 import { Link } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import { CalendarCheck, CalendarDays, MapPin, Repeat, User } from 'lucide-react';
-import type { Attachment, InvitePreview, MessageFull } from '@shared/api';
+import type { InvitePreview, MessageFull } from '@shared/api';
 import { Button } from '../../components/Button';
 import { useToast } from '../../components/Toast';
 import { errorMessage } from '../../lib/api';
 import { displayName, escapeHtml } from '../../lib/format';
-import { parseInvite, useAcceptInvite } from '../../lib/queries/dav';
+import { parseInvite, useAcceptInvite, type InviteRef } from '../../lib/queries/dav';
 import { addDays, fmt, isSameDay, parseDayKey } from '../calendar/dates';
 import { buildReply, findInviteAttachment, PARTSTAT_VERB, type Partstat } from '../calendar/itip';
 import { draftApi } from '../compose/draftApi';
 
-/** The .ics text and the server's reading of it. The signed URL is same-origin and expires, so it is not part of the key. */
-function useInvite(a: Attachment | undefined) {
+/** The server's reading of the invitation attachment; it loads the .ics itself. */
+function useInvite(ref: InviteRef | undefined) {
   return useQuery({
-    queryKey: ['dav', 'invite', a?.id],
-    enabled: !!a,
+    queryKey: ['dav', 'invite', ref?.attachmentId],
+    enabled: !!ref,
     staleTime: 60_000,
     retry: false,
-    queryFn: async () => {
-      const res = await fetch(a!.url, { credentials: 'same-origin' });
-      if (!res.ok) throw new Error('Could not read the invitation');
-      const ics = await res.text();
-      return { ics, preview: await parseInvite(ics) };
-    },
+    queryFn: () => parseInvite(ref!),
   });
 }
 
@@ -47,14 +42,15 @@ interface Props { message: MessageFull; mailboxId: string; myEmails: Set<string>
 /** An event card for a received meeting request; null for anything that is not one. */
 export function InviteCard({ message: m, mailboxId, myEmails }: Props) {
   const att = m.direction === 'in' ? findInviteAttachment(m.attachments) : undefined;
-  const q = useInvite(att);
+  const ref: InviteRef | undefined = att && { mailboxId, messageId: m.id, attachmentId: att.id };
+  const q = useInvite(ref);
   const accept = useAcceptInvite();
   const { toast } = useToast();
   const [replied, setReplied] = useState<Partstat | null>(null);
   const [replying, setReplying] = useState<Partstat | null>(null);
   const data = q.data;
-  if (!att || !data || data.preview.method !== 'REQUEST') return null;
-  const { preview: p, ics } = data;
+  if (!ref || !data || data.method !== 'REQUEST') return null;
+  const p = data;
   const e = p.event;
   // The address the organiser invited: an attendee that is one of ours, else whichever of ours the message went to.
   const me = p.attendees.find((a) => myEmails.has(a)) ?? [...m.to, ...m.cc].map((a) => a.email.toLowerCase()).find((a) => myEmails.has(a));
@@ -76,7 +72,7 @@ export function InviteCard({ message: m, mailboxId, myEmails }: Props) {
       await draftApi.upload(mailboxId, draft.id, file, () => {});
       await draftApi.send(mailboxId, draft.id);
       setReplied(partstat);
-      if (partstat === 'ACCEPTED' && !added) accept.mutate(ics);
+      if (partstat === 'ACCEPTED' && !added) accept.mutate(ref);
     } catch (err) {
       if (draftId) void draftApi.discard(mailboxId, draftId).catch(() => {});
       toast({ tone: 'error', title: "Couldn't send your reply", description: errorMessage(err) });
@@ -103,12 +99,15 @@ export function InviteCard({ message: m, mailboxId, myEmails }: Props) {
         {added ? (
           <Link to="/calendar" className="inline-flex h-7 items-center gap-1.5 text-[13px] font-medium text-success hover:underline pointer-coarse:h-11"><CalendarCheck size={15} />{p.existing && !accept.isSuccess ? 'In your calendar' : 'Added to your calendar'}</Link>
         ) : (
-          <Button size="sm" variant="primary" loading={accept.isPending} onClick={() => accept.mutate(ics, { onError: (err) => toast({ tone: 'error', title: "Couldn't add the event", description: errorMessage(err) }) })}>
+          <Button size="sm" variant="primary" loading={accept.isPending} onClick={() => accept.mutate(ref, { onError: (err) => toast({ tone: 'error', title: "Couldn't add the event", description: errorMessage(err) }) })}>
             Add to calendar
           </Button>
         )}
-        {added && p.existing && !accept.isSuccess && (
-          <Button size="sm" variant="ghost" loading={accept.isPending} onClick={() => accept.mutate(ics, { onError: (err) => toast({ tone: 'error', title: "Couldn't update the event", description: errorMessage(err) }) })}>Update from this invitation</Button>
+        {added && p.existing && !accept.isSuccess && p.updateBlocked && (
+          <span role="status" className="text-[13px] text-muted">{p.updateBlocked}</span>
+        )}
+        {added && p.existing && !accept.isSuccess && !p.updateBlocked && (
+          <Button size="sm" variant="ghost" loading={accept.isPending} onClick={() => accept.mutate(ref, { onError: (err) => toast({ tone: 'error', title: "Couldn't update the event", description: errorMessage(err) }) })}>Update from this invitation</Button>
         )}
         {me && p.organizer && (
           replied ? (

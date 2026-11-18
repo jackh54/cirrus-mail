@@ -700,7 +700,7 @@ export interface DavCollectionInput {
   color: string | null;
 }
 
-/** POST /api/dav/invite/parse: an .ics from a received message, read by the server. */
+/** POST /api/dav/invite/parse and /accept take `{ mailboxId, messageId, attachmentId, calendarId? }`; the server reads the .ics from that message's attachment. */
 export interface InvitePreview {
   /** The iTIP METHOD (REQUEST, CANCEL, REPLY, ...), null when the file has none. */
   method: string | null;
@@ -711,6 +711,10 @@ export interface InvitePreview {
   attendees: string[];
   /** The event with this UID that is already in one of the user's calendars. */
   existing: { id: ID; calendarId: ID } | null;
+  /** The message's From address, lower-cased. */
+  from: string;
+  /** Why this message may not update `existing` (not the organizer, unverified sender, no organizer); null when it may or there is no copy. */
+  updateBlocked: string | null;
 }
 
 // ---------- limits shared by both sides ----------

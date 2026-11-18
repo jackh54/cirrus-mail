@@ -134,14 +134,16 @@ export function useEventMutations() {
 
 // ---------- invitations ----------
 
-export function parseInvite(ics: string) {
-  return api.post<InvitePreview>('/api/dav/invite/parse', { ics });
+export interface InviteRef { mailboxId: string; messageId: string; attachmentId: string; calendarId?: string }
+
+export function parseInvite(ref: InviteRef) {
+  return api.post<InvitePreview>('/api/dav/invite/parse', ref);
 }
 
 export function useAcceptInvite() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (ics: string) => api.post<EventView>('/api/dav/invite/accept', { ics }),
+    mutationFn: (ref: InviteRef) => api.post<EventView>('/api/dav/invite/accept', ref),
     onSettled: () => qc.invalidateQueries({ queryKey: ['dav', 'events'] }),
   });
 }
