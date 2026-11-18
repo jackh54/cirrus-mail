@@ -4,6 +4,7 @@ import { ulid } from '../../shared/ulid';
 import { autocryptTrusted, armorPublicKey, parseAutocrypt } from './pgp';
 
 export const MAX_KEYRING_ENTRIES = 2000;
+export const MAX_AUTOCRYPT_ENTRIES = 300;
 
 export interface KeyringRow {
   id: string; user_id: string; email: string; public_key: string; fingerprint: string; source: PgpSource;
@@ -35,8 +36,19 @@ export async function upsertKeyring(
   const e = email.trim().toLowerCase();
   const row = await db.prepare('SELECT * FROM pgp_keyring WHERE user_id = ? AND email = ?').bind(userId, e).first<KeyringRow>();
   if (!row) {
-    const n = await db.prepare('SELECT COUNT(*) AS n FROM pgp_keyring WHERE user_id = ?').bind(userId).first<number>('n');
-    if ((n ?? 0) >= MAX_KEYRING_ENTRIES) return 'full';
+    if (source === 'autocrypt') {
+      // Outside senders fill this source, so it has its own cap: one in, one out, oldest-seen first. Rows with a
+      // pending key-change warning are never evicted; if every row is one, the new sender is refused.
+      const a = await db.prepare("SELECT COUNT(*) AS n FROM pgp_keyring WHERE user_id = ? AND source = 'autocrypt'").bind(userId).first<number>('n');
+      if ((a ?? 0) >= MAX_AUTOCRYPT_ENTRIES) {
+        const del = await db.prepare("DELETE FROM pgp_keyring WHERE id = (SELECT id FROM pgp_keyring WHERE user_id = ? AND source = 'autocrypt' AND pending_fingerprint IS NULL ORDER BY updated_at ASC, id ASC LIMIT 1)")
+          .bind(userId).run();
+        if (!del.meta.changes) return 'full';
+      }
+    } else {
+      const n = await db.prepare("SELECT COUNT(*) AS n FROM pgp_keyring WHERE user_id = ? AND source != 'autocrypt'").bind(userId).first<number>('n');
+      if ((n ?? 0) >= MAX_KEYRING_ENTRIES) return 'full';
+    }
     await db.prepare('INSERT INTO pgp_keyring (id, user_id, email, public_key, fingerprint, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
       .bind(ulid(now), userId, e, key.armored, key.fingerprint, source, now, now).run();
     return 'created';
